@@ -415,7 +415,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     GetModuleFileNameA(NULL, exe, sizeof exe);
     const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *show = getenv("SSBU_SHOW");
     int visible = show ? atoi(show) != 0 : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "game_native.exe"));   /* [Recomps#1] our exe: on screen (SSBU_SHOW=0 hides) */
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B2recomp");   /* [Recomps#1] window title (project name B2recomp) */
+    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B3 Recompiled");   /* [b3recomp] window title */
     if (visible)
         g_hwnd = CreateWindowExA(go->window_mode == 2 ? WS_EX_TOPMOST : 0, wc.lpszClassName, g_title, style | WS_VISIBLE, px, py, r.right - r.left,
                                  r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
@@ -511,7 +511,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     const GfxOptions *go = gfx_options();
     const char *show = getenv("SSBU_SHOW");
     int visible = show ? atoi(show) != 0 : 1;
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B2recomp");
+    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B3 Recompiled");
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (go->window_mode ? SDL_WINDOW_FULLSCREEN : 0) | (visible ? 0 : SDL_WINDOW_HIDDEN);
     SDL_Window *w = SDL_CreateWindow(g_title, go->width, go->height, flags);
     if (!w) { printf("display: the window cannot be made: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }

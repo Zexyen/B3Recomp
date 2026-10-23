@@ -1,3 +1,4 @@
 # [Recomps#1] imports whose existing host handler is REPLACED by the lifted SDK code (one mangled name per line).
 # Imports without any handler get lifted code automatically (sdklift_rt.c register_sdklift_imports).
-# [b3recomp] none yet.
+# [b3recomp] libc the game imports from the sdk, not reached by the automatic nn* install:
+div
