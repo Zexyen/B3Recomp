@@ -1,0 +1,33 @@
+# Nothing derived from the game is ever committed: the dump, converted ELFs, lifted C, objects, the game library,
+# caches and saves are all made on the player's PC from their own dump.
+/dump/
+/targets/
+/build/
+/cache/
+/deps/
+/userdata/
+/mods/
+/notes/
+/runtime/obj_host/
+/lifter/eh_main_tables.json
+# runtime/gen/: only the generator is ours; everything else in it comes from the dump
+/runtime/gen/*
+!/runtime/gen/make_gen.py
+**/__pycache__/
+*.pyc
+*.elf
+*.nso
+*.nca
+*.nsp
+*.xci
+*.npdm
+*.keys
+*.pkz
+*.dat
+*.bxm
+*.webm
+*.o
+*.so
+*.a
+*.dll
+*.exe

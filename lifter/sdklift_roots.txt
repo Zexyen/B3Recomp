@@ -1,0 +1,18 @@
+# [b3recomp] roots for sdklift.py on Bayonetta 3's sdk (nnSdk 13.3.2): only names B3's main imports. B2's roots for SDK 3.6.0
+# (NVN texture-storage functions and the GM200 HAL by address, nn::mem::NumberLineAllocator) are not carried over: B3's main
+# imports no NumberLineAllocator, and the NVN addresses must be found again in 13.3.2 (nvn_sdk.c traps until then).
+
+# libc the game imports from the sdk: pure
+div
+
+# hid pure functions (handles computed from the npad id and style)
+_ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE
+_ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE
+
+# [b3recomp] pure SDK code B3 imports that the runtime has no handler for
+_ZN2nn4util30ConvertStringUtf16NativeToUtf8EPciPKti
+_ZN2nn4util30ConvertStringUtf8ToUtf16NativeEPtiPKci
+_ZN2nn4util43GetLengthOfConvertedStringUtf16NativeToUtf8EPiPKti
+_ZN2nn4lmem13CreateExpHeapEPvmi
+_ZN2nn4lmem13FreeToExpHeapEPNS0_6detail8HeapHeadEPv
+_ZN2nn4lmem19AllocateFromExpHeapEPNS0_6detail8HeapHeadEm
