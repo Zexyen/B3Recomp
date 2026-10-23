@@ -469,6 +469,11 @@ def step_check(cx):
         return
     tail = cx.run('check', [sys.executable, 'test_ext.py'], cwd=os.path.join(REPO, 'lifter'))
     say('  ' + (tail.strip().splitlines() or ['ok'])[-1])
+    # [b3recomp] the forms added for Bayonetta 3, in C with the real helpers against Unicorn (lifter/test_b3.py)
+    c_file, exe = os.path.join(cx.build, 'test_b3.c'), os.path.join(cx.build, 'test_b3')
+    cx.run('check', [sys.executable, 'test_b3.py', c_file], cwd=os.path.join(REPO, 'lifter'))
+    cx.run('check', ['clang', '-O1', '-w', '-mcx16', '-I', os.path.join(REPO, 'runtime'), c_file, '-lm', '-o', exe])
+    say('  ' + (cx.run('check', [exe]).strip().splitlines() or ['ok'])[-1])
 
 
 # ---------------------------------------------------------------------------------------------- updates

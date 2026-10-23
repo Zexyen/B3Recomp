@@ -194,3 +194,11 @@ Both are marked `[Recomps#1]` in the code; the values the game sees are unchange
   only when chosen (`button_prompts`). `mod_family` guesses a prompt mod's kind from a word that starts with ds4, ds5,
   dualshock, dualsense, playstation, ps4, ps5 / xbox (or the word ps), so the DS4Prompts / XBOXPrompts folders of the
   GameBanana prompt mod 360121 need no [prompts] line.
+
+## b3recomp (2026-10-23)
+Copied from B2recomp @7725c57. Changes for Bayonetta 3 (nnSdk 13.3.2) are marked `[b3recomp]`: `b3_imports.c` (new:
+nnmusl TLS registration, pthread / libc++ once and thread id, SdkMutexType, pmr resources, fs contexts, oe / hid
+no-ops), `boot.c` (phase 0: main's DT_INIT), `os_threads.c` (TLS image in every thread block), `nnfs.c` (SDK 13 fs
+variants), `nvn_stub.c` (API 55.12 default), `r2_imports.c` (3,285 MB application memory), `nnsdk2.c` (empty install
+list), `gen/make_gen.py` (layout from DYNAMIC, DT_INIT, NVN 13.3.2 device answers). `nvn_sdk.c` still holds B2's SDK
+3.6.0 addresses (docs/STATUS.md, next step 1).

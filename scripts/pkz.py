@@ -92,7 +92,7 @@ def extract(path, outdir, lib, only):
             f.seek(off)
             data = f.read(csize)
             if codec == 'OodleKraken':
-                if not dec:
+                if not dec:                              # shortcut: no Kraken decoder of our own; the game has one (main)
                     skipped += 1
                     continue
                 data = dec(data, size)

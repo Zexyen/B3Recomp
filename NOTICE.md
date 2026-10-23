@@ -1,5 +1,8 @@
 # Notices and attribution
 
+b3recomp (Bayonetta 3 Recompiled) is a copy of B2recomp @7725c57 adapted to Bayonetta 3; changes for it are marked
+`[b3recomp]` in the code. B2recomp's notice follows unchanged.
+
 B2recomp (Bayonetta 2 Recompiled)
 Copyright (C) 2026 K0NL (https://github.com/K0NL), and the ssbu-recomp authors for the parts listed below.
 

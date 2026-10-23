@@ -556,6 +556,7 @@ static void install_lifted(void) {
     if (!sdk_image_ready() || (off && atoi(off) == 0)) return;
     for (int i = 0; i < n; i++) {
         int skip_this = 0;
+        if (!sdk_install_names[i][0]) continue;          /* [b3recomp] the placeholder of an empty list */
         if (skip && skip[0]) {
             char buf[1024];
             snprintf(buf, sizeof buf, "%s", skip);

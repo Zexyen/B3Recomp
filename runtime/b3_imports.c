@@ -16,7 +16,8 @@
 static void nothing(Ctx *c) { (void)c; }
 static void ret0(Ctx *c) { RET(0); }
 
-/* pthread_once(pthread_once_t *, void (*)(void)): musl's once word, 0 = not run, 1 = running, 2 = done. */
+/* pthread_once(pthread_once_t *, void (*)(void)): musl's once word, 0 = not run, 1 = running, 2 = done.
+ * shortcut: waiters spin on Sleep(0) (as cxx_call_once below); fine for one-time init, upgrade if a profile shows it */
 static void b3_pthread_once(Ctx *c) {
     volatile LONG *once = (volatile LONG *)(uintptr_t)A0;
     uint64_t fn = A1;
@@ -73,7 +74,8 @@ static void pmr_SetDefaultResource(Ctx *c) {         /* returns the previous one
 }
 
 /* nn::fs::Get/SetCurrentThreadFsContext: the context only decides whether an fs error aborts the program; the host
- * never aborts on one, so one shared context object is handed out and Set is remembered per thread. */
+ * never aborts on one, so one shared context object is handed out and Set is remembered per thread.
+ * shortcut: the context's contents are never read; model them if the game inspects what Get returns */
 static uint64_t g_fs_context[4];
 static _Thread_local uint64_t t_fs_context;
 static void fs_GetCurrentThreadFsContext(Ctx *c) { RET(t_fs_context ? t_fs_context : (uint64_t)(uintptr_t)g_fs_context); }

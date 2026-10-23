@@ -183,7 +183,9 @@ def main(trials):
             regs = [int(x) for x in re.findall(r'[wx](\d+)', dis)]
             if dis.startswith('ldaxp'):
                 rt, rt2, rn = regs
-                want = ['c->x[%d] = (uint64_t)(t1);' % rt, 'c->x[%d] = (uint64_t)(t2);' % rt2, 'uint64_t a = c->x[%d];' % rn]
+                # [b3recomp] xzr as a destination discards the value (B3 has ldaxp xzr, x8, [xN]): never a write to x[31] (SP)
+                dst = lambda r, t: '(void)(%s);' % t if r == 31 else 'c->x[%d] = (uint64_t)(%s);' % (r, t)
+                want = [dst(rt, 't1'), dst(rt2, 't2'), 'uint64_t a = c->x[%d];' % rn]
             else:
                 rs, rt, rt2, rn = regs
                 want = ['c->x[%d] = (uint32_t)(stx128(c, c->x[%d], %s, %s));' % (rs, rn,
