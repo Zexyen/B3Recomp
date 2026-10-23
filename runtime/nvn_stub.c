@@ -56,6 +56,9 @@ static void nvn_generic(Ctx *c) {
  *   OPEN not sourced yet (notes/release-audit.md section 5) */
 #include "nvn_devinfo.h"                                /* gen/: nvn_devinfo_sdk[pname], -1 = no fixed answer in the sdk */
 static const int g_devinfo[0x58] = {
+    /* [b3recomp] API version, when the sdk table has no answer (B3's sdk 13.3.2): Bayonetta 3 accepts major 55 and minor 12
+     * or more ([game] 0x7100d176c8: cmp w8, #0x37 / cmp w8, #0xc, b.lt), the NVN its headers were built with */
+    [0x00] = 55, [0x01] = 12,
     /* the sdk answers from its live device object: */
     [0x38] = 32,      /* asked. HW: stride alignment of a linear texture, DK_IMAGE_LINEAR_STRIDE_ALIGNMENT 32 */
     [0x3b] = 1,       /* asked. OPEN: one of the 16 feature queries the game folds into a bit mask (bit 4); 1 = supported (the

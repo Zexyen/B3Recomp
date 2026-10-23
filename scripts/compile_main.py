@@ -54,6 +54,7 @@ DEF = re.compile(r'^(?:static )?void (\w+)\((Ctx \*c(?:, uint64_t rp)?)\) \{$')
 RULES = 1                                                # bump when compile_one's choices change (invalidates every stamp)
 INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
 PROTO = re.compile(r'^void (\w+)\(', re.M)
+WORD = re.compile(r'\w+')
 
 
 def sha256_file(path):
@@ -114,7 +115,7 @@ def up_to_date(name, stamps, cfg, gone):
         s['size'], s['mtime'] = st.st_size, st.st_mtime_ns
     if gone:                                             # a prototype this file may use was removed or changed
         with open(src, encoding='latin-1') as f:
-            if gone.search(f.read()):
+            if not gone.isdisjoint(WORD.findall(f.read())):   # [b3recomp] a set, not a regex of every name: 442 s -> seconds
                 return None
     return s
 
@@ -233,7 +234,7 @@ def main():
     if gone is None and stamps:
         print('no copy of the last funcs.h (%s): every file is compiled' % os.path.join(OBJ, '_funcs.h.prev'))
         stamps = {}
-    gone_re = re.compile(r'\b(?:%s)\b' % '|'.join(map(re.escape, sorted(gone)))) if gone else None
+    gone_re = gone
     if '--adopt' in sys.argv:
         missing = [n for n in names if not os.path.isfile(os.path.join(OBJ, n[:-2] + '.obj'))]
         if missing:

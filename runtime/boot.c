@@ -255,6 +255,10 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     g_main_stack_base = (uint64_t)stack;
     g_main_stack_size = stack_size;
 
+    /* [b3recomp] main's DT_INIT first, as the loader runs it: its __nnmusl_init_dso registers main's TLS (b3_imports.c) */
+    printf("\n[phase 0] DT_INIT\n");
+    call_guest(&c, GUEST_BASE + DT_INIT_OFF);
+
     printf("\n[phase 1] nninitStartup\n");
     trace_printf("=== phase 1: nninitStartup\n");
     call_guest(&c, NNINIT_STARTUP);
@@ -322,6 +326,7 @@ int main(int argc, char **argv) {
     register_cxxrt_imports();                /* C / C++ runtime: everything still without a handler (keep last) */
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
     { void register_r2_imports(void); register_r2_imports(); }   /* [Recomps#1] R2: our SDK 3.6.0 imports (r2_imports.c); register_sdk2 below only fills gaps */
+    { void register_b3_imports(void); register_b3_imports(); }   /* [b3recomp] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / SSBU_STRICT (plan\FAKE_AUDIT.md) */
     display_init();

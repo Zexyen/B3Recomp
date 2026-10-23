@@ -942,6 +942,12 @@ class Env:
             if info == 0x403 and 0 <= addend < TEXT_SIZE and addend % 4 == 0:
                 starts.add(BASE + addend)
         # code addresses materialised in registers (callbacks, thread entry points): ADRP+ADD pairs and ADR
+        # [b3recomp] except a jump-table base: the register reaches a `br` within the next 6 instructions (B3's switches:
+        # adr x10, base; ldrh w11, [table, idx]; add x10, x10, x11, lsl #2; br x10). Taken as an entry it cut the
+        # function in two and its cases became indirect calls to addresses that are not functions.
+        def table_base(i, r):
+            return any(struct.unpack_from('<I', text, 4 * k)[0] == 0xd61f0000 | (r << 5)
+                       for k in range(i + 1, min(i + 7, len(text) // 4)))
         page = {}
         for i, (w,) in enumerate(struct.iter_unpack('<I', text)):
             if (w & 0x9f000000) == 0x90000000:                       # adrp
@@ -951,12 +957,12 @@ class Env:
                 hit = page.get((w >> 5) & 31)
                 if hit and i - hit[0] <= 8:
                     target = hit[1] + ((w >> 10) & 0xfff)
-                    if 0 <= target < TEXT_SIZE and target % 4 == 0:
+                    if 0 <= target < TEXT_SIZE and target % 4 == 0 and not table_base(i, w & 31):
                         starts.add(BASE + target)
             elif (w & 0x9f000000) == 0x10000000:                     # adr
                 imm = sext((((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3), 21)
                 target = i * 4 + imm
-                if 0 <= target < TEXT_SIZE and target % 4 == 0:
+                if 0 <= target < TEXT_SIZE and target % 4 == 0 and not table_base(i, w & 31):
                     starts.add(BASE + target)
         # functions other modules call by name: exported FUNC symbols
         for i in range((STRTAB - SYMTAB) // 24):

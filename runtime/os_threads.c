@@ -218,6 +218,7 @@ static Ctx *new_ctx(uint64_t stack_top) {
     memset(c, 0, sizeof *c);
     c->x[31] = stack_top & ~15ull;
     c->tpidr = (uint64_t)VirtualAlloc(NULL, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    { void tls_init_block(uint64_t tp); tls_init_block(c->tpidr); }   /* [b3recomp] main's static TLS (b3_imports.c) */
     return c;
 }
 

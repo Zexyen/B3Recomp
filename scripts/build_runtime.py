@@ -12,7 +12,7 @@ interface: notes/toolchain-mingw.md 3.1).
 --out: build game.dll, obj_host/ and game_native.exe there instead of build/ (a variant beside the real build; SDL3.dll and
 ssbu_glslang.dll are copied from build/, run it with cwd = build/ and SSBU_GRAPHICS_CONFIG / SSBU_CONFIG set).
 
-  1. build/game.dll (+ .lib): build/obj/*.obj (scripts/compile_main.py) + runtime/game_shim.c
+  1. build/game.dll (+ .lib): build/obj/*.obj (scripts/compile_main.py) + runtime/game_shim_eh.c (main has C++ exception tables: the landing-pad resume table goes in)
   2. build/obj_host/*.obj:    runtime host sources (their HOST_SOURCES minus the Smash-only files) + gamedll.c
   3. build/game_native.exe:   host objects + game.lib + SDL3 + Windows libraries (+ icon 1 = build/bayonetta2.ico when it exists,
                               scripts/make_icon_local.py); SDL3.dll copied beside it
@@ -49,7 +49,7 @@ HOST_SOURCES = ['hostrt.c', 'boot.c', 'nnsdk.c', 'libcxx.c', 'os_threads.c', 'nv
                 'display.c', 'nnpl.c', 'nnfontll.c', 'nnmovie.c', 'nnmisc.c', 'nnaudio.c', 'nnmovie_mf.c', 'nniostream.c',
                 'nncxxrt.c', 'nncxxlib.c', 'nnlibc2.c', 'gen/sdklift_gen.c', 'sdklift_rt.c', 'nnsdk2.c', 'nnapplet.c',
                 'nnalbum.c', 'nnnet.c', 'nnfsdir.c', 'nnunwind.c', 'nvn_sdk.c', 'nvn_c4.c', 'nvn_c5.c', 'gfx_options.c',
-                'hitch.c', 'r0_removed.c', 'r2_imports.c', 'watch.c', 'gamedll.c']
+                'hitch.c', 'r0_removed.c', 'r2_imports.c', 'b3_imports.c', 'watch.c', 'gamedll.c']
 HOST_FLAGS = ['-O1', '-g', '-gcodeview', '-w', '-fno-strict-aliasing', '-mcx16', '-I', RT, '-I', GENRT,   # debug info: crash addresses -> source (llvm-symbolizer)
               '-Dfn_table=(*game_fn_table_p)', '-Dfn_table_count=(*game_fn_table_count_p)',
               '-Ddyn_syms=(*game_dyn_syms_p)', '-Ddyn_sym_count=(*game_dyn_sym_count_p)',
@@ -93,7 +93,7 @@ def link_dll():
     t = time.time()
     # a path goes to the linker whole, through -Xlinker: -Wl, cuts its text at every comma, so an install folder such as
     # "F:\Games, Beta Builds\..." became several linker arguments (finding 149)
-    code, out = run([CLANG, '-shared', '-O1', '-w', '-mcx16', '-I', RT, os.path.join(RT, 'game_shim.c'), '@' + rsp, '-o', DLL] +
+    code, out = run([CLANG, '-shared', '-O1', '-w', '-mcx16', '-I', RT, os.path.join(RT, 'game_shim_eh.c'), '@' + rsp, '-o', DLL] +
                     (['-Xlinker', '--out-implib=' + IMPLIB(DLL)] if MINGW else []) +
                     (toolchain.PIC + ['-fuse-ld=lld', '-D__declspec(x)=', '-Xlinker', '-soname=game.so'] if LINUX else []))
     print('game.dll: exit %d in %.0fs, %d objects' % (code, time.time() - t, len(objs)))

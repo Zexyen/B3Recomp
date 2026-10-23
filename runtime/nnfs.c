@@ -878,6 +878,12 @@ static void fs_WriteFile(Ctx *c) {                    /* (handle, offset, buffer
     if (A4 && (rd32(A4) & 1)) FlushFileBuffers((HANDLE)A0);                  /* WriteOption::Flush */
     RET(0);
 }
+static void fs_FlushFile(Ctx *c) { FlushFileBuffers((HANDLE)A0); RET(0); }   /* [b3recomp] (handle) */
+static void fs_SetFileSize(Ctx *c) {                  /* [b3recomp] (handle, size) */
+    LARGE_INTEGER to; to.QuadPart = (LONGLONG)A1;
+    if (!(open_mode((HANDLE)A0, 0) & 2)) { RET(RESULT_WRITE_NOT_PERMITTED); return; }
+    RET(SetFilePointerEx((HANDLE)A0, to, NULL, FILE_BEGIN) && SetEndOfFile((HANDLE)A0) ? 0 : RESULT_GENERIC_FAILURE);
+}
 static void fs_GetFileSize(Ctx *c) {                  /* (s64 *out, handle) */
     LARGE_INTEGER size;
     if (!GetFileSizeEx((HANDLE)A1, &size)) { RET(RESULT_GENERIC_FAILURE); return; }
@@ -1133,6 +1139,10 @@ static const ImportDef fs_imports[] = {
     {FS("8MountRomEPKcPvm"), fs_MountRom}, {FS("13MountSaveDataEPKcRKNS_7account3UidE"), fs_MountSaveData}, {FS("17MountCacheStorageEPKc"), fs_MountCacheStorage},
     {FS("7UnmountEPKc"), fs_Unmount}, {FS("22QueryMountRomCacheSizeEPm"), fs_QueryMountRomCacheSize}, {FS("6CommitEPKc"), fs_Commit}, {FS("14EnsureSaveDataERKNS_7account3UidE"), fs_EnsureSaveData},
     {FS("18IsSaveDataExistingERKNS_7account3UidE"), fs_IsSaveDataExisting},
+    /* [b3recomp] SDK 13: MountRom(name) without a cache buffer, IsSaveDataExisting(ApplicationId, Uid) of this program,
+     * FlushFile, SetFileSize */
+    {FS("8MountRomEPKc"), fs_MountRom}, {FS("18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE"), fs_IsSaveDataExisting},
+    {FS("9FlushFileENS0_10FileHandleE"), fs_FlushFile}, {FS("11SetFileSizeENS0_10FileHandleEl"), fs_SetFileSize},
     {FS("14CommitSaveDataEPKc"), fs_Commit},       /* [Recomps#1] SDK 3.6.0: CommitSaveData(mount name) = Commit(mount name) for a save-data mount */
     {FS("8OpenFileEPNS0_10FileHandleEPKci"), fs_OpenFile}, {FS("9CloseFileENS0_10FileHandleE"), fs_CloseFile},
     {FS("8ReadFileENS0_10FileHandleElPvm"), fs_ReadFile}, {FS("8ReadFileEPmNS0_10FileHandleElPvm"), fs_ReadFileCount},

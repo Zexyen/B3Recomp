@@ -74,6 +74,7 @@ layout = {
     'RELA': mt[7], 'RELASZ': mt[8], 'JMPREL': mt[23], 'PLTRELSZ': mt[2],
     'MAIN_SYMTAB': mt[6], 'MAIN_STRTAB': mt[5],
     'INIT_ARRAY_OFF': mt[25], 'INIT_ARRAY_SIZE': mt[27],
+    'DT_INIT_OFF': mt[12],                                                   # [b3recomp] musl _init: __nnmusl_init_dso
     'SDK_IMAGE_SPAN': page(max(va + msz for off, va, fsz, msz in sloads)),
 }
 # functions of OUR main the runtime calls directly, by exported name (upstream hard-codes Smash's addresses)
@@ -202,17 +203,89 @@ def case_target(sw, p):
     return dflt if i < 0 or i > bound else table + struct.unpack_from('<i', sb, 0x1000 + table + 4 * i)[0]
 
 
-# [b3recomp] the addresses above are B2's SDK 3.6.0; NVN 13.3.2 has no proc-name strings to find them by yet, so without a
-# match the table is left empty and nvn_stub.c answers every pname from its own g_devinfo.
-# shortcut: no SDK-derived device answers for B3, re-derive NVN_GETINT_ENTRY for sdk 13.3.2 when a pname looks wrong
+# [b3recomp] Bayonetta 3's sdk (NVN of nnSdk 13.3.2) has no proc-name strings and other addresses, and its switches use
+# compact jump tables (adr base + ldrb entry * 4). The same two functions are found by what they are: the getter is the
+# one switch of the sdk whose cases answer 256 for pname 4 (uniform buffer alignment), 32 for 0xf (texture descriptor),
+# 1 << 20 for 0x24 (texture pool) and 4096 for 0x25 (sampler pool): bool getter(pname, int *out), out = "mov w8, #imm"
+# of the case, false = not a fixed number. nvnDeviceGetInteger's switch is in its only caller: w0 is preset before the
+# br (the API major version), a case is "mov w0, #imm", the preset itself (a case at the shared return), the getter's
+# answer ("ldur w0, [x29, #-4]", 0 when the getter had none) or a field of the live device (-1 here).
+def b_switch(br):
+    """(bound, bias, table, base, preset w0) of an adr/ldrb jump table ending in the br at `br`, or None."""
+    bias = bound = page = table = base = preset = None
+    for va in range(br - 48, br, 4):
+        w = sdk_ins(va)
+        if (w & 0xffc00000) == 0x51000000: bias = (w >> 10) & 0xfff                          # sub wD, wN, #imm
+        elif (w & 0xffc0001f) == 0x7100001f: bound = (w >> 10) & 0xfff                       # cmp wN, #imm
+        elif (w & 0x9f000000) == 0x90000000:
+            page = (va & ~0xfff) + (sx(((w >> 29) & 3) | (((w >> 5) & 0x7ffff) << 2), 21) << 12)
+        elif (w & 0xffc00000) == 0x91000000 and page is not None: table = page + ((w >> 10) & 0xfff)
+        elif (w & 0x9f000000) == 0x10000000: base = va + sx((((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3), 21)
+        elif mov_imm(w): preset = mov_imm(w)                                                   # (imm, register)
+    if bound is None or table is None or base is None or not any((sdk_ins(br - k) & 0xffe0fc00) == 0x38606800 for k in range(4, 20, 4)):
+        return None
+    return bound, bias or 0, table, base, preset
+
+
+def b_case(sw, p):
+    bound, bias, table, base, _ = sw
+    return base + 4 * sb[0x1000 + table + p - bias] if 0 <= p - bias <= bound else None
+
+
+def find_b3_getint():
+    text = sloads[0][2]
+    for br in range(0, text, 4):
+        if sdk_ins(br) & 0xfffffc1f != 0xd61f0000:
+            continue
+        sw = b_switch(br)
+        if not sw or sw[0] < 0x40:
+            continue
+        cases = [b_case(sw, p) for p in (4, 0xf, 0x24, 0x25)]
+        if all(c is not None and mov_imm(sdk_ins(c)) and mov_imm(sdk_ins(c))[0] == v
+               for c, v in zip(cases, (256, 32, 1 << 20, 4096))):
+            bls = {}                                     # the function's entry: the nearest BL target at or before the switch
+            for va in range(0, text, 4):
+                if sdk_ins(va) >> 26 == 0x25:
+                    bls.setdefault(va + 4 * sx(sdk_ins(va) & 0x3ffffff, 26), []).append(va)
+            fn = max(t for t in bls if br - 0x100 < t <= br)
+            return sw, bls[fn]
+    return None, []
+
+
 devinfo = []
-if sdk_ins(NVN_GETINT_ENTRY + 0x1c) != 0x94000000 | ((NVN_GETINT - NVN_GETINT_ENTRY - 0x1c) // 4 & 0x3ffffff):
-    print('nvn_devinfo: nvnDeviceGetInteger is not at sdk 0x%x (not B2\'s sdk): no fixed answers taken' % NVN_GETINT_ENTRY)
-    outer = inner = (0, 0, -1, 0, 0)
-else:
-    outer = a64_switch(NVN_GETINT)
+if sdk_ins(NVN_GETINT_ENTRY + 0x1c) == 0x94000000 | ((NVN_GETINT - NVN_GETINT_ENTRY - 0x1c) // 4 & 0x3ffffff):
+    outer = a64_switch(NVN_GETINT)                       # B2's sdk (SDK 3.6.0)
     inner = a64_switch(outer[0])
-for p in range(inner[1] + inner[2] + 1):                 # every pname either switch answers
+else:
+    outer = inner = (0, 0, -1, 0, 0)
+    getter, callers = find_b3_getint()
+    if getter and len(callers) == 1:
+        br = next(va for va in range(callers[0], callers[0] + 0x80, 4) if sdk_ins(va) & 0xfffffc1f == 0xd61f0000)
+        osw = b_switch(br)
+        ret = next(va for va in range(br + 4, br + 0x40, 4) if sdk_ins(va) == 0xd65f03c0)
+        epilogue = ret - 12                              # the shared return: ldp, ldp, add sp, ret
+        for p in range(max(osw[1] + osw[0], getter[1] + getter[0]) + 1):
+            t = b_case(osw, p)
+            w = sdk_ins(t) if t is not None else 0xb85fc3a0          # past the bound: the getter's answer
+            m = mov_imm(w)
+            if t is not None and epilogue <= t <= ret:
+                v = osw[4][0] if t == epilogue and osw[4] and osw[4][1] == 0 else -1
+            elif m and m[1] == 0:
+                v = m[0]
+            elif w == 0xb85fc3a0:                        # ldur w0, [x29, #-4]
+                g = b_case(getter, p)
+                gm = mov_imm(sdk_ins(g)) if g is not None else None
+                if gm and gm[1] == 0 and getter[4] and getter[4][1] == 8:
+                    v = getter[4][0]                     # the getter's shared tail: "*out = w8" with w8 preset before its br
+                else:
+                    v = gm[0] if gm and gm[1] == 8 else 0
+            else:
+                v = -1
+            devinfo.append(v)
+        print('nvn_devinfo: getter switch and nvnDeviceGetInteger (caller sdk 0x%x) found by their constants' % callers[0])
+    else:
+        print('nvn_devinfo: nvnDeviceGetInteger not found in this sdk: no fixed answers taken')
+for p in range(inner[1] + inner[2] + 1):                 # every pname either switch answers (B2's sdk)
     t = case_target(outer, p)
     w = sdk_ins(t)
     m = mov_imm(w)
