@@ -21,7 +21,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 BUILD = os.path.join(ROOT, 'build')
 DEPS = os.path.join(ROOT, 'deps')
 NAMES = ('mingw', 'msvc', 'linux')
-DEFAULT = 'mingw'
+DEFAULT = 'linux'                                     # [b3recomp] Linux first
 
 
 def _name():

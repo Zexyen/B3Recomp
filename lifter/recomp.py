@@ -433,12 +433,14 @@ class Fn:
                     total = nb * nstruct
             else:
                 opcode, s_bit = bits(w, 15, 13), bits(w, 12, 12)
-                if bits(w, 21, 21):
-                    raise Unimpl('ldN')
-                if opcode == 6 and load:
-                    body = 'v_dup(&c->v[%d], rd%d(a), %d, %d);' % (rt, 8 << size, size, (16 if q else 8) >> size)
-                    total = 1 << size
+                # [b3recomp] LD2..LD4 / ST2..ST4 of one lane and LD2R..LD4R: selem = (opcode<0>:R) + 1 registers
+                selem = ((opcode & 1) << 1 | bits(w, 21, 21)) + 1
+                if opcode in (6, 7) and load:
+                    body = ' '.join('v_dup(&c->v[%d], rd%d(a + %d), %d, %d);' % ((rt + k) & 31, 8 << size, k << size, size,
+                                                                                (16 if q else 8) >> size) for k in range(selem))
+                    total = selem << size
                 else:
+                    opcode &= 6
                     if opcode == 0:
                         es, idx = 0, (q << 3) | (s_bit << 2) | size
                     elif opcode == 2:
@@ -450,10 +452,12 @@ class Fn:
                     else:
                         raise Unimpl('ldN')
                     if load:
-                        body = 'vset(&c->v[%d], %d, %d, rd%d(a));' % (rt, es, idx, 8 << es)
+                        body = ' '.join('vset(&c->v[%d], %d, %d, rd%d(a + %d));' % ((rt + k) & 31, es, idx, 8 << es, k << es)
+                                        for k in range(selem))
                     else:
-                        body = 'wr%d(a, vget(&c->v[%d], %d, %d));' % (8 << es, rt, es, idx)
-                    total = 1 << es
+                        body = ' '.join('wr%d(a + %d, vget(&c->v[%d], %d, %d));' % (8 << es, k << es, (rt + k) & 31, es, idx)
+                                        for k in range(selem))
+                    total = selem << es
             wb = ''
             if post:
                 wb = '%s += %s;' % (XS(rn), ('%dULL' % total) if rm == 31 else X(rm))
@@ -694,6 +698,12 @@ class Fn:
                 if op:
                     v16 ^= 0xffff
                 val = v16 * 0x0001000100010001
+            elif cmode in (1, 3, 5, 7, 9, 11):           # [b3recomp] ORR (op 0) / BIC (op 1), vector immediate
+                val = (imm8 << (8 * (cmode >> 1)) & 0xffffffff) * 0x100000001 if cmode < 8 else \
+                    (imm8 << (8 * ((cmode >> 1) & 1))) * 0x0001000100010001
+                opn = '&= ~' if op else '|='
+                return '{ c->v[%d].d[0] %s 0x%xULL; %s }' % (rd, opn, val, ('c->v[%d].d[1] %s 0x%xULL;' % (rd, opn, val)) if q
+                                                            else 'c->v[%d].d[1] = 0;' % rd)
             else:
                 raise Unimpl('simd-imm')
             return '{ c->v[%d].d[0] = 0x%xULL; c->v[%d].d[1] = %s; }' % (rd, val, rd, ('0x%xULL' % val) if q else '0')
@@ -741,6 +751,15 @@ class Fn:
                 op = {(0, 0x10): 'I_ADD', (1, 0x10): 'I_SUB', (0, 0x13): 'I_MUL', (1, 0x11): 'I_CMEQ', (0, 0x11): 'I_CMTST',
                       (0, 0x06): 'I_CMGT', (1, 0x06): 'I_CMHI', (0, 0x07): 'I_CMGE', (1, 0x07): 'I_CMHS'}.get((u, opc))
                 if op is None:
+                    # [b3recomp] rt_ext.h v_i3x: min/max, shifts by register, saturating add/sub, mla/mls
+                    op = {(0, 0x0c): 'X_SMAX', (1, 0x0c): 'X_UMAX', (0, 0x0d): 'X_SMIN', (1, 0x0d): 'X_UMIN',
+                          (0, 0x08): 'X_SSHL', (1, 0x08): 'X_USHL', (0, 0x0a): 'X_SRSHL', (1, 0x0a): 'X_URSHL',
+                          (0, 0x09): 'X_SQSHL', (1, 0x09): 'X_UQSHL', (0, 0x01): 'X_SQADD', (1, 0x01): 'X_UQADD',
+                          (0, 0x05): 'X_SQSUB', (1, 0x05): 'X_UQSUB', (0, 0x12): 'X_MLA', (1, 0x12): 'X_MLS'}.get((u, opc))
+                    if op:
+                        return 'v_i3x(%s, %s, %s, %s, %d, %d);' % (V(rd), V(rn), V(rm), op, size, icount(size))
+                    if (u, opc) == (0, 0x17) and not scalar:   # addp (vector)
+                        return 'v_addp(%s, %s, %s, %d, %d);' % (V(rd), V(rn), V(rm), size, q)
                     raise Unimpl('simd-i3')
                 return 'v_i3v(%s, %s, %s, %s, %d, %d);' % (V(rd), V(rn), V(rm), op, size, icount(size))
             if bits(w, 20, 17) == 0 and bits(w, 11, 10) == 2:    # two registers, miscellaneous
@@ -755,6 +774,14 @@ class Fn:
                     return 'v_xtn(%s, %s, %d);' % (V(rd), V(rn), size)
                 if opc == 0x14 and not scalar and size < 3:     # [Recomps#1] sqxtn{2} / uqxtn{2}
                     return 'v_qxtn(%s, %s, %d, %d, %d);' % (V(rd), V(rn), size, q, u)
+                # [b3recomp] rt_ext.h: FRINTN/M/P/Z/A (vector), FCVTAS/FCVTAU, {S,U}ADDLP, {S,U}ADALP
+                mode = {(0, 0, 0x18): 0, (0, 0, 0x19): 1, (0, 1, 0x18): 2, (0, 1, 0x19): 3, (1, 0, 0x18): 4}.get((u, a, opc))
+                if mode is not None and not scalar:
+                    return 'v_frint(%s, %s, %d, %d, %d);' % (V(rd), V(rn), mode, sz, fcount())
+                if (a, opc) == (0, 0x1c):
+                    return 'v_fcvta(%s, %s, %d, %d, %d);' % (V(rd), V(rn), sz, u, fcount())
+                if opc in (0x02, 0x06) and not scalar and size < 3:
+                    return 'v_addlp(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), size, u, q, opc == 0x06)
                 op = {(1, 0x05): 'I1_NOT', (0, 0x05): 'I1_CNT', (1, 0x0b): 'I1_NEG', (0, 0x0b): 'I1_ABS',
                       (0, 0x09): 'I1_CMEQ0', (0, 0x00): 'I1_REV64'}.get((u, opc))
                 if op is None or (op in ('I1_NOT', 'I1_CNT') and size):
@@ -767,6 +794,15 @@ class Fn:
                 op = {0xc: 0, 0x8: 1, 0xa: 2}.get(bits(w, 15, 12))
                 if op is not None:
                     return 'v_long3(%s, %s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), V(rm), op, size, u, q)
+                if bits(w, 15, 12) < 4:                  # [b3recomp] {s,u}{addl,addw,subl,subw}{2}
+                    return 'v_addsubl(%s, %s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), V(rm), bits(w, 15, 12), size, u, q)
+            if bits(w, 20, 17) == 8 and bits(w, 11, 10) == 2:    # [b3recomp] across lanes, and scalar addp
+                opc = bits(w, 16, 12)
+                if scalar and (u, opc, size) == (0, 0x1b, 3):
+                    return '{ uint64_t t = c->v[%d].d[0] + c->v[%d].d[1]; c->v[%d].d[0] = t; c->v[%d].d[1] = 0; }' % (rn, rn, rd, rd)
+                op = {(0, 0x1b): 0, (0, 0x0a): 1, (1, 0x0a): 1, (0, 0x1a): 2, (1, 0x1a): 2, (0, 0x03): 3, (1, 0x03): 3}.get((u, opc))
+                if op is not None and not scalar and size < 3:
+                    return 'v_across(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), op, size, u, icount(size))
             raise Unimpl('simd-e')
         if bits(w, 27, 24) == 0xe:
             if bits(w, 15, 15) == 0 and bits(w, 10, 10) == 1:    # copy: dup / ins / umov / smov
@@ -800,6 +836,11 @@ class Fn:
                 return 'v_perm(%s, %s, %s, %d, %d, %d);' % (V(rd), V(rn), V(rm), bits(w, 14, 12), size, icount(size))
             raise Unimpl('simd-e')
         if bits(w, 10, 10) == 0:                          # by element
+            iop = {(0, 8): 0, (1, 0): 1, (1, 4): 2, (0, 0xc): 3, (0, 0xd): 4}.get((u, bits(w, 15, 12)))
+            if iop is not None and size in (1, 2):       # [b3recomp] rt_ext.h v_ielem
+                h, l, m = bits(w, 11, 11), bits(w, 21, 21), bits(w, 20, 20)
+                idx, rm_ = ((h << 2) | (l << 1) | m, bits(w, 19, 16)) if size == 1 else ((h << 1) | l, bits(w, 20, 16))
+                return 'v_ielem(%s, %s, vget(%s, %d, %d), %d, %d, %d);' % (V(rd), V(rn), V(rm_), size, idx, iop, size, icount(size))
             op = {9: 'F_MUL', 1: 'F_MLA', 5: 'F_MLS'}.get(bits(w, 15, 12))
             if op is None or u or not a:
                 raise Unimpl('simd-elem')
@@ -821,6 +862,10 @@ class Fn:
             return 'v_rshr(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), (16 << es) - immhb, es, u, icount(es))
         if opc in (0x12, 0x13) and not u and not scalar and es < 3:   # sqshrn{2} / sqrshrn{2}
             return 'v_sqshrn(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), (16 << es) - immhb, es, q, opc & 1)
+        if opc == 0x02:                                  # [b3recomp] ssra / usra
+            return 'v_sra(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), (16 << es) - immhb, es, u, icount(es))
+        if opc in (0x10, 0x11) and not u and not scalar and es < 3:   # [b3recomp] shrn{2} / rshrn{2}
+            return 'v_shrn(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), (16 << es) - immhb, es, q, opc & 1)
         if opc == 0x1f and not scalar and es >= 2:       # fcvtzs / fcvtzu, fixed-point
             return 'v_fcvtz_fix(%s, %s, %d, %d, %d, %d);' % (V(rd), V(rn), (16 << es) - immhb, es == 3, u, icount(es))
         raise Unimpl('simd-shift')
