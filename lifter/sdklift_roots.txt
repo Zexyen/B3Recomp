@@ -1,6 +1,6 @@
 # [b3recomp] roots for sdklift.py on Bayonetta 3's sdk (nnSdk 13.3.2): only names B3's main imports. B2's roots for SDK 3.6.0
 # (NVN texture-storage functions and the GM200 HAL by address, nn::mem::NumberLineAllocator) are not carried over: B3's main
-# imports no NumberLineAllocator, and the NVN addresses must be found again in 13.3.2 (nvn_sdk.c traps until then).
+# imports no NumberLineAllocator; the NVN ones are found by name below (`nvn`, `vmethod`: no addresses in this file).
 
 # libc the game imports from the sdk: pure
 div
@@ -34,3 +34,32 @@ _ZN2nn3hid23VibrationNodeConnectionC1Ev
 _ZN2nn3hid23VibrationNodeConnectionD1Ev
 _ZN2nn7friends12UserPresence5ClearEv
 _ZN2nn2os21SdkRecursiveMutexType10InitializeEv
+
+# [b3recomp] NVN texture storage rules (runtime/nvn_sdk.c), by name from the sdk's proc table (scripts/nvn_procs.py), and the
+# GPU memory-kind chooser they end in: NvRmGpuDeviceChooseKind -> NvRmNvgpuDevice +0x30 (the HAL object) -> the GM200 HAL's
+# kind method +0x90 and the methods it calls (docs/RE_NOTES.md section 6).
+nvn nvnTextureBuilderGetStorageSize
+nvn nvnTextureBuilderGetStorageAlignment
+nvn nvnTextureBuilderGetStorageClass
+nvn nvnTextureBuilderGetRawStorageClass
+nvn nvnTextureBuilderGetSparseTileLayout
+nvn nvnTextureBuilderGetViewOffset
+nvn nvnTextureGetStorageClass
+nvn nvnTextureGetRawStorageClass
+nvn nvnTextureGetSparseTileLayout
+nvn nvnTextureGetStorageSize
+nvn nvnTextureGetViewOffset
+vmethod N8nvrm_gpu5nvgpu15NvRmNvgpuDeviceE 30 NvRmNvgpuDevice_get_hal
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 90 HalGM200_choose_kind
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE a0 HalGM200_vt_a0
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 120 HalGM200_vt_120
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 138 HalGM200_vt_138
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 150 HalGM200_vt_150
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 158 HalGM200_vt_158
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 168 HalGM200_vt_168
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 170 HalGM200_vt_170
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 128 HalGM200_vt_128
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 130 HalGM200_vt_130
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 140 HalGM200_vt_140
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 148 HalGM200_vt_148
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 160 HalGM200_vt_160
