@@ -5375,17 +5375,18 @@ static void tex_compare(Ctx *c) {                       /* two textures are the 
     Tex *a = hobj(A0, K_TEX), *b = hobj(A1, K_TEX);
     RET(a && b && (a == b || !memcmp(&a->b, &b->b, sizeof a->b)));
 }
-static void tex_view_offset(Ctx *c) {                   /* (texture, view): where the view's first level and layer start in the texture's storage */
-    Tex *t = hobj(A0, K_TEX);
+static void view_offset(Ctx *c, TexBuilder *b) {       /* (texture or builder, view): where the view's first level and layer start in the storage */
     View v;
     TexLayout L;
-    if (!t || !A1 || (t->b.flags & 0x10)) { RET(0); return; }
+    if (!b || !A1 || (b->flags & 0x10)) { RET(0); return; }
     memcpy(&v, P(A1), sizeof v);
-    tex_lay(&t->b, &L);
+    tex_lay(b, &L);
     int level = (v.set & 0x81) == 0x81 ? v.lvl0 : 0, layer = (v.set & 0x82) == 0x82 ? v.lay0 : 0;
     if (level < 0 || level >= L.levels || layer < 0 || layer >= L.layers) { RET(0); return; }
     RET((uint64_t)(tex_level_ptr(&L, (const uint8_t *)0x1000, level, layer) - (const uint8_t *)0x1000));
 }
+static void tex_view_offset(Ctx *c) { Tex *t = hobj(A0, K_TEX); view_offset(c, t ? &t->b : NULL); }
+static void texb_view_offset(Ctx *c) { TexBuilder b = *TB; view_offset(c, &b); }   /* NVN 55 */
 /* ReadJob: nvn_front.h (V1 session 5: the Vulkan back end reads texels too) */
 /* nvnTextureReadTexels: texels of a region as tightly packed rows (or with the given strides). nvnTextureInvalidateTexels: what
  * the GPU rendered or copied into the texture becomes readable in its pool memory, in the texture's own (block-linear) layout. */
@@ -5878,6 +5879,27 @@ void nvn_gl_memory_written(uint64_t addr, uint64_t size) {
         if (!t->dead && t->mem && (uint64_t)(uintptr_t)t->mem < addr + size && addr < (uint64_t)(uintptr_t)t->mem + t->storage) t->dirty = 1;
 }
 
+/* [b3recomp] NVN 55 entry points that B2's NVN 3.6.0 did not have. Each one logs its first calls (nvn55: ...).
+ * Deferred binds take the same arguments as the plain ones; recorded the same way.
+ * shortcut: a deferred bind is read when recorded, not when the command buffer runs; upgrade if a game rewrites the array
+ * between recording and submit. */
+#define NVN55_LOG() do { static int n_; logf_limited(&n_, 3, "nvn55: %s (x1 %llx x2 %llx x3 %llx)\n", hostfn_current_name(), (unsigned long long)A1, (unsigned long long)A2, (unsigned long long)A3); } while (0)
+static void n55_nop(Ctx *c) { NVN55_LOG(); }
+static void n55_true(Ctx *c) { NVN55_LOG(); RET(1); }
+static void n55_zero(Ctx *c) { NVN55_LOG(); RET(0); }
+static void n55_ubos(Ctx *c) { NVN55_LOG(); cmd_ubos(c); }
+static void n55_ssbos(Ctx *c) { NVN55_LOG(); cmd_ssbos(c); }
+static void n55_textures(Ctx *c) { NVN55_LOG(); cmd_textures(c); }
+static void n55_images(Ctx *c) { NVN55_LOG(); cmd_images(c); }
+/* Separate textures / samplers (handles: texture id | 1 << 32, sampler id << 20, nvn_c5.c). A separate texture handle is a
+ * combined handle with sampler 0, so it is bound as one. shortcut: separate sampler binds are dropped (the shader translation
+ * combines a texture with the sampler of its own handle); upgrade when a shader samples a separately bound sampler. */
+static void n55_sep_texture(Ctx *c) { NVN55_LOG(); cmd_texture(c); }
+static void n55_sep_textures(Ctx *c) { NVN55_LOG(); cmd_textures(c); }
+/* Transform feedback, program subroutines, checkpoints, subtile size, ZF32 z-cull compression, virtual pool mapping: logged
+ * no-ops. shortcut: transform feedback captures nothing and its draw draws nothing; upgrade when a pass that renders with it
+ * is found missing. MapVirtual answers success without mapping (sparse pools are not modelled). */
+
 static const struct { const char *name; ImportFn fn; } k_nvn[] = {
     {"nvnDeviceSetWindowOriginMode", dev_origin_mode}, {"nvnDeviceSetDepthMode", dev_depth_mode}, {"nvnDeviceGetTextureHandle", dev_texture_handle},
     {"nvnDeviceGetTexelFetchHandle", dev_texel_fetch_handle}, {"nvnDeviceGetImageHandle", dev_image_handle},
@@ -6035,6 +6057,24 @@ static const struct { const char *name; ImportFn fn; } k_nvn[] = {
     {"nvnMemoryPoolInvalidateMappedRange", n_nop}, {"nvnDeviceRegisterFastClearColor", n_true}, {"nvnDeviceRegisterFastClearColori", n_true},
     {"nvnDeviceRegisterFastClearColorui", n_true}, {"nvnDeviceRegisterFastClearDepth", n_true}, {"nvnTextureBuilderGetZCullStorageSize", n_zero},
     {"nvnTextureGetZCullStorageSize", n_zero},
+    /* [b3recomp] NVN 55 (see above) */
+    {"nvnTextureBuilderGetViewOffset", texb_view_offset},
+    {"nvnCommandBufferBindUniformBuffersDeferred", n55_ubos}, {"nvnCommandBufferBindStorageBuffersDeferred", n55_ssbos},
+    {"nvnCommandBufferBindTexturesDeferred", n55_textures}, {"nvnCommandBufferBindImagesDeferred", n55_images},
+    {"nvnCommandBufferBindSeparateTexture", n55_sep_texture}, {"nvnCommandBufferBindSeparateTextures", n55_sep_textures},
+    {"nvnCommandBufferBindSeparateTexturesDeferred", n55_sep_textures}, {"nvnCommandBufferBindSeparateSampler", n55_nop},
+    {"nvnCommandBufferBindSeparateSamplers", n55_nop}, {"nvnCommandBufferBindSeparateSamplersDeferred", n55_nop},
+    {"nvnCommandBufferBindTransformFeedbackBuffer", n55_nop}, {"nvnCommandBufferBindTransformFeedbackBuffers", n55_nop},
+    {"nvnCommandBufferBeginTransformFeedback", n55_nop}, {"nvnCommandBufferEndTransformFeedback", n55_nop},
+    {"nvnCommandBufferPauseTransformFeedback", n55_nop}, {"nvnCommandBufferResumeTransformFeedback", n55_nop},
+    {"nvnCommandBufferDrawTransformFeedback", n55_nop},
+    {"nvnProgramSetSubroutineLinkage", n55_true}, {"nvnCommandBufferSetProgramSubroutines", n55_nop},
+    {"nvnProgramGetSubtileSize", n55_zero}, {"nvnCommandBufferOverrideSubtileSize", n55_nop},
+    {"nvnCommandBufferInsertCheckpointStatic", n55_nop}, {"nvnCommandBufferInsertCheckpointDynamic", n55_nop},
+    {"nvnDeviceSetAutomaticCheckpointsEnable", n55_nop}, {"nvnDeviceSetAutomaticCheckpointsMask", n55_nop},
+    {"nvnDeviceSetAutomaticCheckpointsSamplingInterval", n55_nop}, {"nvnDeviceSetAutomaticCheckpointsByDebugGroup", n55_nop},
+    {"nvnDeviceSetCheckpointCallStacksEnable", n55_nop}, {"nvnDeviceSetCheckpointMaxCallStacksDepth", n55_nop},
+    {"nvnCommandBufferSetZCullZF32CompressionEnable", n55_nop}, {"nvnMemoryPoolMapVirtual", n55_true},
 };
 
 /* The host function for an NVN entry point, or NULL when this backend does not implement it. */

@@ -942,12 +942,20 @@ class Env:
             if info == 0x403 and 0 <= addend < TEXT_SIZE and addend % 4 == 0:
                 starts.add(BASE + addend)
         # code addresses materialised in registers (callbacks, thread entry points): ADRP+ADD pairs and ADR
-        # [b3recomp] except a jump-table base: the register reaches a `br` within the next 6 instructions (B3's switches:
-        # adr x10, base; ldrh w11, [table, idx]; add x10, x10, x11, lsl #2; br x10). Taken as an entry it cut the
-        # function in two and its cases became indirect calls to addresses that are not functions.
+        # [b3recomp] except a jump-table base: the register reaches a `br` (B3's switches: adr x10, base; ldrh w11,
+        # [table, idx]; add x10, x10, x11, lsl #2; br x10, other instructions scheduled in between, up to 20 seen). Taken
+        # as an entry it cut the function in two and its cases became indirect calls to addresses that are not functions.
+        # Within 24 instructions, with nothing in between that writes the register (except that add) or branches.
         def table_base(i, r):
-            return any(struct.unpack_from('<I', text, 4 * k)[0] == 0xd61f0000 | (r << 5)
-                       for k in range(i + 1, min(i + 7, len(text) // 4)))
+            for k in range(i + 1, min(i + 25, len(text) // 4)):
+                w = struct.unpack_from('<I', text, 4 * k)[0]
+                if w == 0xd61f0000 | (r << 5):
+                    return True
+                if (w & 0xff000000) == 0x8b000000 and (w & 31) == r and (w >> 5) & 31 == r:
+                    continue                                 # add xR, xR, xE (shifted or extended)
+                if (w & 31) == r or (w & 0x7c000000) == 0x14000000 or (w & 0xff000010) == 0x54000000 or (w & 0xfffffc1f) == 0xd65f0000:
+                    return False                             # Rd/Rt is the register (conservative), b / bl / b.cond / ret
+            return False
         page = {}
         for i, (w,) in enumerate(struct.iter_unpack('<I', text)):
             if (w & 0x9f000000) == 0x90000000:                       # adrp

@@ -2,6 +2,7 @@
  * Registered by boot.c after r2_imports.c (later registrations replace earlier ones). Each one says what it models;
  * the "no-op" ones are services whose answer cannot change what a PC build does (notifications, recording, mouse). */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include "runtime.h"
@@ -15,6 +16,7 @@
 
 static void nothing(Ctx *c) { (void)c; }
 static void ret0(Ctx *c) { RET(0); }
+static void ret2(Ctx *c) { RET(2); }
 
 /* pthread_once(pthread_once_t *, void (*)(void)): musl's once word, 0 = not run, 1 = running, 2 = done.
  * shortcut: waiters spin on Sleep(0) (as cxx_call_once below); fine for one-time init, upgrade if a profile shows it */
@@ -38,6 +40,56 @@ static void sdkmutex_lock(Ctx *c) {
     while (InterlockedCompareExchange(w, 1, 0) != 0) Sleep(0);
 }
 static void sdkmutex_unlock(Ctx *c) { InterlockedExchange((volatile LONG *)(uintptr_t)A0, 0); }
+
+/* nn::os::ReaderWriterLockType: the guest object's first 8 bytes point at host state (made by Initialize, or on first use
+ * of a zero-filled object). nn::os semantics: the writer may take the read and write locks again (counted), readers wait
+ * while another thread writes, a writer waits for no readers and no other writer. Thread identity = the guest thread
+ * pointer (one per nn::os thread). shortcut: no writer preference (a stream of readers can starve a writer); upgrade if
+ * a hang shows a writer waiting. */
+typedef struct { SRWLOCK m; CONDITION_VARIABLE cv; int readers, writes, owner_reads; uint64_t owner; } RwLock;
+static RwLock *rw_get(uint64_t obj) {
+    RwLock *r = (RwLock *)(uintptr_t)rd64(obj);
+    if (r) return r;
+    RwLock *n = calloc(1, sizeof *n);
+    InitializeSRWLock(&n->m);
+    InitializeConditionVariable(&n->cv);
+    if (InterlockedCompareExchange64((volatile LONG64 *)(uintptr_t)obj, (LONG64)(uintptr_t)n, 0) != 0) { free(n); return (RwLock *)(uintptr_t)rd64(obj); }
+    return n;
+}
+static void rw_init(Ctx *c) { wr64(A0, 0); rw_get(A0); }
+static void rw_fini(Ctx *c) { RwLock *r = (RwLock *)(uintptr_t)rd64(A0); wr64(A0, 0); if (r) free(r); }
+static void rw_read(Ctx *c) {
+    RwLock *r = rw_get(A0);
+    AcquireSRWLockExclusive(&r->m);
+    if (r->writes && r->owner == c->tpidr) r->owner_reads++;
+    else { while (r->writes) SleepConditionVariableSRW(&r->cv, &r->m, INFINITE, 0); r->readers++; }
+    ReleaseSRWLockExclusive(&r->m);
+}
+static void rw_read_release(Ctx *c) {
+    RwLock *r = rw_get(A0);
+    AcquireSRWLockExclusive(&r->m);
+    if (r->writes && r->owner == c->tpidr && r->owner_reads) r->owner_reads--;
+    else if (r->readers) r->readers--;
+    WakeAllConditionVariable(&r->cv);
+    ReleaseSRWLockExclusive(&r->m);
+}
+static void rw_write(Ctx *c) {
+    RwLock *r = rw_get(A0);
+    AcquireSRWLockExclusive(&r->m);
+    if (!(r->writes && r->owner == c->tpidr)) {
+        while (r->writes || r->readers) SleepConditionVariableSRW(&r->cv, &r->m, INFINITE, 0);
+        r->owner = c->tpidr;
+    }
+    r->writes++;
+    ReleaseSRWLockExclusive(&r->m);
+}
+static void rw_write_release(Ctx *c) {
+    RwLock *r = rw_get(A0);
+    AcquireSRWLockExclusive(&r->m);
+    if (r->writes && r->owner == c->tpidr && --r->writes == 0) { r->owner = 0; r->readers += r->owner_reads; r->owner_reads = 0; }
+    WakeAllConditionVariable(&r->cv);
+    ReleaseSRWLockExclusive(&r->m);
+}
 
 /* nn::util::pmr: NewDeleteResource() is a MemoryResource whose do_allocate / do_deallocate go to the game's own
  * aligned_alloc / free (main exports both, image_layout.h), as operator new / delete do in the SDK.
@@ -149,6 +201,12 @@ static const ImportDef b3_imports[] = {
     {"_ZN2nn2os12SdkMutexType10InitializeEv", sdkmutex_init},
     {"_ZN2nn2os12SdkMutexType4LockEv", sdkmutex_lock},
     {"_ZN2nn2os12SdkMutexType6UnlockEv", sdkmutex_unlock},
+    {"_ZN2nn2os26InitializeReaderWriterLockEPNS0_20ReaderWriterLockTypeE", rw_init},
+    {"_ZN2nn2os24FinalizeReaderWriterLockEPNS0_20ReaderWriterLockTypeE", rw_fini},
+    {"_ZN2nn2os15AcquireReadLockEPNS0_20ReaderWriterLockTypeE", rw_read},
+    {"_ZN2nn2os15ReleaseReadLockEPNS0_20ReaderWriterLockTypeE", rw_read_release},
+    {"_ZN2nn2os16AcquireWriteLockEPNS0_20ReaderWriterLockTypeE", rw_write},
+    {"_ZN2nn2os16ReleaseWriteLockEPNS0_20ReaderWriterLockTypeE", rw_write_release},
     {"_ZN2nn4util3pmr17NewDeleteResourceEv", pmr_NewDeleteResource},
     {"_ZN2nn4util3pmr18GetDefaultResourceEv", pmr_GetDefaultResource},
     {"_ZN2nn4util3pmr18SetDefaultResourceEPNS_14MemoryResourceE", pmr_SetDefaultResource},
@@ -162,6 +220,7 @@ static const ImportDef b3_imports[] = {
     {"_ZN2nn2oe15UnmuteRecordingEv", nothing},
     {"_ZN2nn3hid29SetNpadHandheldActivationModeENS0_26NpadHandheldActivationModeE", nothing},
     {"_ZN2nn3hid15InitializeMouseEv", nothing},
+    {"_ZN2nn5audio41GetActiveAudioDeviceChannelCountForOutputEv", ret2},          /* the host output is opened as stereo */
     {"_ZN2nn3hid13GetMouseStateEPNS0_10MouseStateE", hid_GetMouseState},
     {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE", ret0},   /* the applet: "controllers are fine" */
 };
