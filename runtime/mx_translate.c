@@ -39,6 +39,8 @@ typedef struct {
     unsigned smem_words;
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
+    int uses_sg;                              /* [b3recomp] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
+    uint64_t gatom;                           /* [b3recomp] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
     uint32_t *jt;                             /* static jump target of SYNC / BRK / CONT */
@@ -690,7 +692,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned sr = MXB(i, 20, 8);
         const char *v;
         switch (sr) {
-        case 0x00: v = "gl_SubGroupInvocationARB"; break;
+        case 0x00: v = e->in->target == 1 ? (e->uses_sg = 1, "(gl_SubgroupInvocationID & 31u)") : "gl_SubGroupInvocationARB"; break;
         case 0x11: v = e->in->stage == MX_GEOMETRY || e->in->stage == MX_TESS_CONTROL ? "uint(gl_InvocationID)" : "0u"; break;
         case 0x12: v = "0x3f800000u"; break;                     /* y direction: +1 (the window origin is applied by glClipControl) */
         case 0x13: v = e->in->stage == MX_FRAGMENT ? "(gl_HelperInvocation ? 0xffffffffu : 0u)" : "0u"; break;
@@ -704,11 +706,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         case 0x25: v = "gl_WorkGroupID.x"; break;
         case 0x26: v = "gl_WorkGroupID.y"; break;
         case 0x27: v = "gl_WorkGroupID.z"; break;
-        case 0x38: v = "uint(gl_SubGroupEqMaskARB)"; break;
-        case 0x39: v = "uint(gl_SubGroupLtMaskARB)"; break;
-        case 0x3a: v = "uint(gl_SubGroupLeMaskARB)"; break;
-        case 0x3b: v = "uint(gl_SubGroupGtMaskARB)"; break;
-        case 0x3c: v = "uint(gl_SubGroupGeMaskARB)"; break;
+        case 0x38: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupEqMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupEqMaskARB)"; break;
+        case 0x39: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLtMaskARB)"; break;
+        case 0x3a: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupLeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupLeMaskARB)"; break;
+        case 0x3b: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGtMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGtMaskARB)"; break;
+        case 0x3c: v = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupGeMask[gl_SubgroupInvocationID >> 5]") : "uint(gl_SubGroupGeMaskARB)"; break;
         case 0x50: case 0x52: v = "0u"; break;                   /* clocks */
         default: v = NULL; break;
         }
@@ -717,11 +719,45 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         emit(e, "%s = %s;", DST, v);
         break;
     }
-    case MXOP_VOTE: {
+    case MXOP_VOTE:
+        if (e->in->target == 1) {               /* [b3recomp] Vulkan: over the 32 lanes of the Maxwell warp inside a subgroup of 32 or 64 */
+            unsigned m = MXB(i, 48, 2);
+            e->uses_sg = 1;
+            emit(e, "uint vb = subgroupBallot(%s)[gl_SubgroupInvocationID >> 5], va = subgroupBallot(true)[gl_SubgroupInvocationID >> 5];", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)));
+            if (PD(e, MXB(i, 45, 3))) emit(e, " %s = %s;", PD(e, MXB(i, 45, 3)), m == 0 ? "vb == va" : m == 1 ? "vb != 0u" : "vb == 0u || vb == va");
+            if (MXB(i, 0, 8) != 255) emit(e, " %s = vb;", DST);
+            break;
+        }
+        {
         const char *p = PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)), *f = MXB(i, 48, 2) == 0 ? "allInvocationsARB" : MXB(i, 48, 2) == 1 ? "anyInvocationARB" : "allInvocationsEqualARB";
         emit(e, "bool vp = %s;", p);
         if (PD(e, MXB(i, 45, 3))) emit(e, " %s = %s(vp);", PD(e, MXB(i, 45, 3)), f);
         if (MXB(i, 0, 8) != 255) emit(e, " %s = uint(ballotARB(vp));", DST);
+        break;
+        }
+    case MXOP_SHFL: {                           /* [b3recomp] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
+                                                 * and segment mask (bits 8..12), immediate (bits 34..46) or Rc; Pd (48..50) = the source lane is in range.
+                                                 * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). */
+        static const char *const range[4] = {
+            "uint mn = tid & seg; mx = mn | (cl & ~seg); src = (sa & ~seg) | mn; ib = int(src) <= int(mx);",
+            "mx = (tid & seg) | (cl & ~seg); src = tid - sa; ib = int(src) >= int(mx);",
+            "mx = (tid & seg) | (cl & ~seg); src = tid + sa; ib = int(src) <= int(mx);",
+            "mx = (tid & seg) | (cl & ~seg); src = tid ^ sa; ib = int(src) <= int(mx);"};
+        if (e->in->target != 1) { fail(e, "SHFL", "warp shuffle (OpenGL target)"); break; }
+        e->uses_sg = 1;
+        b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
+        c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
+        emit(e, "uint sv = %s, sa = %s, sb = %s, tid = gl_SubgroupInvocationID & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, range[MXB(i, 30, 2)]);
+        emit(e, " uint sh = subgroupShuffle(sv, (src & 31u) | (gl_SubgroupInvocationID & ~31u)); %s = ib ? sh : sv;", DST);
+        if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
+        break;
+    }
+    case MXOP_FSWZADD: {                        /* [b3recomp] a * la[q] + b * lb[q], q = the 2-bit field of the swizzle (bits 28..35) for this lane of
+                                                 * its quad (suyu's tables: la = 1 -1 1 0, lb = 1 1 -1 1). NDV (bit 38) and CC are not modelled. */
+        if (MXB(i, 38, 1) || MXB(i, 47, 1)) { fail(e, "FSWZADD", "FSWZADD with NDV or CC"); break; }
+        const char *lane = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupInvocationID") : "gl_SubGroupInvocationARB";
+        emit(e, "uint q = (%uu >> ((%s & 3u) << 1)) & 3u;", (unsigned)MXB(i, 28, 8), lane);
+        fres(e, i, S(e, "F(%s) * vec4(1.0, -1.0, 1.0, 0.0)[q] + F(%s) * vec4(1.0, 1.0, -1.0, 1.0)[q]", A8, R20), 0, 0);
         break;
     }
     case MXOP_NOP: case MXOP_DEPBAR: case MXOP_MEMBAR: case MXOP_VOTE_vtg: case MXOP_CCTL: case MXOP_CCTLL: case MXOP_SSY: case MXOP_PBK: case MXOP_PCNT:
@@ -1108,6 +1144,40 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (mode == 1) emit(e, " f *= F(%s);", R20);
         if (MXB(i, 51, 1)) emit(e, " f = clamp(f, 0.0, 1.0);");
         emit(e, " %s = U(f);", DST);
+        break;
+    }
+    case MXOP_BAR: {                            /* [b3recomp] BAR.SYNC 0 with immediate zero operands (suyu: the only form it translates) */
+        if ((i & 0x0000009b00000000ull) != 0x0000008000000000ull || !MXB(i, 43, 1) || !MXB(i, 44, 1) || MXB(i, 8, 8) || MXB(i, 20, 12) || e->in->stage != MX_COMPUTE) {
+            fail(e, "BAR", "BAR form %016llx", (unsigned long long)i); break;
+        }
+        emit(e, "memoryBarrierShared(); memoryBarrierBuffer(); barrier();");
+        break;
+    }
+    case MXOP_ATOM: case MXOP_RED: {            /* [b3recomp] global atomics (suyu's fields): ATOM d 0..7, b 20..27, size 49..51, op 52..55; RED b 0..7, size
+                                                 * 20..22, op 23..25; address register 8..15 + signed offset 28..47. Ops 0 add 1 min 2 max 3 inc 4 dec 5 and 6 or
+                                                 * 7 xor 8 exch 10 safe add; sizes 0 u32 1 s32 3 f32 (add only). Result = the old value. */
+        int red = op == MXOP_RED;
+        unsigned sz = red ? MXB(i, 20, 3) : MXB(i, 49, 3), aop = red ? MXB(i, 23, 3) : MXB(i, 52, 4), rd = red ? 255 : MXB(i, 0, 8), rb = red ? MXB(i, 0, 8) : MXB(i, 20, 8);
+        int rel = (int)(MXB(i, 28, 20) << 12) >> 12;
+        unsigned cls = sz == 0 ? 0 : sz == 1 ? 1 : sz == 3 ? 2 : 3;
+        if (aop == 10) aop = 0;
+        if (cls == 3 || aop > 8 || (cls == 2 && aop != 0)) { fail(e, mx_op_name[op], "%s size %u op %u", mx_op_name[op], sz, aop); break; }
+        if (MXB(i, 8, 8) == 255) { fail(e, mx_op_name[op], "global atomic at an absolute address"); break; }
+        e->uses_gmem = 1; e->uses_gstore = 1; e->gatom |= 1ull << (aop + 11 * cls);
+        emit(e, "uint old = mx_atom%u_%u(%s + 0x%08xu, %s);", cls, aop, A8, (uint32_t)rel, X(e, rb));
+        if (rd != 255) emit(e, " %s = old;", D(e, rd));
+        break;
+    }
+    case MXOP_ATOMS: {                          /* [b3recomp] shared-memory atomics: d 0..7, address register 8..15, b 20..27, size 28..29 (0 u32, 1 s32),
+                                                 * word offset 30..51 (signed, x 4), op 52..55 as ATOM */
+        unsigned sz = MXB(i, 28, 2), aop = MXB(i, 52, 4), rd = MXB(i, 0, 8), words = e->smem_words;
+        int rel = (int)(MXB(i, 30, 22) << 10) >> 10;
+        static const char *const fn[9] = {"atomicAdd", "atomicMin", "atomicMax", NULL, NULL, "atomicAnd", "atomicOr", "atomicXor", "atomicExchange"};
+        if (aop == 10) aop = 0;
+        if (sz > 1 || aop > 8 || !fn[aop] || (sz == 1 && (aop == 1 || aop == 2)) || e->in->stage != MX_COMPUTE || !words) { fail(e, "ATOMS", "ATOMS size %u op %u", sz, aop); break; }
+        e->uses_smem = 1;
+        emit(e, "uint ad = %s + 0x%08xu; uint old = %s(smem[min(ad >> 2, %uu)], %s);", MXB(i, 8, 8) == 255 ? "0u" : A8, (uint32_t)(rel * 4), fn[aop], words - 1, X(e, MXB(i, 20, 8)));
+        if (rd != 255) emit(e, " %s = old;", D(e, rd));
         break;
     }
     case MXOP_LDL: case MXOP_STL: case MXOP_LDS: case MXOP_STS: {       /* local memory (per invocation) and shared memory (per work group) */
@@ -1556,6 +1626,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
         if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
+        if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
         emit(&h, "%s", k_prelude);
         if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; };\n");      /* track O */
         else
@@ -1624,6 +1695,21 @@ int mx_translate(const MxIn *in, MxOut *out) {
             emit(&h, "void mx_stg(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2; switch (ad >> 27) {\n");
             for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) emit(&h, " case %uu: s%u[o] = v;%s break;\n", k + 1, k, in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : "");
             emit(&h, " } }\n");
+        }
+        for (unsigned bit = 0; bit < 33; bit++) {               /* [b3recomp] global atomics: one function per op and class, the atomic on the block itself */
+            if (!(e->gatom >> bit & 1)) continue;
+            unsigned aop = bit % 11, cls = bit / 11;
+            static const char *const direct[9] = {"atomicAdd", "atomicMin", "atomicMax", NULL, NULL, "atomicAnd", "atomicOr", "atomicXor", "atomicExchange"};
+            const char *dfn = cls == 2 || (cls == 1 && (aop == 1 || aop == 2)) ? NULL : direct[aop];
+            const char *expr = cls == 2 ? "U(F(ov) + F(v))" : aop == 1 ? "uint(min(int(ov), int(v)))" : aop == 2 ? "uint(max(int(ov), int(v)))" : aop == 3 ? "ov >= v ? 0u : ov + 1u" : "(ov == 0u || ov > v) ? v : ov - 1u";
+            emit(&h, "uint mx_atom%u_%u(uint ad, uint v) { uint o = (ad & 0x07ffffffu) >> 2; switch (ad >> 27) {\n", cls, aop);
+            for (unsigned k = 0; k < 16; k++) {
+                if (!(e->ssbos >> k & 1)) continue;
+                const char *wm = in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : "";
+                if (dfn) emit(&h, " case %uu: {%s return %s(s%u[o], v); }\n", k + 1, wm, dfn, k);
+                else emit(&h, " case %uu: {%s uint ov = s%u[o]; for (;;) { uint nv = %s, r = atomicCompSwap(s%u[o], ov, nv); if (r == ov) return ov; ov = r; } }\n", k + 1, wm, k, expr, k);
+            }
+            emit(&h, " } return 0u; }\n");
         }
         emit(&h, "void main() {\n");
         if (in->stage == MX_VERTEX) {
