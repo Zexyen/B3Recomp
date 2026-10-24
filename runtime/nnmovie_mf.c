@@ -125,6 +125,9 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 #define SLOT_BYTES 64
 #include "image_layout.h"
 #define GAME_FREE (GUEST_BASE + GAME_FREE_OFF)        /* [Recomps#1] our main's exported free, as in libcxx.c */
+/* [b3recomp] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new [game 0x7100cd50f0], which free()
+ * does not know ("not a live block" at the end of the opening movie): the deleting destructors release them with operator delete. */
+#define GAME_DELETE (GUEST_BASE + GAME_OPDELETE_OFF)
 #define TOKEN_MAGIC 0x4d4f564945544f4bULL             /* "MOVIETOK" */
 
 /* ---------------------------------------------------------------- small helpers */
@@ -809,7 +812,7 @@ static void ext_dtor_common(Ctx *c, int deleting) {
         free(e);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_FREE, A0, 0, 0, 0, 0);       /* the game allocated the 16-byte object with f_710392dce0 [game 0x71036f1ccc] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
 }
 static void ext_dtor(Ctx *c) { ext_dtor_common(c, 0); }
 static void ext_deleting_dtor(Ctx *c) { ext_dtor_common(c, 1); }
@@ -1061,7 +1064,7 @@ static void dec_dtor_common(Ctx *c, int deleting) {
         free(d);
         wr64(A0 + 8, 0);
     }
-    if (deleting) gcall(c, GAME_FREE, A0, 0, 0, 0, 0);       /* the game allocated the 16-byte object with f_710392dce0 [game 0x71036f1ccc] */
+    if (deleting) gcall(c, GAME_DELETE, A0, 0, 0, 0, 0);     /* the game allocated the 16-byte object with its operator new [game 0x7100cd50f0] */
 }
 static void dec_dtor(Ctx *c) { dec_dtor_common(c, 0); }
 static void dec_deleting_dtor(Ctx *c) { dec_dtor_common(c, 1); }
