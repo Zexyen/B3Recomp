@@ -2233,8 +2233,10 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
  * batch that holds the whole range is read through its mapping once the GPU has run what is recorded so far (submit + wait:
  * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
  * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
+static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [b3recomp] dispatches / storing draws recorded; the count at the last wait of indirect_src */
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
+    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) return (const uint8_t *)c->mem.map + (addr - c->addr);      /* nothing written since the last wait */
     if (c && c->mem.map) {
         if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
             VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -2245,7 +2247,7 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
         uint64_t sr = cmd_submit(NULL, NULL);
         for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
         if (R.done < sr) R.done = sr;
-        R.cb_waits++;
+        R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
         return (const uint8_t *)c->mem.map + (addr - c->addr);
     }
     if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
@@ -2719,6 +2721,7 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cp);
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
     vkCmdDispatch(R.cmd, gx, gy, gz);
+    g_gpu_writes++;                                /* [b3recomp] indirect_src waits again */
     if (v->images) storage_barrier();              /* [b3recomp] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -2981,7 +2984,7 @@ static int draw_prepare(unsigned prim) {
                 else printf("%c%d:%llx+%llx ", s ? 'f' : 'v', k, (unsigned long long)R.ubo[s][k - 3].addr, (unsigned long long)R.ubo[s][k - 3].size); } }
         printf("\n");
     }
-    if (stores) R.pass_stores = 1;                 /* [b3recomp] pass_end makes the writes visible */
+    if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [b3recomp] pass_end makes the writes visible; indirect_src waits again */
     return 1;
 }
 
