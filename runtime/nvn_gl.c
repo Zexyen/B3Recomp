@@ -530,6 +530,7 @@ static void *hnew(uint64_t g, uint32_t kind, size_t size) {
 
 static SRWLOCK g_pool_lock = SRWLOCK_INIT;
 static Tex *volatile g_all_tex;            /* every texture, newest first (never unlinked: host records of textures are not freed) */
+static volatile LONG g_tex_dead_gen;       /* textures finalized so far (nvn_gl_memory_written's index) */
 void nvn_label_set(uint64_t obj, const char *text);
 const char *nvn_label_get(uint64_t obj);
 void nvn_label_drop(uint64_t obj);
@@ -4425,6 +4426,7 @@ static void tex_finalize(Ctx *c) {
     Tex *t = hobj(A0, K_TEX);
     if (!t) return;
     InterlockedExchange(&t->dead, 1);
+    InterlockedIncrement(&g_tex_dead_gen);              /* nvn_gl_memory_written's index drops it */
     wr32(A0 + 8, 0);
     nvn_label_drop(A0);
     defer_free(K_TEX, t);
@@ -5884,9 +5886,50 @@ static void vk_shutdown_at_exit(void) {
 
 /* nvnBufferFlushMappedRange / nvnMemoryPoolFlushMappedRange (nvn_stub.c): the CPU wrote this memory. Textures stored there are read again. */
 Tex *nvn_front_tex_first(void) { return g_all_tex; }
+/* [b3recomp] The game flushes many ranges a frame from two threads (B3: 83-96 % of MainDraw's and Flush's busy time went
+ * into walking every texture ever made). The live textures with memory, sorted by address (lo), with the running
+ * maximum of their ends: a flush finds the last span starting before its end and walks back while that maximum still
+ * reaches its start. Rebuilt when a texture is made (the list head moved) or finalized (g_tex_dead_gen).
+ * SSBU_TEXSPAN_CHECK=1: every flush is checked against the plain walk (test). */
+typedef struct { uintptr_t lo, hi, maxhi; Tex *t; } TexSpan;
+static TexSpan *g_span;
+static int g_span_n, g_span_cap;
+static Tex *g_span_head;
+static LONG g_span_gen = -1;
+static SRWLOCK g_span_lock = SRWLOCK_INIT;
+static int span_cmp(const void *a, const void *b) { uintptr_t x = ((const TexSpan *)a)->lo, y = ((const TexSpan *)b)->lo; return x < y ? -1 : x > y; }
+static void span_rebuild(Tex *head, LONG gen) {
+    g_span_n = 0;
+    for (Tex *t = head; t; t = t->all_next) {
+        if (t->dead || !t->mem || !t->storage) continue;
+        if (g_span_n == g_span_cap) { g_span_cap = g_span_cap ? g_span_cap * 2 : 4096; g_span = realloc(g_span, sizeof *g_span * (size_t)g_span_cap); }
+        g_span[g_span_n].lo = (uintptr_t)t->mem; g_span[g_span_n].hi = (uintptr_t)t->mem + t->storage; g_span[g_span_n++].t = t;
+    }
+    qsort(g_span, (size_t)g_span_n, sizeof *g_span, span_cmp);
+    for (int i = 0; i < g_span_n; i++) g_span[i].maxhi = i && g_span[i - 1].maxhi > g_span[i].hi ? g_span[i - 1].maxhi : g_span[i].hi;
+    g_span_head = head; g_span_gen = gen;
+}
 void nvn_gl_memory_written(uint64_t addr, uint64_t size) {
-    for (Tex *t = g_all_tex; t; t = t->all_next)
-        if (!t->dead && t->mem && (uint64_t)(uintptr_t)t->mem < addr + size && addr < (uint64_t)(uintptr_t)t->mem + t->storage) t->dirty = 1;
+    static int check = -1;
+    static LONG64 g_check_bad;
+    int marked = 0;
+    AcquireSRWLockExclusive(&g_span_lock);
+    Tex *head = g_all_tex;
+    LONG gen = g_tex_dead_gen;
+    if (head != g_span_head || gen != g_span_gen) span_rebuild(head, gen);
+    int lo = 0, hi = g_span_n;                         /* first span with lo >= addr + size */
+    while (lo < hi) { int mid = (lo + hi) / 2; if (g_span[mid].lo < addr + size) lo = mid + 1; else hi = mid; }
+    for (int i = lo - 1; i >= 0 && g_span[i].maxhi > addr; i--)
+        if (g_span[i].hi > addr && !g_span[i].t->dead) { g_span[i].t->dirty = 1; marked++; }
+    ReleaseSRWLockExclusive(&g_span_lock);
+    if (check < 0) check = getenv("SSBU_TEXSPAN_CHECK") != NULL;
+    if (check) {
+        int want = 0;
+        for (Tex *t = head; t; t = t->all_next)
+            if (!t->dead && t->mem && t->storage && (uint64_t)(uintptr_t)t->mem < addr + size && addr < (uint64_t)(uintptr_t)t->mem + t->storage) want++;
+        if (want != marked && InterlockedIncrement64(&g_check_bad) <= 10)
+            printf("nvn_gl: TEXSPAN CHECK: flush %llx+%llx marked %d textures, the walk finds %d\n", (unsigned long long)addr, (unsigned long long)size, marked, want);
+    }
 }
 
 /* [b3recomp] NVN 55 entry points that B2's NVN 3.6.0 did not have. Each one logs its first calls (nvn55: ...).
