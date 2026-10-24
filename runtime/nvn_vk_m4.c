@@ -501,6 +501,12 @@ static int g_nolib;
 static VkPipeline g_vilib[3];
 static LONG64 g_gpl_made, g_gpl_made_tk, g_gpl_draw, g_gpl_draw_tk, g_gpl_draw_max, g_gpl_wait, g_gpl_wait_tk, g_gpl_link, g_gpl_link_tk, g_gpl_link_max, g_gpl_dlink, g_gpl_dlink_tk, g_gpl_dlink_max, g_gpl_dlink_fight;
 static DWORD g_render_tid;
+/* [b3recomp] the depth bounds test is dynamic state in every pipeline of the draws (when the GPU has the feature) */
+static uint32_t dyn_depth_bounds(VkDynamicState *d) {
+    if (!D.f2.features.depthBounds) return 0;
+    d[0] = VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE; d[1] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;
+    return 2;
+}
 static uint32_t pipe_dyn_list(VkDynamicState *dyn) {
     static const VkDynamicState base[20] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
         VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
@@ -513,6 +519,7 @@ static uint32_t pipe_dyn_list(VkDynamicState *dyn) {
         dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
     }
+    ndyn += dyn_depth_bounds(dyn + ndyn);
     return ndyn;
 }
 static void gpl_ms(VkPipelineMultisampleStateCreateInfo *ms, VkSampleMask *smask, int samples, int sshade) {      /* the same in the pair library and in the fragment output library */
@@ -933,6 +940,7 @@ whole:;
         dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
     }
+    ndyn += dyn_depth_bounds(dyn + ndyn);
     VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dy.dynamicStateCount = ndyn; dy.pDynamicStates = dyn;
     VkPipelineVertexInputStateCreateInfo vi;

@@ -22,7 +22,7 @@ static int have_targets_live(void);
     X(vkCmdBeginRendering) X(vkCmdEndRendering) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdSetDepthBias) \
     X(vkCmdSetBlendConstants) X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdSetStencilReference) X(vkCmdSetLineWidth) X(vkCmdSetCullMode) X(vkCmdSetFrontFace) \
     X(vkCmdSetPrimitiveTopology) X(vkCmdSetDepthTestEnable) X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp) \
-    X(vkCmdSetDepthBiasEnable) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) \
+    X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBoundsTestEnable) X(vkCmdSetDepthBounds) X(vkCmdSetPrimitiveRestartEnable) X(vkCmdSetRasterizerDiscardEnable) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) \
     X(vkCmdClearAttachments) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdBlitImage) X(vkCmdResolveImage) X(vkCmdClearDepthStencilImage) X(vkGetFenceStatus) \
     X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetQueryPoolResults) X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkResetQueryPool) X(vkCreatePipelineCache) X(vkGetPipelineCacheData) X(vkDestroyPipelineCache) X(vkCmdCopyBuffer) \
     X(vkCreateDescriptorUpdateTemplate) X(vkUpdateDescriptorSetWithTemplate) X(vkDestroyDescriptorUpdateTemplate)
@@ -238,6 +238,7 @@ static struct {
     uint8_t blend[8][8], blend_on, logic, poly[4], ms[24];
     float viewport[4], drange[2], blendc[4], point_size, line_width, polyoff[3];
     int scissor[4], have_viewport, have_scissor, rast_discard, depth_clamp, restart, render_off;
+    int dbounds_on; float dbounds[2];             /* [b3recomp] nvnCommandBufferSetDepthBounds */
     int ncol; TargetRef col[8], depth; int have_targets;
     int64_t row_stride, image_stride;
     int dyn_dirty, vi_dirty, dyn3_dirty, dyn3_samples;      /* dyn3: the extended-dynamic-state-3 group (blend, masks, polygon mode, multisample) */
@@ -439,7 +440,7 @@ static int g_tset_used, g_tset_list_used;
  * buffer already holds. Every pipeline of the draws declares the same dynamic states (pipe_dyn_list), so a pipeline bind
  * keeps them; the shadow is forgotten where a command buffer begins and where our own stencil clear sets state of its own.
  * SSBU_VK_DYNSHADOW=0: everything sent at every change as before. */
-typedef struct { VkViewport vp; VkRect2D sc; float lw, bias[3], blendc[4]; uint32_t scm[2], swm[2], sref[2], cull, ff, dte, dwe, dop, ste, sop[2][4], dbe, rd; } DynSh;
+typedef struct { VkViewport vp; VkRect2D sc; float lw, bias[3], blendc[4]; uint32_t scm[2], swm[2], sref[2], cull, ff, dte, dwe, dop, ste, sop[2][4], dbe, rd, dbt; float dbr[2]; } DynSh;
 typedef struct { VkBool32 en[8]; VkColorBlendEquationEXT eq[8]; VkColorComponentFlags wm[8]; uint32_t poly, a2c, smask, samples, dclamp; } DynSh3;
 static DynSh g_dsh;
 static DynSh3 g_dsh3;
@@ -1409,12 +1410,12 @@ static Pipe *pipe_make(const PKey *k, VStage *vs, VStage *fs, double *took) {
     VkPipelineColorBlendStateCreateInfo cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     cb.attachmentCount = k->ncolor; cb.pAttachments = ba;
     if (k->logic != 3 && D.f2.features.logicOp) { cb.logicOpEnable = VK_TRUE; cb.logicOp = (VkLogicOp)(k->logic & 15); }
-    static const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+    VkDynamicState dyn[22] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
         VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
         VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
         VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_EXT};
     VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dy.dynamicStateCount = sizeof dyn / sizeof *dyn; dy.pDynamicStates = dyn;
+    dy.dynamicStateCount = 20 + dyn_depth_bounds(dyn + 20); dy.pDynamicStates = dyn;
     VkPipelineRenderingCreateInfo ri = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     VkFormat cf[8];
     for (int i = 0; i < 8; i++) cf[i] = (VkFormat)k->cfmt[i];
@@ -1736,6 +1737,7 @@ static void set_dynamic_state(void) {
     }
     n.dbe = (uint32_t)((R.poly[3] >> (R.poly[2] < 3 ? R.poly[2] : 2)) & 1);          /* offset enable bits: point, line, fill; the polygon mode picks one */
     n.rd = (uint32_t)R.rast_discard;
+    n.dbt = D.f2.features.depthBounds && R.dbounds_on; n.dbr[0] = R.dbounds[0]; n.dbr[1] = R.dbounds[1];      /* [b3recomp] values in [0, 1], set by OP_DEPTHBOUNDS */
     int all = !g_dsh_ok || !dsh_on(), sent = 0;
     const DynSh *o = &g_dsh;
 #define DIFF(f) (all || memcmp(&n.f, &o->f, sizeof n.f))
@@ -1760,9 +1762,11 @@ static void set_dynamic_state(void) {
     if (all || memcmp(n.sop[1], o->sop[1], sizeof n.sop[1])) { vkCmdSetStencilOp(R.cmd, VK_STENCIL_FACE_BACK_BIT, (VkStencilOp)n.sop[1][0], (VkStencilOp)n.sop[1][1], (VkStencilOp)n.sop[1][2], (VkCompareOp)n.sop[1][3]); sent++; }
     if (DIFF(dbe)) { vkCmdSetDepthBiasEnable(R.cmd, n.dbe); sent++; }
     if (DIFF(rd)) { vkCmdSetRasterizerDiscardEnable(R.cmd, n.rd); sent++; }
+    if (D.f2.features.depthBounds && DIFF(dbt)) { vkCmdSetDepthBoundsTestEnable(R.cmd, n.dbt); sent++; }
+    if (D.f2.features.depthBounds && DIFF(dbr)) { vkCmdSetDepthBounds(R.cmd, n.dbr[0], n.dbr[1]); sent++; }
 #undef DIFF
     g_dsh = n; g_dsh_ok = 1;
-    g_dsh_sent += sent; g_dsh_kept += 21 - sent;
+    g_dsh_sent += sent; g_dsh_kept += 23 - sent;
 }
 static int have_targets_live(void) { return R.in_pass || R.have_targets; }
 /* Session 4: the state that left the pipeline key (VK_EXT_extended_dynamic_state3). Set after a pipeline is bound, whenever
@@ -2885,6 +2889,7 @@ static void stencil_clear_masked(uint32_t mask, uint32_t value, int sx, int sy, 
     vkCmdSetDepthTestEnable(R.cmd, VK_FALSE); vkCmdSetDepthWriteEnable(R.cmd, VK_FALSE); vkCmdSetDepthCompareOp(R.cmd, VK_COMPARE_OP_ALWAYS); vkCmdSetStencilTestEnable(R.cmd, VK_TRUE);
     vkCmdSetStencilOp(R.cmd, VK_STENCIL_FACE_FRONT_AND_BACK, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE, VK_COMPARE_OP_ALWAYS);
     vkCmdSetDepthBiasEnable(R.cmd, VK_FALSE); vkCmdSetPrimitiveRestartEnable(R.cmd, VK_FALSE); vkCmdSetRasterizerDiscardEnable(R.cmd, VK_FALSE);
+    if (D.f2.features.depthBounds) { vkCmdSetDepthBoundsTestEnable(R.cmd, VK_FALSE); vkCmdSetDepthBounds(R.cmd, 0.0f, 1.0f); }
     if (D.has_vids) vkCmdSetVertexInputEXT(R.cmd, 0, NULL, 0, NULL);      /* without the extension: layout 0 of the key, no vertex input */
     vkCmdDraw(R.cmd, 3, 1, 0, 0);
     R.pipe_bound = NULL; R.dyn_dirty = 1;
@@ -3338,7 +3343,14 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_REPORT_VALUE: if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; } break;
     case OP_CONSRASTER: if (a[0] & 1) nvn_vk_missing("conservative rasterisation (nvnCommandBufferSetConservativeRasterEnable)"); break;
-    case OP_DEPTHBOUNDS: if (a[0] & 1) nvn_vk_missing("the depth bounds test (nvnCommandBufferSetDepthBounds)"); break;
+    case OP_DEPTHBOUNDS: {                         /* [b3recomp] a0 bit 0 enable, a1 = near, far (two floats): fragments pass where the stored depth is inside */
+        float v[2]; memcpy(v, &a[1], 8);
+        if ((a[0] & 1) && !D.f2.features.depthBounds) { nvn_vk_missing("the depth bounds test on a GPU without the depthBounds feature"); break; }
+        R.dbounds_on = (int)(a[0] & 1);
+        R.dbounds[0] = v[0] < 0 ? 0 : v[0] > 1 ? 1 : v[0]; R.dbounds[1] = v[1] < 0 ? 0 : v[1] > 1 ? 1 : v[1];
+        R.dyn_dirty = 1;
+        break;
+    }
     case OP_RENDER_ENABLE: if (!a[1]) R.render_off = !(a[0] & 1); else nvn_vk_missing("conditional rendering (nvnCommandBufferSetRenderEnableConditional)"); break;
     case OP_ROWSTRIDE: R.row_stride = (int64_t)a[0]; break;      /* PR #14 (xtlg511): no longer read by the copies (they carry their own strides); kept as state */
     case OP_IMAGESTRIDE: R.image_stride = (int64_t)a[0]; break;
