@@ -2,8 +2,8 @@
 
 Stage 5 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg), the prologue and **the first fights** run, with
 sound and scripted pad input (punch, kick, dodge, jump, movement: Verse 1 cleared, Verse 2 reached), without a "not
-implemented" stop in 1,500 s. 60 fps in-engine on light scenes, 30 fps movies, about 40 fps in fights (render-thread
-bound). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / known items, listed below.
+implemented" stop in 1,500 s of the prologue (chapter 1 reaches tessellation). 30 fps movies; **chapter-1 fights about 59 fps**
+(were 44-52: a texture walk on every NVN flush, see Performance). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / known items, listed below.
 
 ## What builds
 
@@ -221,23 +221,61 @@ Left, judged benign or known:
 - Screenshots: `/tmp/shots/b3_first_fight_verse1.png`, `b3_verse1_start.png`, `b3_verse1_combo.png`, `b3_verse2.png`,
   `b3_verse2_fight.png`.
 
+## Performance (2026-10-24): chapter-1 fights at 60 fps
+
+**Benchmark**: the save as it is now (the user's chapter-1 progress) → Chapter Select → chapter 1 → Verse 1 on the grass
+field (from about frame 19,400), A every 3 s plus the fight script of stage 5 from 560 s, 1,100 s, `SSBU_AUDIO_MUTE=1`,
+`SSBU_VK_MISSING=warn` (the chapter's tessellated draws are skipped: blocker 3). Numbers over the 300-frame windows from
+frame 19,800 to the end of the run (`nvn_vk:` / `nvn_perf:` / `nvn_vk_timeline:` lines). The runs use a copy of the save
+(`/tmp/b3_userdata_<run>`): the game autosaves.
+
+| run | build | fps avg (min) | 1 %-low fps | frame time | render thread a frame (batch start → last submission) |
+|---|---|---|---|---|---|
+| base1 | before | 44.5 (30.5) | 31.1 | 23.3 ms | - |
+| base2 | before | 49.4 (35.7) | 32.5 | 20.6 ms | 15.1 ms |
+| base3 | before (profiled 90 s) | 52.1 (43.1) | 35.0 | 19.3 ms | 13.1 ms |
+| fix2 | flush index | **59.3 (50.6)** | **47.4** | **16.9 ms** | 12.4 ms |
+| o2a | flush index, host -O2 | 59.4 (51.9) | 49.3 | 16.8 ms | 11.9 ms |
+
+(Run `fix1`, the same build as `fix2`, ran 17-24 fps from 640 to 810 s with every thread slowed alike, sampler included, and 59.2 fps
+from frame 22,800 to the end: taken as outside CPU load and left out.)
+
+- **The cause**: `SSBU_LPROF` (below) found **83-96 % of the busy time of the game's MainDraw and Flush threads in
+  `nvn_gl_memory_written`**: every `nvnMemoryPoolFlushMappedRange` / `nvnBufferFlushMappedRange` walked every texture ever
+  made (the list is never unlinked) to mark the ones it overlaps; B3 flushes many ranges a frame. Now a span index of the
+  live textures sorted by address (binary search, running maximum end), rebuilt when a texture is made or finalized;
+  `SSBU_TEXSPAN_CHECK=1` compares every lookup with the walk (240 s, no difference). After it, MainDraw is 12 % busy.
+- **Tried, not kept**: (1) the kept vertex buffers of finding 140 (`vrc_*`) for streams no compute buffer overlaps (they are
+  off whenever any compute buffer is live, i.e. always in a B3 fight): the ring copies fell from 29 to 7 MB a frame, but the
+  render thread per draw did not move (13.2 against 13.6 us: the write-watch questions cost what the copies saved), so the
+  change was dropped. (2) The host sources at -O2 (`--host-opt=O2`): 13.8 against 13.6 us per draw, the same within the
+  noise; the default stays -O1.
+- **What is left on the render thread** (about 60 % busy in a fight): memcpy (46 %: compute buffers filled from guest
+  memory at a dispatch, texture uploads, the copy-back of compute results), `cb_keep_back`, `draw_prepare`. The dips
+  (min 50-52 fps windows) were not looked into one by one.
+- **`SSBU_LPROF=<start s>,<seconds>[,<file>]`** (Linux, test only, `runtime/lprof.c`): every thread is sampled with a
+  real-time signal (SDL3's threads block SIGPROF), PC + host call chain; `scripts/lprof_report.py <file>` lists the busy
+  threads (innermost frame not waiting in libc) with their self / inclusive functions (nm of b3-game, game.so: `f_<guest
+  address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
+
 ## Next blockers (most urgent first)
 
-1. **Fight frame rate**: 40 fps on average in the first fights (38-45 at 900-1,500 draws a frame; 60 in-engine on lighter
-   scenes and cutscenes). The render thread is the limit: per frame 13.2 ms batch replay (3.3 dispatch, 3.7 draw
-   preparation), 3.7 ms compute copy-back, 1.1 ms GPU wait (`nvn_vk_perf`, frames 42,000..42,300 of run `fight1`).
-2. **Which route a run takes** depends on when the A presses land on the title: either the movie route (`ev0000` ..
-   `ev0011`, then chapter 1) or Chapter Select → Prologue (`ev0020` .. `ev0026`, then the fights). An `SSBU_SEQ` with
-   `@draws` anchors would make it reproducible.
-3. **Camera input**: the keyboard / script mapping has no right stick; pads (SDL / XInput) were not tested here.
-4. **Picture correctness**: no reference images to compare with.
-5. **Windows build** of the movie changes (not compiled here).
-6. **Tessellation stages** (29 programs): translator and pipeline support. Not reached in 1,500 s of either route
-   (the draw would stop with "a draw with a geometry or tessellation stage").
+1. **Camera (right stick) on a real pad**: the user's chapter-1 play by hand: the right stick does not turn the camera.
+   Found so far: B3 reads `GetNpadState(NpadFullKeyState)` and converts all four stick axes [game 0x7100cc53d0]; the SDL
+   mapping of the user's "Steam Controller" (28de:1304) has `rightx:a2, righty:a3`; the pad self-test passes (49/49). Not yet
+   confirmed in a game run (the work is paused: `git stash` "camera right-stick WIP (paused)": script keys 4/8/6/2 for the
+   right stick, `SSBU_HIDLOG` callers of the state reads, and the Linux path of `config/controllers.ini`, which is never
+   written on Linux now (the path is cut at `\`, so it points into `build/b3-game/..`)).
+2. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
+   Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
+3. **Tessellation** (29 programs): reached in chapter 1 (NVN primitive type 14 = patches; the run stops there without
+   `SSBU_VK_MISSING=warn`). Translator stages and pipeline support are missing.
+4. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
+5. **Picture correctness**: no reference images to compare with.
+6. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
 7. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
-8. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again; this
-   stage changed `MX_VK_VERSION` once).
+8. **First-run warm-up**: minutes of held loading screens after a translator change.
 9. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
    `nn::audio` Resampler imports (not reached), about 170 other imports without a handler (none reached).
 
