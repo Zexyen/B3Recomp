@@ -1,6 +1,7 @@
 # b3recomp status
 
-Stage 2 (2026-10-23): boots to the title screen, the menus and the prologue's pause menu; the 3D world is black. Linux only (the system's clang 23, SDL3, Vulkan, glslang), measured on the developer's PC
+Stage 2 (2026-10-23): boots to the title screen, the menus and chapter 1's loading screen (pause menu usable). Stage 3 work is
+largely untested in the game (see "Needs a game run"). Linux only (the system's clang 23, SDL3, Vulkan, glslang), measured on the developer's PC
 (16 threads, RX 9070 XT / RADV) with their own dump.
 
 ## What builds
@@ -56,24 +57,77 @@ What runs now, measured on the developer's PC (RX 9070 XT, RADV), Vulkan back en
 **Nothing of the 3D world is visible**: in the prologue the screen is black behind the menus (57 draws per frame, about
 5 % of draws skipped). All 2D UI (menus, text, help pictures, pause menu, photo mode) renders. No sound (see below).
 
+## Stage 3 (2026-10-23): the 3D world, shader translation, Vulkan gaps
+
+Stage 3 was cut short: the PC is in use, so after the first runs below **no game run was allowed**. Everything after
+those runs was checked offline only (builds, the translator check below). What a run showed before the stop:
+
+- **The Vulkan back end skipped every indirect draw** (`DrawArraysIndirect`, `DrawElementsIndirect`, `MultiDraw...Indirect`,
+  `...IndirectCount`, 261,000 calls in 240 s): it had no case for the front end's `OP_DRAW_INDIRECT`. Implemented (one Vulkan
+  draw per record, the records read on the CPU once compute output there has landed). Two 60 s runs and one 150 s run
+  after that: no crash, the "DrawIndirect not implemented" report gone.
+- **"3D black" in chapter 1 is a loading screen that never ends.** Zoomed in, the faint dot bottom right is the loading
+  emblem, dimmed: after Story (or Continue) the game stays on that screen; the pause menu works during it, which is why
+  stage 2 took it for gameplay. Thread samples (gdb) during it: no deadlock; the main thread presents and waits on GPU
+  syncs, the loader and file threads are idle. What it waits for is not known yet.
+- One frame's pass list (`SSBU_VK_DUMPTEX=<frame>,1x1,0`): about 65 draws, a 17-draw depth pass, a 16-draw shadow map, a
+  bloom chain, no scene pass: consistent with GPU-driven drawing whose culling compute (atomics) did not run.
+- **Audio**: Wwise opened its output with SDK 13's event-less `OpenDefaultAudioOut(AudioOut*, const AudioOutParameter&)`,
+  which had no handler. Added; a run confirmed sound (48 kHz stereo on PipeWire, buffers appended and released). Whether this
+  unblocks the chapter loading was not observed (the run was interrupted).
+- One 150 s run presented only 518 frames (about 3.5 fps), two later 60 s runs 2,300+ frames (with and without the audio
+  output): the slow run is not explained.
+
+Offline, `tools/mxcheck.c` translates every stage a run dumped and compiles it with glslang (the same path as the Vulkan
+back end):
+
+```
+SSBU_SHADERDUMP_ALL=<dir> ...game run...                       # once: s<program>_<index>.mxd, the game's code: keep out of the repo
+clang -O1 -I runtime tools/mxcheck.c runtime/mx_translate.c -lglslang -lglslang-default-resource-limits -lm -o build/mxcheck
+build/mxcheck <dir> [-v] [-o <dir for the GLSL of failing stages>]
+```
+
+On the 7,838 vertex / fragment / compute stages of a run: **5,627 compiled at the start of stage 3, 7,838 now**. Added:
+`SHFL` (warp shuffle on `subgroupShuffle`, 32-lane warps inside 32/64-wide subgroups), `VOTE` / lane id / lane masks on KHR
+subgroups, `FSWZADD` (with `.NDV`), `BAR.SYNC`, `ATOM` / `RED` / `ATOMS` (global through per-op helpers on the storage
+blocks, CAS loops where GLSL has no atomic), image accesses whose handle register was loaded from an image slot (all 799 of
+them), texel offsets from registers (lowered), `VMNMX`, `SAM` / `RAM`. Not covered: the 29 programs with **tessellation**
+stages (the translator has no tessellation or geometry stage; their draws are reported as missing).
+
+Vulkan back end, built but not run: **storage images** (417 fragment and 4 compute stages store to images; the back end
+ignored `nvnCommandBufferBindImage`): handles per stage, STORAGE usage on colour images whose format allows it, views, the
+descriptor layouts (per pipeline, universal, compute), GENERAL layout, barriers after a storing pass or dispatch. **Depth
+bounds test** as dynamic state.
+
+### Needs a game run to validate (in this order)
+
+1. The chapter-1 load: does it finish now (audio output, indirect draws, compute with atomics / shuffles, storage images)?
+   If not, sample the threads again and find what the loader polls.
+2. Storage images (first run of `resolve_image` and the new layouts): no Vulkan errors (`SSBU_VK_DEBUG=1`), draws with
+   images not skipped.
+3. The translated instructions: correct output, not only compilation: `SHFL` / `VOTE` lane mapping on RADV's subgroups,
+   atomics, `FSWZADD`, the texel-offset lowering (implicit LOD uses level 0: shortcut), `SAM` / `RAM` as no-ops.
+4. Depth bounds (first run of the dynamic state).
+5. Indirect draws: that the culled scene draws (a pass list with a scene pass, a picture with the 3D world).
+6. The title background and the over-bright "Press any button" glow: both expected to come from these (a 3D backdrop, a
+   bloom / exposure chain fed by compute), not verified.
+7. The slow 150 s run (518 frames).
+8. Without `SSBU_VK_MISSING=warn`: which "not implemented" stop comes first now (tessellation draws are a known one).
+
+Test path note: the runs left a save in `build/run/userdata`, so the menu offers Continue; `SSBU_PRESS=Z,25,3` (A every 3 s)
+goes from the title into chapter 1.
+
 ## Next blockers (most urgent first)
 
-1. **3D scene renders black.** Candidates, all logged: draws whose shader stage cannot be translated (skipped);
-   `nvnCommandBufferDrawIndirect` not implemented in the Vulkan back end; compute dispatches that cannot be translated
-   (skipped); `nvnCommandBufferSetDepthBounds`. The game makes heavy use of `MultiDrawElementsIndirectCount` (261,000
-   calls in 240 s) and `DrawElementsIndirect`: whether those draw is the first thing to check.
-2. **Maxwell shader translation** (`mx_translate.c`), stages not translated in a 170 s run: `SHFL` 1,335 (warp shuffle:
-   GLSL `subgroupShuffle*`), `SUST` with an image handle in a register 147 (bindless images), `ATOM` / `ATOMS` / `RED` 43
-   (global / shared atomics), `VMNMX` 9, `BAR` forms 9; 12 stages rejected by glslang (`textureOffset` with a non-constant
-   offset: needs `textureGatherOffsets`-style lowering or the non-constant-offset extension).
+1. **The chapter-1 loading screen that does not end** (above), then whatever the 3D scene still lacks.
+2. **Tessellation stages** (29 programs): translator and Vulkan pipeline support.
 3. **Movies**: `movie::` (subsdk0) plays VP9 WebM; Linux has only the failing placeholder (Media Foundation on Windows). The
    game skips a film it cannot open, so this does not block, but every cutscene is missing. Needs a VP9 decoder behind
    `movie::Extractor` / `Decoder` (libvpx or FFmpeg). B3's Extractor vtable differs from Smash's (SetDataSource at +0x78).
-4. **Audio**: `nn::audio::OpenDefaultAudioOut` has no handler (Wwise output) -> silent.
-5. **`nn::account::PopOpenUsers`** has no handler (called once at boot, harmless so far).
-6. **The rest of the imports**: about 170 without a handler (libc stdio / dirent / time, libc++ streams); none reached yet
-   beyond the two above.
-7. **Compile time**: about 12 min for a full build (incremental relift: seconds).
+4. **`nn::account::PopOpenUsers`** has no handler (called once at boot, harmless so far); the Resampler imports of
+   `nn::audio` (not reached).
+5. **The rest of the imports**: about 170 without a handler (libc stdio / dirent / time, libc++ streams); none reached.
+6. **Compile time**: about 12 min for a full build (incremental relift: seconds).
 
 ## Known shortcuts (marked `shortcut:` in the code)
 
@@ -88,4 +142,8 @@ What runs now, measured on the developer's PC (RX 9070 XT, RADV), Vulkan back en
 - `nn::os` ReaderWriterLock has no writer preference.
 - The device fields the sdk's texture code reads are modelled (`nvn_sdk.c`); "compression supported" (+0x1b34 = 1) is
   inferred, its writer was not found.
+- Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel
+  offset of an implicit-LOD sample is scaled by level 0's size; storage images need a format with storage support and the
+  same texel size as the shader's typed format (else logged as missing).
+- Indirect draws are read on the CPU (one Vulkan draw per record) instead of `vkCmdDrawIndirect*`.
 - Not tested: Windows builds of these changes (only `TOOLCHAIN=linux` was built and run).
