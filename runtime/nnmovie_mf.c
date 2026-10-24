@@ -1325,6 +1325,7 @@ static void movie_CreateH264DecoderConfigurationData(Ctx *c) {   /* (sps, spsLen
 static const ImportDef movie_mf_imports[] = {
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", extractor_ctor},
     {"_ZN5movie9ExtractorC2ENS_13ContainerTypeE", extractor_ctor},
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [b3recomp] SDK 13's form (x2 = cache size) */
     {"_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", movie_SetAllocator},
