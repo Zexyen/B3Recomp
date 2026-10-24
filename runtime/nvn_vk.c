@@ -173,9 +173,29 @@ void nvn_vk_missing(const char *what) {
 
 /* [Recomps#1] parameter types as in PFN_vkDebugUtilsMessengerCallbackEXT (was VkFlags, VkFlags): clang >= 16 rejects the
  * assignment below as incompatible function pointer types when the enum's type is int (MSVC target) */
+/* [b3recomp] messages counted per VUID (message id name): the first 3 of each are printed, all of them in the summary at
+ * shutdown (vk_validation_summary), most frequent first */
+static struct { char name[96]; LONG64 n; int error; } g_vuid[512];
+static int g_nvuid;
+static SRWLOCK g_vuid_lock = SRWLOCK_INIT;
+static void vk_validation_summary(void) {
+    if (!g_nvuid) return;
+    for (int i = 0; i < g_nvuid; i++) for (int j = i + 1; j < g_nvuid; j++) if (g_vuid[j].n > g_vuid[i].n) { char t[sizeof g_vuid[0]]; memcpy(t, &g_vuid[i], sizeof t); memcpy(&g_vuid[i], &g_vuid[j], sizeof t); memcpy(&g_vuid[j], t, sizeof t); }
+    printf("vk-validation summary: %d message ids, %lld messages\n", g_nvuid, (long long)g_vk_messages);
+    for (int i = 0; i < g_nvuid; i++) printf("vk-validation summary: %8lld %s %s\n", (long long)g_vuid[i].n, g_vuid[i].error ? "error  " : "warning", g_vuid[i].name);
+}
 static VkBool32 VKAPI_PTR vk_debug_cb(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT types, const VkDebugUtilsMessengerCallbackDataEXT *data, void *user) {
     (void)types; (void)user;
-    if (InterlockedIncrement64(&g_vk_messages) <= 200)
+    const char *id = data && data->pMessageIdName ? data->pMessageIdName : "?";
+    LONG64 seen = 0;
+    InterlockedIncrement64(&g_vk_messages);
+    AcquireSRWLockExclusive(&g_vuid_lock);
+    int k;
+    for (k = 0; k < g_nvuid && strcmp(g_vuid[k].name, id); k++) {}
+    if (k == g_nvuid && g_nvuid < 512) { snprintf(g_vuid[k].name, sizeof g_vuid[k].name, "%s", id); g_vuid[k].error = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0; g_nvuid++; }
+    if (k < 512) seen = ++g_vuid[k].n;
+    ReleaseSRWLockExclusive(&g_vuid_lock);
+    if (seen <= 3)
         printf("vk-validation: %s: %s: %s\n", severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "error" : "warning", data && data->pMessageIdName ? data->pMessageIdName : "?",
                data && data->pMessage ? data->pMessage : "");
     fflush(stdout);
@@ -560,6 +580,7 @@ void nvn_vk_shutdown(void) {
     vkDestroySurfaceKHR(V.instance, V.surface, NULL);
     if (V.messenger && vkDestroyDebugUtilsMessengerEXT) vkDestroyDebugUtilsMessengerEXT(V.instance, V.messenger, NULL);
     vkDestroyInstance(V.instance, NULL);
+    vk_validation_summary();
     printf("nvn_vk: shutdown clean: swapchain, sync objects, command pool, device, surface and instance destroyed (%lld frames presented, %lld Vulkan call failures, %lld validation messages%s)\n",
            (long long)g_vk_frames, (long long)g_vk_errors, (long long)g_vk_messages, V.validate ? "" : ": layer not active");
     fflush(stdout);
