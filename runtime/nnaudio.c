@@ -299,6 +299,11 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     RET(0);
 }
 
+/* [b3recomp] SDK 13's OpenDefaultAudioOut(AudioOut *, const AudioOutParameter &): no event (the game polls for released
+ * buffers); the event the older form signals is a private one here. */
+static uint8_t g_own_event[0x40];
+static void audio_OpenDefaultAudioOut13(Ctx *c) { c->x[2] = c->x[1]; c->x[1] = (uint64_t)(uintptr_t)g_own_event; audio_OpenDefaultAudioOut(c); }
+static void audio_GetAudioOutState(Ctx *c) { RET(g_started ? 0 : 1); }        /* AudioOutState: 0 started, 1 stopped */
 static void audio_GetAudioOutChannelCount(Ctx *c) { RET(g_channels); }
 static void audio_GetAudioOutSampleRate(Ctx *c) { RET(g_rate); }
 static void audio_GetAudioOutSampleFormat(Ctx *c) { RET(SAMPLE_FORMAT_PCM16); }
@@ -709,6 +714,8 @@ static void opus_constructor(Ctx *c) {                /* HardwareOpusDecoder(int
 static const ImportDef audio_imports[] = {
     {AU("27InitializeAudioOutParameterEPNS0_17AudioOutParameterE"), audio_InitializeAudioOutParameter},
     {AU("19OpenDefaultAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut},
+    {AU("19OpenDefaultAudioOutEPNS0_8AudioOutERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut13},      /* [b3recomp] */
+    {AU("16GetAudioOutStateEPKNS0_8AudioOutE"), audio_GetAudioOutState},                                         /* [b3recomp] */
     {AU("23GetAudioOutChannelCountEPKNS0_8AudioOutE"), audio_GetAudioOutChannelCount},
     {AU("21GetAudioOutSampleRateEPKNS0_8AudioOutE"), audio_GetAudioOutSampleRate},
     {AU("23GetAudioOutSampleFormatEPKNS0_8AudioOutE"), audio_GetAudioOutSampleFormat},
