@@ -1,6 +1,6 @@
 # Bayonetta 3 (Switch): reverse-engineering notes
 
-Findings of stage 1 (2026-10-23), from the developer's own dump. Numbers below are sizes, counts, versions and offsets
+Findings of stages 1 and 2 (2026-10-23), from the developer's own dump. Numbers below are sizes, counts, versions and offsets
 inside the modules; no code or data of the game is reproduced. Offsets are module offsets (main at `0x7100000000`,
 sdk at `0x7500000000` in the runtime). Everything here can be re-checked with the tools named in each section.
 
@@ -46,8 +46,8 @@ B3's SDK 13 better than B2's 3.6.0 did (e.g. `nvnBootstrapLoader` / proc names, 
 
 ### Version check
 
-The dump has no control data (no NACP), so the update version is not known; the port identifies the build by main's
-build id. `scripts/setup.py` (step `verify`) holds the SHA-256 and size of each ExeFS file, three small RomFS archives
+The dump has no control data (no NACP); the game itself shows **1.2.0** on its title screen. The port identifies the
+build by main's build id. `scripts/setup.py` (step `verify`) holds the SHA-256 and size of each ExeFS file, three small RomFS archives
 and a manifest hash of the RomFS file list (552 files, 15,047,510,227 bytes), the same way B2recomp checks for 1.2.
 
 ## 2. Imports the runtime must provide
@@ -83,9 +83,11 @@ fetches all of them at start; whether it calls any is not known yet (calling one
   `{r}shrn`, `orr`/`bic` immediate, integer by-element multiplies, one-lane `ld2`-`ld4`/`st2`-`st4`, `ld2r`-`ld4r`.
   Checked against Unicorn by `lifter/test_b3.py` (200 words, 4,000 cases). What is left untranslated is zero padding,
   the MOD0 header and `udf` traps.
-- **Jump tables**: B3's compiler emits `adr xB, base; ldrb/ldrh wE, [table, idx]; add xB, xB, wE, lsl #2; br xB`. The
-  `adr` target was taken as a function entry (B2's lifter adds every `adr`/`adrp+add` code address), which cut each
-  switch function in two. Now a code address whose register reaches a `br` within 6 instructions is not an entry.
+- **Jump tables**: B3's compiler emits `adr xB, base; ldrb/ldrh wE, [table, idx]; add xB, xB, wE, lsl #2; br xB`, with up
+  to 20 other instructions scheduled in between. The `adr` target was taken as a function entry (B2's lifter adds every
+  `adr`/`adrp+add` code address), which cut each switch function in two. Now a code address whose register reaches a `br`
+  within 24 instructions, with no write of that X register (SIMD / FP destinations do not count) and no branch in between,
+  is not an entry; none is left in main.
 - B2's `test_ext.py` expected `ldaxp xzr, ...` to write `x[31]`; it is a discard (the lifter was right, the test is fixed).
 
 ## 4. RomFS: `.pkz` archives
@@ -141,6 +143,52 @@ block). B2's runtime gave each thread a zeroed block, which worked for B2. B3's 
   `bool f(pname, int *out)` (0x499b60) answers the fixed ones. `runtime/gen/make_gen.py` finds both by their constants
   and takes 90 of 105 answers (GPU code versions 1.5 .. 1.16, pool / descriptor sizes and alignments) from the player's sdk.
 
+### NVN 13.3.2 objects, as the sdk's own code reads them (stage 2)
+
+Found by disassembling the entry points `scripts/nvn_procs.py` names; offsets are into the opaque objects the game hands
+over. The runtime keeps its own layout in those objects; these are what `runtime/nvn_sdk.c` rebuilds to run the sdk's
+texture-storage code.
+
+**NVNtextureBuilder** (the setters): +0x08 device, +0x10 storage pool, +0x18 offset, +0x20 flags, +0x24 target,
++0x28 width, +0x2c height, +0x30 depth, +0x34 levels, +0x38 format, +0x3c samples, +0x40 swizzle (4 words), +0x50
+depth-stencil mode, +0x54 u16 packaged layout (1 | (word & 0xfff) << 4), +0x58 stride, +0x5c GL texture name, +0x60
+packaged data. B2's NVN 3.6.0 had the same fields 8 bytes lower (device at +0) with stride and GL name swapped.
+
+**NVNtexture** (nvnTextureInitialize, no GL name): no longer a copy of the builder but packed fields:
++0x08 device, +0x10 pool, +0x18 u64 offset (48 bits) | levels << 48 | samples << 56, +0x20 u64 width | height (16) << 32 |
+depth (16) << 48, +0x28 48 bits: flags (16) | format (9) << 16 | target (7) << 25 | swizzle 4 x 3 bits << 32 |
+depth-stencil mode (2) << 44 | format record +0xe != 0 << 46 | +0xf != 0 << 47; +0x48 the layout block (written by the
+layout function, the first call of nvnTextureBuilderGetStorageSize): memory kind = byte +0x59, storage size = u32 +0x5a;
++0x60 GPU address, +0x78 u16 descriptor slot (only format 0x34). nvnTextureGetStorageClass = 0x100 | byte +0x59,
+nvnTextureGetStorageSize = u32 +0x5a.
+
+**NVNtextureView** is a packed 64-bit word in the sdk (nvnTextureBuilderGetViewOffset tests bits 56, 57, 61).
+
+**Format table**: 0xa1 records of 0x30 bytes (B2: 0x34) behind a GOT slot; +0 bit 0 = exists, +8 / +9 block size,
++0xe / +0xf compression-related flags, +0x10 bytes per element. The table ends where the next table (with pointers) starts.
+
+**NVNdevice fields** read by the storage code: +0xcc big page size (0x10000; nvnDeviceGetInteger also answers it),
++0x990 `{lib, NvRmGpuDevice*}` (the chooser reads +0x998), +0x1a10 / +0x1a14 compression switches (0 after
+nvnDeviceInitialize; a value 0x76165656 disables compression), +0x1b30 kind of buffer / linear textures (0), +0x1b34 byte
+"compression supported" (1, writer not found: inferred).
+
+**Memory kind chooser**: NVN's helper builds an attribute record and calls `NvRmGpuDeviceChooseKind` -> NvRmNvgpuDevice
+(`N8nvrm_gpu5nvgpu15NvRmNvgpuDeviceE`) method +0x30 = `return this->+0xf0` (the HAL object) -> HAL
+(`N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE`) method +0x90, which calls +0xa0, +0x120 .. +0x170 and reads the chip
+descriptor's kind table. HAL object = 0x38 bytes {vtable, descriptor, 2 factory arguments, 0}; descriptor of the Tegra X1:
+name "NVIDIA Tegra/Nintendo Switch" (twice) at +0 / +8, GPU id 0x12b at +0x10, factory at +0x18, kind table at +0x48
+(2-byte entries), count at +0x50. `lifter/sdklift.py` lifts all of these by name (`nvn` and `vmethod` roots) and writes
+their addresses to `runtime/gen/nvn_sdk_addrs.h`.
+
+**Shader data** (nvnProgramSetShaders, NVNshaderData = {GPU code, control section}): the machine code starts at
+data + control +0x708. Graphics stages: 0x30, behind magic 0x12345678 (program header at +0x30); compute stages: 0 (bare
+code) or **0x100 behind a new magic 0x12345679** (66 of B3's 74 compute programs). control +0x6f8 = code size, +0x6fc /
++0x700 = size / data offset of the embedded constants, +0x714 = stage (5 = compute), +0x748 work group size.
+
+**NVN 55 entry points** the game fetches (all 532 of the sdk's are fetched) that B2's runtime lacked: 32, now handled in
+`nvn_gl.c` (see STATUS.md, shortcuts). Device and handle encodings (texture / sampler / separate handles) are the same as
+in Smash's SDK 13.0.4 (checked in the disassembly).
+
 ## 7. Boot, step by step
 
 What stopped boot, in order, and what fixed it:
@@ -154,5 +202,15 @@ What stopped boot, in order, and what fixed it:
 6. Graphics: NVN API 0.0 rejected -> 55.12; then zero pool alignments / GPU code versions -> sdk-derived answers (section 6).
 7. GPU heaps: the 262 MB `FrameBufferHeap` did not fit: the game sizes its heap from the reported application memory
    (B2's 3 GB) and needs 3,028 MB of blocks -> 3,285 MB (the console's application memory).
-8. **Current stop**: `runtime/nvn_sdk.c` runs B2's SDK 3.6.0 texture-storage code by address (sdk 0x2c9748) to size a
-   texture; in B3's sdk that address is inside libpng. See `docs/STATUS.md`, next steps.
+8. NVN texture storage: B2's SDK 3.6.0 addresses -> the sdk's own 13.3.2 code found by name (section 6).
+9. A switch at main 0xcc69c4 still cut in two: its `adr` base was 7 instructions before the `br` (the rule looked 6 ahead)
+   -> up to 24, stopping at anything that writes the register or branches.
+10. The game stops presenting after ~90 frames: the applet model suspends it when its window is not in the foreground
+    (`SSBU_FOCUS_NOTIFY=0` for test runs).
+11. `div` reached as a stub (garbage quotients) -> the lifted sdk `div` installed (`lifter/sdklift_install.txt`).
+12. Crash while loading: main's state function at 0x6d760 was cut by a jump-table base whose `adr` and `br` had an
+    `fmov s10` between them (taken as a write of x10) -> SIMD / FP destinations ignored; no table base is an entry now.
+13. Compute stages translated from the 0x12345679 header instead of the code -> code at data + control +0x708.
+14. `nvnCommandBufferDispatchComputeIndirect` missing in the Vulkan back end -> added. Title screen reached.
+15. Story: `movie::Extractor(ContainerType, CacheSize)` (SDK 13 form) had no handler -> the failing placeholder; the
+    opening movie is skipped and the prologue starts (3D world black, see STATUS.md).
