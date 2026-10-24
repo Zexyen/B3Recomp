@@ -15,7 +15,7 @@ bound). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / 
 | tables | `runtime/gen/*` from the player's sdk/main: layout, 600 imports, 86 lifted SDK functions (NVN texture storage and the GPU kind chooser among them), 90 of 105 NVN device answers |
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
-| link | `build/game.so` (154 MB) + `build/game_native` (4.4 MB) + `libssbu_glslang.so` |
+| link | `build/game.so` (154 MB) + `build/b3-game` (4.4 MB) + `libssbu_glslang.so` |
 | check | B2's lifter self-test (382 pair words, 25 SIMD words) and the B3 one (200 words, 4,000 cases) against Unicorn: 0 failures (needs `pip install unicorn`; `build/venv` is fine) |
 
 Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 archives), `scripts/pgdat.py` (DAT),
@@ -26,12 +26,13 @@ Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 arch
 ```
 cd build && mkdir -p run && cd run
 SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSBU_USERDATA=$PWD/userdata \
-    ../game_native ../../targets/exefs/main.elf 240
+    ../b3-game ../../targets/exefs/main.elf 240
 ```
 
 (argument 2 = seconds before the runtime stops it; the log goes to the console, the first calls of every import to
 `boot_trace.txt`.) The process, its window and its audio stream are named **B3 Recomp** (app id `b3recomp`), so they do not
-clash with B2recomp's `game_native`: `pgrep -x "B3 Recomp"` finds it.
+clash with B2recomp: `pgrep -x "B3 Recomp"` finds it. The executable is `build/b3-game` (`b3-game.exe` on Windows; it was
+`game_native`, the same name as B2recomp's, until 2026-10-24).
 
 - `SSBU_FOCUS_NOTIFY=0`: without it the applet model (nnmisc.c) **suspends the game whenever its window is not in the
   foreground** (mode 3, as on the console); a run on a desktop where the window loses the focus then looks hung.

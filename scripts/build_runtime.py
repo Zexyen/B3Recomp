@@ -4,17 +4,17 @@
 
 TOOLCHAIN (scripts/toolchain.py): mingw (default) = llvm-mingw into the places below (game.dll.a instead of game.lib, plus
 COPYING.MinGW-w64-runtime.txt); msvc = clang 9 + MSVC link, game.dll from build/obj_msvc, everything into build/out_msvc
-(run it with cwd = build/ and the config variables, e.g. scripts/bench.py --exe build/out_msvc/game_native.exe).
+(run it with cwd = build/ and the config variables, e.g. scripts/bench.py --exe build/out_msvc/b3-game.exe).
 ssbu_glslang.dll is built only by the msvc toolchain (step 4); the mingw build uses the one in build/ (MSVC-built, C
 interface: notes/toolchain-mingw.md 3.1).
 
 --obj: the lifted objects for game.dll (default build/obj); --host-opt: optimisation of the host sources (default O1);
---out: build game.dll, obj_host/ and game_native.exe there instead of build/ (a variant beside the real build; SDL3.dll and
+--out: build game.dll, obj_host/ and b3-game.exe there instead of build/ (a variant beside the real build; SDL3.dll and
 ssbu_glslang.dll are copied from build/, run it with cwd = build/ and SSBU_GRAPHICS_CONFIG / SSBU_CONFIG set).
 
   1. build/game.dll (+ .lib): build/obj/*.obj (scripts/compile_main.py) + runtime/game_shim_eh.c (main has C++ exception tables: the landing-pad resume table goes in)
   2. build/obj_host/*.obj:    runtime host sources (their HOST_SOURCES minus the Smash-only files) + gamedll.c
-  3. build/game_native.exe:   host objects + game.lib + SDL3 + Windows libraries (+ icon 1 = build/bayonetta2.ico when it exists,
+  3. build/b3-game.exe:   host objects + game.lib + SDL3 + Windows libraries (+ icon 1 = build/bayonetta2.ico when it exists,
                               scripts/make_icon_local.py); SDL3.dll copied beside it
   4. build/ssbu_glslang.dll:  runtime/build_glslang.bat (MSVC + glslang 16.6.0 release libraries)
 """
@@ -76,7 +76,7 @@ if MINGW:
                    '-Werror=incompatible-function-pointer-types']
     LIBS += ['-lopengl32', '-lws2_32', '-ladvapi32', '-luuid']   # #pragma comment(lib) (nvn_gl.c, nnnet.c, nnmisc.c) and MSVC's
                                                           # default uuid.lib (GUID_NULL): not applied in mingw mode
-DLL, EXE = os.path.join(toolchain.OUT, 'game.so' if LINUX else 'game.dll'), os.path.join(toolchain.OUT, 'game_native' if LINUX else 'game_native.exe')
+DLL, EXE = os.path.join(toolchain.OUT, 'game.so' if LINUX else 'game.dll'), os.path.join(toolchain.OUT, 'b3-game' if LINUX else 'b3-game.exe')
 IMPLIB = lambda dll: dll[:-4] + ('.dll.a' if MINGW else '.lib')     # game.dll's import library
 ICO = os.path.join(BUILD, 'bayonetta2.ico')
 
@@ -120,7 +120,7 @@ def main():
             HOST_FLAGS[0] = '-' + a[11:]
         elif a.startswith('--out='):
             out_dir = os.path.abspath(a[6:])
-            OBJH, DLL, EXE = os.path.join(out_dir, 'obj_host'), os.path.join(out_dir, 'game.dll'), os.path.join(out_dir, 'game_native.exe')
+            OBJH, DLL, EXE = os.path.join(out_dir, 'obj_host'), os.path.join(out_dir, 'game.dll'), os.path.join(out_dir, 'b3-game.exe')
     os.makedirs(OBJH, exist_ok=True)
     if '--skip-dll' not in sys.argv and link_dll():
         return 1
@@ -149,7 +149,7 @@ def main():
         code, out = run([CLANG, '-fuse-ld=lld', '-g', '-rdynamic', '-Xlinker', '--no-dependent-libraries'] + objs + [DLL, '-Xlinker', '-rpath=$ORIGIN'] + LIBS + ['-o', EXE])
     else:
         code, out = run([CLANG] + objs + [IMPLIB(DLL), os.path.join(SDL3, 'lib', 'x64', 'SDL3.lib')] + LIBS + res + debug + ['-o', EXE])
-    print('game_native.exe: link exit %d' % code)
+    print('%s: link exit %d' % (os.path.basename(EXE), code))
     if code:
         print(out[-6000:])
         return code

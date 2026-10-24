@@ -43,7 +43,7 @@ from the player's own dump and is never committed or published.
 
 ## Build
 `python scripts/compile_main.py 16` (lifted main → `build/obj`), then `python scripts/build_runtime.py`
-→ `build/game.dll`, `build/game_native.exe`, `build/SDL3.dll`, `build/ssbu_glslang.dll`.
+→ `build/game.dll`, `build/b3-game.exe`, `build/SDL3.dll`, `build/ssbu_glslang.dll`.
 Dependencies (2026-10-16: found through an environment variable or `deps/<name>`, `scripts/toolchain.py`; no fixed paths): SDL3 3.4.18 VC, Vulkan-Headers vulkan-sdk-1.4.341.0, glslang 16.6.0 (+ MSVC for `ssbu_glslang.dll`), llvm-mingw 20260922 (default) or clang 9 + MSVC 14.51. One entry point: `python scripts/setup.py --dump <dump>`.
 
 ## R1 changes (2026-10-16)
@@ -93,12 +93,12 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
   idle), so a report never stalls the CPU and lands before any later sync is seen as signalled. vk_sync_wait now lands
   through slot_wait. Other counter types still stop the game (named).
 - `display.c`: window title "Bayonetta 2 (Study Build)" (SSBU_TITLE still overrides), class `bayonetta2_study_window`;
-  `game_native.exe` gets an on-screen window with a taskbar button by default (SSBU_SHOW=0 hides it, as for test copies).
+  `b3-game.exe` gets an on-screen window with a taskbar button by default (SSBU_SHOW=0 hides it, as for test copies).
 - `nnapplet.c`: software keyboard dialog title "Software keyboard (Bayonetta 2 Study Build)".
 - `nvn_gl.c`: nvnWindowSetPresentInterval changes are logged.
 - `os_threads.c`: sleep_ns yields until the deadline for sleeps ≤ 200 µs (SSBU_SHORT_SLEEP_US; 0 = timer always): the
   game's job join sleeps 1 ns per check, which took 2–3.5 ms on the waitable timer.
-- `nnaudio.c`: game_native.exe is audible by default (test copies under other names stay silent).
+- `nnaudio.c`: b3-game.exe is audible by default (test copies under other names stay silent).
 - `nvn_vk_draw.c`: read-back buffers (usage TRANSFER_DST only) prefer HOST_CACHED memory; the first 4 large read-backs
   are timed in the log; save_bmp_vk writes the BMP on a worker thread (the screenshot no longer costs the frame ~19 ms).
 - `nvn_vk_draw.c`: resolution scale: the screen-class size comes from the game's window texture (nvn_vk_rs_base,

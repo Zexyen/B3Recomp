@@ -273,10 +273,10 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
             GetModuleFileNameA(NULL, exe, sizeof exe);
             const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *vol = getenv("SSBU_VOLUME");
 #ifndef _WIN32
-            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: game_native, a / path */
-            int percent = vol ? atoi(vol) : !strcmp(base, "game_native") ? 100 : 0;
+            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: b3-game, a / path */
+            int percent = vol ? atoi(vol) : !strcmp(base, "b3-game") ? 100 : 0;
 #else
-            int percent = vol ? atoi(vol) : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "game_native.exe")) ? 100 : 0;   /* [Recomps#1] our exe is audible */
+            int percent = vol ? atoi(vol) : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "b3-game.exe")) ? 100 : 0;   /* [Recomps#1] our exe is audible */
 #endif
             if (percent < 0) percent = 0;
             if (percent > 100) percent = 100;

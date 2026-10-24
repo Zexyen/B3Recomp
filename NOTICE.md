@@ -66,7 +66,7 @@ Python with lz4 and Pillow, SDL3, Vulkan-Headers, `ssbu_glslang.dll`, the Micros
 needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `ssbu_glslang.dll` is the one program of ours
 in it in compiled form (`runtime/vk_glslang_shim.c` linked with glslang and SPIRV-Tools); its corresponding source is
 in the package itself (GPL-3.0 section 6), plus glslang 16.6.0's public source. A build with
-llvm-mingw links parts of the MinGW-w64 runtime into `game_native.exe` and `launcher.exe`; the build copies the
+llvm-mingw links parts of the MinGW-w64 runtime into `b3-game.exe` and `launcher.exe`; the build copies the
 runtime's notices (`COPYING.MinGW-w64-runtime.txt`, from the toolchain's `x86_64-w64-mingw32/share/mingw32/`) beside
 them.
 

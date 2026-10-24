@@ -23,7 +23,7 @@ ignored by git; never upload them). Steps, resumable (a finished step is skipped
     tables   runtime/gen/* from YOUR sdk and main (layout, imports, lifted SDK functions, SDK constants, test vectors)
     lift     lifter/recomp_eh.py: your main.elf -> build/gen_eh (C)
     compile  scripts/compile_main.py: build/gen_eh -> build/obj (clang -O2; the longest step)
-    link     scripts/build_runtime.py: build/game.so + build/game_native (Linux)
+    link     scripts/build_runtime.py: build/game.so + build/b3-game (Linux)
     check    lifter/test_ext.py (needs unicorn; skipped without it)
 
 Tools and libraries: the option, else the environment variable, else <repo>/deps/<name>, else what an earlier run found
@@ -444,20 +444,20 @@ def step_compile(cx):
 
 
 def step_link(cx):
-    if cx.tools.get('TOOLCHAIN') == 'linux':                 # no launcher yet: build/game_native and build/game.so
+    if cx.tools.get('TOOLCHAIN') == 'linux':                 # no launcher yet: build/b3-game and build/game.so
         cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
-        for f in ('game.so', 'game_native'):
+        for f in ('game.so', 'b3-game'):
             if not os.path.isfile(os.path.join(cx.build, f)):
                 raise Fail('build/%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
-        say('  build/game_native %.1f MB, game.so %.0f MB (no launcher on Linux yet)'
-            % (os.path.getsize(os.path.join(cx.build, 'game_native')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20))
+        say('  build/b3-game %.1f MB, game.so %.0f MB (no launcher on Linux yet)'
+            % (os.path.getsize(os.path.join(cx.build, 'b3-game')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20))
         return
     cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
-    for f in ('game.dll', 'game_native.exe', 'SDL3.dll', 'ssbu_glslang.dll'):
+    for f in ('game.dll', 'b3-game.exe', 'SDL3.dll', 'ssbu_glslang.dll'):
         if not os.path.isfile(os.path.join(cx.build, f)):
             raise Fail('build\\%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
-    say('  build\\game_native.exe %.1f MB, game.dll %.0f MB, launcher.exe'
-        % (os.path.getsize(os.path.join(cx.build, 'game_native.exe')) / 2 ** 20,
+    say('  build\\b3-game.exe %.1f MB, game.dll %.0f MB, launcher.exe'
+        % (os.path.getsize(os.path.join(cx.build, 'b3-game.exe')) / 2 ** 20,
            os.path.getsize(os.path.join(cx.build, 'game.dll')) / 2 ** 20))
 
 
@@ -563,7 +563,7 @@ def main():
         if package_version():
             cx.state['version'] = package_version()
         cx.save()
-        say('Start the game: build/game_native targets/exefs/main.elf (docs/STATUS.md)')
+        say('Start the game: build/b3-game targets/exefs/main.elf (docs/STATUS.md)')
     return 0
 
 
