@@ -1,7 +1,7 @@
 # b3recomp status
 
-Stage 2 (2026-10-23): boots to the title screen, the menus and chapter 1's loading screen (pause menu usable). Stage 3 work is
-largely untested in the game (see "Needs a game run"). Linux only (the system's clang 23, SDL3, Vulkan, glslang), measured on the developer's PC
+Stage 3 (2026-10-24): the title screen and the start of chapter 1 render with their 3D scenes, at 60 fps, with sound and
+without any "not implemented" stop in a 300 s run. Cutscenes (movies) are still skipped.
 (16 threads, RX 9070 XT / RADV) with their own dump.
 
 ## What builds
@@ -99,35 +99,49 @@ ignored `nvnCommandBufferBindImage`): handles per stage, STORAGE usage on colour
 descriptor layouts (per pipeline, universal, compute), GENERAL layout, barriers after a storing pass or dispatch. **Depth
 bounds test** as dynamic state.
 
-### Needs a game run to validate (in this order)
+### Game runs of 2026-10-24 (the list above, validated)
 
-1. The chapter-1 load: does it finish now (audio output, indirect draws, compute with atomics / shuffles, storage images)?
-   If not, sample the threads again and find what the loader polls.
-2. Storage images (first run of `resolve_image` and the new layouts): no Vulkan errors (`SSBU_VK_DEBUG=1`), draws with
-   images not skipped.
-3. The translated instructions: correct output, not only compilation: `SHFL` / `VOTE` lane mapping on RADV's subgroups,
-   atomics, `FSWZADD`, the texel-offset lowering (implicit LOD uses level 0: shortcut), `SAM` / `RAM` as no-ops.
-4. Depth bounds (first run of the dynamic state).
-5. Indirect draws: that the culled scene draws (a pass list with a scene pass, a picture with the 3D world).
-6. The title background and the over-bright "Press any button" glow: both expected to come from these (a 3D backdrop, a
-   bloom / exposure chain fed by compute), not verified.
-7. The slow 150 s run (518 frames).
-8. Without `SSBU_VK_MISSING=warn`: which "not implemented" stop comes first now (tessellation draws are a known one).
+Run: from the save, `SSBU_PRESS=Z,25,3` (A every 3 s), Vulkan back end, no `SSBU_VK_MISSING`. What renders now (pictures of
+the developer's run: title, Bayonetta falling through the sky at the start of chapter 1, a summoned demon sequence):
 
-Test path note: the runs left a save in `build/run/userdata`, so the menu offers Continue; `SSBU_PRESS=Z,25,3` (A every 3 s)
-goes from the title into chapter 1.
+1. **The chapter-1 load finishes.** The "endless loading screen" of stage 2 was the scene rendering every lit pixel as
+   Inf: the lighting divides by an exposure value that three **draws without render targets** compute (a luminance
+   reduction over 90x51 / 90x1 whose fragment shaders only store to buffers). The back end skipped such draws and, for the
+   graphics stages, also bound stored-to buffers as stream-ring copies (the writes were lost). Both fixed; found with the
+   pass dump (`SSBU_VK_DUMPTEX`), the draw log (`SSBU_VK_DRAWLOG`, now with storage ranges and guest-memory writes) and a
+   write watch on the exposure buffer (`SSBU_VK_WATCHFS`, test only).
+2. **Frame rate**: 60 fps (vsync) on the title and in chapter 1 (16,841 frames in 300 s). The 3.5 fps case had two causes:
+   (a) compute output is copied back to guest memory every frame (about 16 MB) and the compute buffers were in device-local
+   host-visible memory (BAR), which the CPU reads at a few tens of MB/s: 300 ms a frame; now host-cached memory (4 ms);
+   (b) after a translator version change (`MX_VK_VERSION`) every stage is translated and compiled again while the loading
+   screens are held for the workers: the first run after such a change takes minutes to reach the title (one-time).
+3. **Indirect draws**: the culled scene draws (96 draws in the depth pass where there were 17); indirect records written
+   by compute are read through the compute buffer's mapping (no landing of every buffer).
+4. **Storage images**: exercised (fragment program #1693 stores to an image every frame), no stop, no crash. Not checked by
+   the Vulkan validation layer: it is not installed on this PC (`vulkan-validation-layers`).
+5. **Depth bounds**: used by the game (stage 2 stopped on it), runs now; not checked picture by picture.
+6. **Title background and glow**: the backdrop is the 3D demon of the title; the "Press any button" glow is no longer
+   blown out (both were the Inf exposure).
+7. **No "not implemented" stop** in 300 s without `SSBU_VK_MISSING=warn`; 0 skipped draws.
+8. Audio: Wwise output plays (stage 3, first half).
+
+Still open from the list: the translated instructions are only checked by these pictures (no reference images of the
+console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no-ops.
 
 ## Next blockers (most urgent first)
 
-1. **The chapter-1 loading screen that does not end** (above), then whatever the 3D scene still lacks.
-2. **Tessellation stages** (29 programs): translator and Vulkan pipeline support.
-3. **Movies**: `movie::` (subsdk0) plays VP9 WebM; Linux has only the failing placeholder (Media Foundation on Windows). The
-   game skips a film it cannot open, so this does not block, but every cutscene is missing. Needs a VP9 decoder behind
-   `movie::Extractor` / `Decoder` (libvpx or FFmpeg). B3's Extractor vtable differs from Smash's (SetDataSource at +0x78).
-4. **`nn::account::PopOpenUsers`** has no handler (called once at boot, harmless so far); the Resampler imports of
-   `nn::audio` (not reached).
-5. **The rest of the imports**: about 170 without a handler (libc stdio / dirent / time, libc++ streams); none reached.
-6. **Compile time**: about 12 min for a full build (incremental relift: seconds).
+1. **Past the opening**: after the fall, chapter 1 shows a long animated sequence of a summoned demon (about frame 10,000
+   on); A presses every 3 s do not end it. It may want another input (a QTE prompt is not visible), or the opening movie
+   it follows (`ev0000.webm`, skipped) drives it. Next: script other buttons / sticks, watch the game's input reads.
+2. **Movies**: `movie::` (subsdk0) plays VP9 WebM; Linux has only the failing placeholder (Media Foundation on Windows), so
+   every cutscene is skipped. Needs a VP9 decoder behind `movie::Extractor` / `Decoder` (libvpx or FFmpeg). B3's Extractor
+   vtable differs from Smash's (SetDataSource at +0x78).
+3. **Picture correctness**: no reference to compare with; the Vulkan validation layer is not installed here (would check
+   the new storage-image, depth-bounds and empty-pass paths).
+4. **Tessellation stages** (29 programs): translator and pipeline support; not reached in 300 s.
+5. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again).
+6. `nn::account::PopOpenUsers` (called once, harmless), the `nn::audio` Resampler imports (not reached), about 170 other
+   imports without a handler (none reached).
 
 ## Known shortcuts (marked `shortcut:` in the code)
 
@@ -145,5 +159,8 @@ goes from the title into chapter 1.
 - Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel
   offset of an implicit-LOD sample is scaled by level 0's size; storage images need a format with storage support and the
   same texel size as the shader's typed format (else logged as missing).
-- Indirect draws are read on the CPU (one Vulkan draw per record) instead of `vkCmdDrawIndirect*`.
+- Indirect draws are read on the CPU (one Vulkan draw per record) instead of `vkCmdDrawIndirect*`; records in a compute
+  buffer of the batch cost a submit and a wait.
+- Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
+  same pass (as on NVN without an explicit barrier).
 - Not tested: Windows builds of these changes (only `TOOLCHAIN=linux` was built and run).
