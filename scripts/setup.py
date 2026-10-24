@@ -15,7 +15,7 @@ extracted from your own console and copy of Bayonetta 3 with your own tools (thi
 Nothing of the game is in the repository. Every step derives its files from the dump into targets/ and build/ (both
 ignored by git; never upload them). Steps, resumable (a finished step is skipped; --from <step> repeats it and the rest):
 
-    deps     Python packages, the compiler (Linux: the system clang, SDL3, Vulkan, glslang) (always runs)
+    deps     Python packages, the compiler (Linux: the system clang, SDL3, Vulkan, glslang, FFmpeg) (always runs)
     verify   the dump is the exact version this port handles (SHA-256 / NSO build ID / RomFS manifest); explains a mismatch
     convert  main, sdk, subsdk0 (NSO) -> targets/exefs/*.elf (LZ4 only; segment hashes checked); ExeFS copied beside
              them; targets/romfs = a link to the dump's romfs, where the game reads it

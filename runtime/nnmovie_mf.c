@@ -1,4 +1,4 @@
-/* movie:: (the SDK's video player library) on Windows Media Foundation.
+/* movie:: (the SDK's video player library) on Windows Media Foundation, and on FFmpeg on Linux ([b3recomp], see the FFmpeg section).
  *
  * The SDK library is a port of Android's stagefright (NuMediaExtractor / MediaCodec); the game's own
  * copy lives in subsdk0, whose exported symbols (movie::NnExtractor, movie::DecoderImpl, movie::NnMediaData,
@@ -78,6 +78,24 @@
 STDAPI MFCreateMFByteStreamOnStream(IStream *pStream, IMFByteStream **ppByteStream);
 #endif
 #include <shlwapi.h>
+#define MOVIE_BACKEND "Media Foundation"
+#else
+#define MOVIE_BACKEND "FFmpeg"
+/* [b3recomp] Linux: the same protocol on FFmpeg (libavformat demuxes, libavcodec decodes, swscale / swresample make the
+ * NV12 frames and 16-bit PCM the game takes). A "sample" is a decoded block in host memory; see the FFmpeg section below. */
+#include <windows.h>
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
+#include <libavutil/channel_layout.h>
+struct IMFSample { unsigned char *data; size_t len; };      /* (declared by win32_absent.h) a decoded frame: tight NV12 or interleaved s16 */
+static void hs_free(IMFSample *s) { if (s) { free(s->data); free(s); } }
+#undef IMFSample_Release
+#define IMFSample_Release(s) hs_free(s)
+#define IMFSourceReader struct AvSrc                /* the FFmpeg source of an extractor (Ext::rd) */
+#define IMFByteStream void
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +134,9 @@ static uint64_t g_alloc_fn, g_free_fn, g_alloc_user;  /* movie::SetAllocator */
 static volatile LONG g_mf_started;
 static _Thread_local int t_com_init;
 
+#ifndef _WIN32
+static void com_init(void) {}
+#else
 static void com_init(void) {
     if (!t_com_init) { CoInitializeEx(NULL, COINIT_MULTITHREADED); t_com_init = 1; }
     if (!g_mf_started && InterlockedCompareExchange(&g_mf_started, 1, 0) == 0) {
@@ -123,6 +144,7 @@ static void com_init(void) {
         printf("movie: MFStartup %08lx\n", hr);
     }
 }
+#endif
 
 /* Call a guest function with up to five arguments; the caller's registers are preserved. */
 static uint64_t gcall(Ctx *c, uint64_t fn, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -362,6 +384,7 @@ typedef struct {
 
 typedef struct { uint64_t magic; IMFSample *s; int64_t ts; uint64_t gen; } Token;   /* gen = Ext::gen when it was read */
 
+#ifdef _WIN32
 static const GUID GUID_Vorbis = {0x8D2FD10B, 0x5841, 0x4a6b, {0x89, 0x05, 0x58, 0x8F, 0xEC, 0x1A, 0xDE, 0xD9}};
 static int is_mf_fourcc_guid(const GUID *g) {         /* {xxxxxxxx-0000-0010-8000-00AA00389B71} */
     static const unsigned char tail[8] = {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
@@ -369,6 +392,7 @@ static int is_mf_fourcc_guid(const GUID *g) {         /* {xxxxxxxx-0000-0010-800
 }
 #define FCC(a, b, c, d) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 
+#endif
 static void signal_event(Dec *d, int which) {
     if (!d->events) return;
     uint64_t ev = rd64(d->events + (uint64_t)which * 8);
@@ -395,6 +419,7 @@ static void release_ahead(Ext *e, int track) {        /* track < 0: all */
     }
 }
 
+#ifdef _WIN32
 static int ext_open_bytes(Ext *e, unsigned char *data, size_t size) {
     com_init();
     HRESULT hr;
@@ -511,6 +536,218 @@ static int ext_select(Ext *e, int i, int on) {
     printf("movie: %s track %d (%s)%s\n", on ? "selected" : "unselected", i, tr->mime, SUCCEEDED(hr) ? "" : " FAILED");
     return SUCCEEDED(hr) ? ST_OK : ST_FAILED;
 }
+/* One decoded sample of track i (s = NULL: a tick without data). 0 = a sample, 1 = the track's end, -1 = an error. */
+static int src_read(Ext *e, int i, IMFSample **out, int64_t *us) {
+    DWORD idx = 0, flags = 0; LONGLONG ts = 0; IMFSample *s = NULL;
+    HRESULT hr = IMFSourceReader_ReadSample(e->rd, (DWORD)i, 0, &idx, &flags, &ts, &s);
+    *out = NULL;
+    if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) { printf("movie: ReadSample(track %d) failed (%08lx, flags %lx)\n", i, hr, flags); if (s) IMFSample_Release(s); return -1; }
+    if (flags & MF_SOURCE_READERF_ENDOFSTREAM) { if (s) IMFSample_Release(s); return 1; }
+    *out = s; *us = ts / 10;
+    return 0;
+}
+static int src_seek(Ext *e, int64_t us) {
+    PROPVARIANT var; PropVariantInit(&var);
+    var.vt = VT_I8; var.hVal.QuadPart = (LONGLONG)us * 10;
+    HRESULT hr = IMFSourceReader_SetCurrentPosition(e->rd, &GUID_NULL, &var);
+    return SUCCEEDED(hr);
+}
+static void src_close(Ext *e) {
+    if (e->rd) IMFSourceReader_Release(e->rd);
+    if (e->bs) IMFByteStream_Release(e->bs);
+    e->rd = NULL; e->bs = NULL;
+}
+#else
+/* ---------------------------------------------------------------- FFmpeg (Linux)
+ * The whole file the game's reader returned stays in memory and is read through an AVIOContext. Each selected track has its
+ * own decoder; packets of a selected track read while another track's sample was wanted wait in that track's queue, so each
+ * track is read ahead by one decoded sample as on Media Foundation (see ext_fill). */
+#define QMAX 512
+struct AvSrc {
+    unsigned char *data; size_t size, pos;
+    AVIOContext *io; AVFormatContext *fmt; AVFrame *fr; AVPacket *pk;
+    AVCodecContext *dec[MAX_TRACKS]; struct SwsContext *sws[MAX_TRACKS]; SwrContext *swr[MAX_TRACKS];
+    AVPacket *q[MAX_TRACKS][QMAX]; int qn[MAX_TRACKS], flushed[MAX_TRACKS], file_eof;
+};
+static int av_read_cb(void *o, uint8_t *buf, int n) {
+    struct AvSrc *a = o;
+    if (a->pos >= a->size) return AVERROR_EOF;
+    size_t k = a->size - a->pos < (size_t)n ? a->size - a->pos : (size_t)n;
+    memcpy(buf, a->data + a->pos, k); a->pos += k;
+    return (int)k;
+}
+static int64_t av_seek_cb(void *o, int64_t off, int whence) {
+    struct AvSrc *a = o;
+    if (whence & AVSEEK_SIZE) return (int64_t)a->size;
+    int64_t p = ((whence & 3) == SEEK_CUR ? (int64_t)a->pos : (whence & 3) == SEEK_END ? (int64_t)a->size : 0) + off;
+    if (p < 0 || p > (int64_t)a->size) return -1;
+    a->pos = (size_t)p;
+    return p;
+}
+static const char *av_mime(enum AVCodecID id) {
+    switch (id) {
+    case AV_CODEC_ID_VP9: return "video/x-vnd.on2.vp9";
+    case AV_CODEC_ID_VP8: return "video/x-vnd.on2.vp8";
+    case AV_CODEC_ID_H264: return "video/avc";
+    case AV_CODEC_ID_HEVC: return "video/hevc";
+    case AV_CODEC_ID_VORBIS: return "audio/vorbis";
+    case AV_CODEC_ID_OPUS: return "audio/opus";
+    case AV_CODEC_ID_AAC: return "audio/mp4a-latm";
+    case AV_CODEC_ID_MP3: return "audio/mpeg";
+    default: return NULL;
+    }
+}
+static void q_clear(struct AvSrc *a, int i) { for (int k = 0; k < a->qn[i]; k++) av_packet_free(&a->q[i][k]); a->qn[i] = 0; }
+/* Takes over data (freed with the extractor). */
+static int ext_open_bytes(Ext *e, unsigned char *data, size_t size) {
+    struct AvSrc *a = calloc(1, sizeof *a);
+    unsigned char *iobuf = av_malloc(65536);
+    a->data = data; a->size = size;
+    a->io = avio_alloc_context(iobuf, 65536, 0, a, av_read_cb, NULL, av_seek_cb);
+    a->fmt = avformat_alloc_context();
+    a->fmt->pb = a->io;
+    int r = avformat_open_input(&a->fmt, NULL, NULL, NULL);
+    if (r < 0 || avformat_find_stream_info(a->fmt, NULL) < 0) {
+        printf("movie: FFmpeg cannot open %s (%zu bytes): %d\n", e->path, size, r);
+        if (r >= 0) avformat_close_input(&a->fmt); else avformat_free_context(a->fmt);
+        av_freep(&a->io->buffer); avio_context_free(&a->io); free(a->data); free(a);
+        return 0;
+    }
+    a->fr = av_frame_alloc(); a->pk = av_packet_alloc();
+    e->rd = a;
+    e->duration_us = a->fmt->duration > 0 ? a->fmt->duration : 0;          /* AV_TIME_BASE: microseconds */
+    e->ntracks = 0;
+    for (unsigned i = 0; i < a->fmt->nb_streams && i < MAX_TRACKS; i++) {
+        AVCodecParameters *cp = a->fmt->streams[i]->codecpar;
+        Track *tr = &e->tr[e->ntracks++];
+        const char *mime = av_mime(cp->codec_id);
+        memset(tr, 0, sizeof *tr);
+        if (cp->codec_type == AVMEDIA_TYPE_VIDEO) {
+            AVRational fr = a->fmt->streams[i]->avg_frame_rate;
+            tr->kind = 0; tr->w = cp->width; tr->h = cp->height; tr->fps = fr.den ? av_q2d(fr) : 0.0;
+            snprintf(tr->mime, sizeof tr->mime, "%s", mime ? mime : "video/unknown");
+        } else if (cp->codec_type == AVMEDIA_TYPE_AUDIO) {
+            tr->kind = 1; tr->rate = cp->sample_rate; tr->ch = cp->ch_layout.nb_channels;
+            snprintf(tr->mime, sizeof tr->mime, "%s", mime ? mime : "audio/unknown");
+        } else {
+            tr->kind = 2; strcpy(tr->mime, "application/octet-stream");
+        }
+        a->fmt->streams[i]->discard = AVDISCARD_ALL;                       /* the game selects what it decodes */
+    }
+    printf("movie: opened %s with FFmpeg: %zu bytes, %.1f s, %d tracks:", e->path, size, e->duration_us / 1e6, e->ntracks);
+    for (int i = 0; i < e->ntracks; i++) {
+        Track *tr = &e->tr[i];
+        if (tr->kind == 0) printf("  [%d] %s %dx%d %.2f fps", i, tr->mime, tr->w, tr->h, tr->fps);
+        else if (tr->kind == 1) printf("  [%d] %s %d Hz %d ch", i, tr->mime, tr->rate, tr->ch);
+        else printf("  [%d] %s", i, tr->mime);
+    }
+    printf("\n");
+    return 1;
+}
+static void dec_close(struct AvSrc *a, int i) {
+    avcodec_free_context(&a->dec[i]); sws_freeContext(a->sws[i]); a->sws[i] = NULL; swr_free(&a->swr[i]); q_clear(a, i); a->flushed[i] = 0;
+}
+static int ext_select(Ext *e, int i, int on) {
+    if (!e->rd || i < 0 || i >= e->ntracks) return ST_INVALID;
+    struct AvSrc *a = e->rd;
+    Track *tr = &e->tr[i];
+    AVStream *st = a->fmt->streams[i];
+    int ok = 1;
+    if (on && !a->dec[i] && tr->kind != 2) {
+        const AVCodec *cd = avcodec_find_decoder(st->codecpar->codec_id);
+        AVCodecContext *cc = cd ? avcodec_alloc_context3(cd) : NULL;
+        if (cc) cc->thread_count = 0;                                      /* automatic */
+        if (!cc || avcodec_parameters_to_context(cc, st->codecpar) < 0 || avcodec_open2(cc, cd, NULL) < 0) {
+            printf("movie: track %d (%s): no FFmpeg decoder; track left unselected\n", i, tr->mime);
+            avcodec_free_context(&cc);
+            ok = 0;
+        } else a->dec[i] = cc;
+    }
+    if (!on || !ok) dec_close(a, i);
+    st->discard = on && ok ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+    if (e->have_pending && e->pend_track == i) release_pending(e);
+    release_ahead(e, i);
+    tr->selected = on && ok;
+    tr->eos = 0;
+    printf("movie: %s track %d (%s)%s\n", on ? "selected" : "unselected", i, tr->mime, ok ? "" : " FAILED");
+    return ok ? ST_OK : ST_UNSUPPORTED;
+}
+/* A decoded frame as the sample the game's buffers take: video tightly packed NV12 (rows of w), audio interleaved s16. */
+static IMFSample *av_sample(struct AvSrc *a, int i, AVFrame *f) {
+    IMFSample *s = calloc(1, sizeof *s);
+    if (a->dec[i]->codec_type == AVMEDIA_TYPE_VIDEO) {
+        int w = f->width, h = f->height;
+        a->sws[i] = sws_getCachedContext(a->sws[i], w, h, (enum AVPixelFormat)f->format, w, h, AV_PIX_FMT_NV12, SWS_BILINEAR, NULL, NULL, NULL);
+        s->len = (size_t)w * h + (size_t)w * ((h + 1) / 2);
+        s->data = malloc(s->len);
+        uint8_t *dst[4] = {s->data, s->data + (size_t)w * h, NULL, NULL};
+        int ds[4] = {w, w, 0, 0};
+        if (!a->sws[i] || sws_scale(a->sws[i], (const uint8_t *const *)f->data, f->linesize, 0, h, dst, ds) <= 0) memset(s->data, 0, s->len);
+    } else {
+        AVCodecContext *cc = a->dec[i];
+        if (!a->swr[i]) {
+            swr_alloc_set_opts2(&a->swr[i], &cc->ch_layout, AV_SAMPLE_FMT_S16, cc->sample_rate, &cc->ch_layout, cc->sample_fmt, cc->sample_rate, 0, NULL);
+            if (a->swr[i] && swr_init(a->swr[i]) < 0) swr_free(&a->swr[i]);
+        }
+        int ch = cc->ch_layout.nb_channels > 0 ? cc->ch_layout.nb_channels : 2;
+        s->data = malloc((size_t)f->nb_samples * ch * 2 + 16);
+        uint8_t *out = s->data;
+        int n = a->swr[i] ? swr_convert(a->swr[i], &out, f->nb_samples, (const uint8_t **)f->extended_data, f->nb_samples) : 0;
+        s->len = n > 0 ? (size_t)n * ch * 2 : 0;
+    }
+    return s;
+}
+static int src_read(Ext *e, int i, IMFSample **out, int64_t *us) {
+    struct AvSrc *a = e->rd;
+    AVCodecContext *cc = a->dec[i];
+    *out = NULL;
+    if (!cc) return 1;
+    for (;;) {
+        int r = avcodec_receive_frame(cc, a->fr);
+        if (r == 0) {
+            int64_t pts = a->fr->best_effort_timestamp;
+            *us = pts == AV_NOPTS_VALUE ? 0 : av_rescale_q(pts, a->fmt->streams[i]->time_base, (AVRational){1, 1000000});
+            *out = av_sample(a, i, a->fr);
+            av_frame_unref(a->fr);
+            return 0;
+        }
+        if (r == AVERROR_EOF) return 1;
+        if (r != AVERROR(EAGAIN)) { printf("movie: FFmpeg decoding of track %d failed: %d\n", i, r); return -1; }
+        AVPacket *pk = NULL;
+        if (a->qn[i]) { pk = a->q[i][0]; memmove(&a->q[i][0], &a->q[i][1], sizeof pk * (size_t)--a->qn[i]); }
+        else while (!a->file_eof) {
+            if (av_read_frame(a->fmt, a->pk) < 0) { a->file_eof = 1; break; }
+            int si = a->pk->stream_index;
+            if (si == i) { pk = av_packet_clone(a->pk); av_packet_unref(a->pk); break; }
+            if (si >= 0 && si < MAX_TRACKS && si < e->ntracks && e->tr[si].selected) {
+                if (a->qn[si] == QMAX) { av_packet_free(&a->q[si][0]); memmove(&a->q[si][0], &a->q[si][1], sizeof pk * (QMAX - 1)); a->qn[si]--; }   /* shortcut: drops the oldest, raise QMAX if a track starves */
+                a->q[si][a->qn[si]++] = av_packet_clone(a->pk);
+            }
+            av_packet_unref(a->pk);
+        }
+        if (pk) { r = avcodec_send_packet(cc, pk); av_packet_free(&pk); if (r < 0 && r != AVERROR(EAGAIN)) { printf("movie: FFmpeg rejects a packet of track %d: %d\n", i, r); return -1; } }
+        else if (!a->flushed[i]) { avcodec_send_packet(cc, NULL); a->flushed[i] = 1; }     /* the file is read: drain the decoder */
+        else return 1;
+    }
+}
+static int src_seek(Ext *e, int64_t us) {
+    struct AvSrc *a = e->rd;
+    int r = av_seek_frame(a->fmt, -1, us, AVSEEK_FLAG_BACKWARD);
+    for (int i = 0; i < MAX_TRACKS; i++) { if (a->dec[i]) avcodec_flush_buffers(a->dec[i]); q_clear(a, i); a->flushed[i] = 0; }
+    a->file_eof = 0;
+    return r >= 0;
+}
+static void src_close(Ext *e) {
+    struct AvSrc *a = e->rd;
+    if (!a) return;
+    for (int i = 0; i < MAX_TRACKS; i++) dec_close(a, i);
+    av_frame_free(&a->fr); av_packet_free(&a->pk);
+    avformat_close_input(&a->fmt);
+    if (a->io) { av_freep(&a->io->buffer); avio_context_free(&a->io); }
+    free(a->data); free(a);
+    e->rd = NULL;
+}
+#endif
 
 /* The current sample of the extractor, as NuMediaExtractor defines it: the one with the SMALLEST TIMESTAMP among the
  * next samples of the selected tracks (file order). Each selected track is read ahead by one decoded sample with its
@@ -533,23 +770,22 @@ static int ext_fill(Ext *e) {
         Track *tr = &e->tr[i];
         if (!tr->selected) continue;
         for (int guard = 0; !e->ahead[i].have && !tr->eos && guard < 256; guard++) {
-            DWORD idx = 0, flags = 0; LONGLONG ts = 0; IMFSample *s = NULL;
-            HRESULT hr = IMFSourceReader_ReadSample(e->rd, (DWORD)i, 0, &idx, &flags, &ts, &s);
+            IMFSample *s = NULL; int64_t us = 0;
+            int r = src_read(e, i, &s, &us);              /* [b3recomp] Media Foundation or FFmpeg (above) */
             {   /* test: SSBU_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
                 static int fail_at = -1;
                 if (fail_at < 0) { const char *v = getenv("SSBU_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
-                if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { IMFSample_Release(s); s = NULL; } hr = E_FAIL; }
+                if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { IMFSample_Release(s); s = NULL; } r = -1; }
             }
-            if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) {
+            if (r < 0) {
                 tr->failed = 1;                           /* the decoder of this track reports it: dec_error_check */
-                printf("movie: ReadSample(track %d) failed (%08lx, flags %lx) after %llu samples: treating as its end\n", i, hr, flags, e->samples_read);
-                if (s) IMFSample_Release(s);
+                printf("movie: reading track %d failed after %llu samples: treating as its end\n", i, e->samples_read);
                 tr->eos = 1;
                 break;
             }
-            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) { if (s) IMFSample_Release(s); tr->eos = 1; break; }
+            if (r > 0) { tr->eos = 1; break; }
             if (!s) continue;                             /* a tick or a format change without data */
-            e->ahead[i].have = 1; e->ahead[i].s = s; e->ahead[i].us = ts / 10;
+            e->ahead[i].have = 1; e->ahead[i].s = s; e->ahead[i].us = us;
             e->samples_read++;
         }
         if (e->ahead[i].have && (best < 0 || e->ahead[i].us < e->ahead[best].us)) best = i;
@@ -566,9 +802,7 @@ static void ext_dtor_common(Ctx *c, int deleting) {
         ext_lock(e);
         release_pending(e);
         release_ahead(e, -1);
-        if (e->rd) IMFSourceReader_Release(e->rd);
-        if (e->bs) IMFByteStream_Release(e->bs);
-        e->rd = NULL; e->bs = NULL;
+        src_close(e);
         ext_unlock(e);
         DeleteCriticalSection(&e->cs);
         printf("movie: Extractor destroyed (%llu samples read)\n", e->samples_read);
@@ -584,7 +818,9 @@ static int ext_set_source_bytes(Ext *e, unsigned char *data, size_t size) {
     const char *save = getenv("SSBU_MOVIE_SAVE");
     if (save) { FILE *f = fopen(save, "wb"); if (f) { fwrite(data, 1, size, f); fclose(f); printf("movie: saved %zu bytes to %s\n", size, save); } }
     int ok = ext_open_bytes(e, data, size);
-    free(data);
+#ifdef _WIN32
+    free(data);                                   /* Media Foundation's memory stream holds a copy; FFmpeg keeps this one (src_close frees it) */
+#endif
     return ok ? ST_OK : ST_FAILED;
 }
 
@@ -681,14 +917,12 @@ static void ext_SeekTo(Ctx *c) {                      /* (int64 timeUs) */
     release_pending(e);
     release_ahead(e, -1);
     e->gen++;
-    PROPVARIANT var; PropVariantInit(&var);
-    var.vt = VT_I8; var.hVal.QuadPart = (LONGLONG)A1 * 10;
-    HRESULT hr = IMFSourceReader_SetCurrentPosition(e->rd, &GUID_NULL, &var);
+    int ok = src_seek(e, (int64_t)A1);
     e->eos = 0;
     for (int i = 0; i < e->ntracks; i++) e->tr[i].eos = 0;
     ext_unlock(e);
-    printf("movie: SeekTo(%.3f s) %08lx\n", (int64_t)A1 / 1e6, hr);
-    RET(SUCCEEDED(hr) ? ST_OK : ST_FAILED);
+    printf("movie: SeekTo(%.3f s)%s\n", (int64_t)A1 / 1e6, ok ? "" : " FAILED");
+    RET(ok ? ST_OK : ST_FAILED);
 }
 
 static void ext_GetTrackIndexForAvailableData(Ctx *c) {   /* (size_t *track) */
@@ -1073,6 +1307,16 @@ static void dec_AcquireOutputBufferIndex(Ctx *c) {    /* (int *index, int64 *tim
 }
 
 /* Copies the decoded sample of slot i into the game's buffer; returns the number of bytes written. */
+#ifndef _WIN32
+static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {      /* [b3recomp] FFmpeg: already in the game's layout */
+    if (!s->s || !s->s->data) return 0;
+    size_t n = s->s->len < cap ? s->s->len : cap;
+    if (s->s->len > cap && !d->warned_small) { d->warned_small = 1; printf("movie: game buffer of %zu bytes is smaller than a decoded %s (%zu)\n", cap, d->is_video ? "frame" : "block", s->s->len); }
+    if (d->is_video && s->s->len > cap) return 0;
+    memcpy(dst, s->s->data, n);
+    return n;
+}
+#else
 static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {
     if (!s->s) return 0;
     IMFMediaBuffer *mb = NULL;
@@ -1110,6 +1354,7 @@ static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {
     IMFMediaBuffer_Release(mb);
     return written;
 }
+#endif
 
 static void dec_GetOutputBuffer(Ctx *c) {             /* (int index, Buffer *out[, MediaData *format]) */
     Dec *d = dec_of(A0);
@@ -1213,7 +1458,7 @@ static void extractor_ctor(Ctx *c) {                  /* Extractor(ContainerType
     wr64(A0, (uint64_t)(uintptr_t)g_ext_vtable);
     wr64(A0 + 8, (uint64_t)(uintptr_t)e);
     input_mark("movie");
-    printf("movie: Extractor created (container type %u: %s) on Media Foundation\n", (unsigned)A1, A1 == 1 ? "mp4" : A1 == 2 ? "mkv" : A1 == 3 ? "webm" : "?");
+    printf("movie: Extractor created (container type %u: %s) on %s\n", (unsigned)A1, A1 == 1 ? "mp4" : A1 == 2 ? "mkv" : A1 == 3 ? "webm" : "?", MOVIE_BACKEND);
 }
 
 static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, DecoderOutputFormat, DecoderMode, int) */
@@ -1373,8 +1618,3 @@ void register_movie_mf_imports(void) {
     InitializeCriticalSection(&g_init_lock);
     register_imports(movie_mf_imports, (int)(sizeof movie_mf_imports / sizeof movie_mf_imports[0]));
 }
-#else
-/* Linux: no Media Foundation; the failing placeholder of nnmovie.c stays, as with SSBU_MOVIE=0 (an FFmpeg decoder is milestone 4) */
-#include <stdio.h>
-void register_movie_mf_imports(void) { printf("movie: no decoder on Linux yet, keeping the failing placeholder\n"); }
-#endif
