@@ -27,7 +27,8 @@ SSBU_ROMFS=$PWD/../../targets/romfs SSBU_USERDATA=$PWD/userdata ../game_native .
 ```
 
 (argument 2 = seconds before the runtime stops it; the log goes to the console, the first calls of every import to
-`boot_trace.txt`.) It now gets through:
+`boot_trace.txt`.) The process, its window and its audio stream are named **B3 Recomp** (app id `b3recomp`), so they do not
+clash with B2recomp's `game_native`: `pgrep -x "B3 Recomp"` finds it. It now gets through:
 
 1. image mapped, 180,844 relocations applied, text/rodata write-protected;
 2. **phase 0** `DT_INIT` (musl `_init` -> `__nnmusl_init_dso`: main's TLS registered);

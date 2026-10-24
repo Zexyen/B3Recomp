@@ -202,3 +202,9 @@ no-ops), `boot.c` (phase 0: main's DT_INIT), `os_threads.c` (TLS image in every 
 variants), `nvn_stub.c` (API 55.12 default), `r2_imports.c` (3,285 MB application memory), `nnsdk2.c` (empty install
 list), `gen/make_gen.py` (layout from DYNAMIC, DT_INIT, NVN 13.3.2 device answers). `nvn_sdk.c` still holds B2's SDK
 3.6.0 addresses (docs/STATUS.md, next step 1).
+
+## b3recomp
+- `boot.c`, `display.c`, `nnapplet.c`, `nnnet_c4a.inc`: name **B3 Recomp** (2026-10-23), so it does not clash with B2recomp's:
+  process name (`prctl(PR_SET_NAME)`, Linux; threads inherit it), SDL app metadata (name "B3 Recomp", app id `b3recomp`),
+  window title "B3 Recomp" (SSBU_TITLE still overrides), class `b3recomp_window`, software keyboard dialog
+  "Software keyboard (B3 Recomp)", the online-mode message box.

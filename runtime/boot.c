@@ -292,9 +292,9 @@ int main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef __linux__
-    prctl(PR_SET_NAME, "B3 Recompiled");          /* [b3recomp] process name (B2recomp's is also game_native); threads made later inherit it */
+    prctl(PR_SET_NAME, "B3 Recomp");          /* [b3recomp] process name (B2recomp's is also game_native); threads made later inherit it */
 #endif
-    SDL_SetAppMetadata("B3 Recompiled", NULL, "b3recomp");   /* [b3recomp] window / audio stream / taskbar name; app id b3recomp */
+    SDL_SetAppMetadata("B3 Recomp", NULL, "b3recomp");   /* [b3recomp] window / audio stream / taskbar name; app id b3recomp */
     {   /* pad tools and their self-test (nnpad_sdl.c): no game is started */
         int nnhid_pad_selftest(void), nnpad_tool(int, char **);
         int tool;

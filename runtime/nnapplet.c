@@ -239,7 +239,7 @@ static int kbd_run_dialog(KbdDialog *k) {
     DLGTEMPLATE dt = {DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_SETFOREGROUND, WS_EX_TOPMOST, 4, 0, 0, 260, 96};
     memcpy(p, &dt, sizeof dt); p += sizeof dt;
     *p++ = 0; *p++ = 0; *p++ = 0; *p++ = 0;               /* no menu, default class */
-    p = tmpl_wstr(p, L"Software keyboard (B3 Recompiled)");   /* [Recomps#1] title: must match the FindWindowW below */
+    p = tmpl_wstr(p, L"Software keyboard (B3 Recomp)");   /* [Recomps#1] title: must match the FindWindowW below */
     *p++ = 9; *p++ = 0;
     p = tmpl_wstr(p, L"Segoe UI");
     p = tmpl_item(p, SS_LEFT, 8, 6, 244, 34, IDC_INFO, 0x0082, L"");
@@ -450,7 +450,7 @@ static DWORD WINAPI kbd_test_driver(LPVOID arg) {
     (void)arg;
     for (int round = 0; round < 2; round++) {
         HWND w = NULL;
-        for (int i = 0; i < 500 && !w; i++) { Sleep(10); w = FindWindowW(NULL, L"Software keyboard (B3 Recompiled)"); }   /* [Recomps#1] */
+        for (int i = 0; i < 500 && !w; i++) { Sleep(10); w = FindWindowW(NULL, L"Software keyboard (B3 Recomp)"); }   /* [Recomps#1] */
         if (!w) return 1;
         Sleep(100);
         if (round == 0) {
