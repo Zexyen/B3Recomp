@@ -4132,6 +4132,16 @@ static void prog_finalize(Ctx *c) {
 /* Debug aid SSBU_SHADERDUMP_ALL=<dir>: every shader stage handed to nvnProgramSetShaders, whole, as <dir>/s<program>_<i>.mxd for the
  * offline harness (mxtest.exe). File: "MXD1", u32 program serial, u32 index in the call, u32 control bytes, u32 data bytes, then the
  * control section (at least up to +0x720, plus the assembly text if any) and the code section (header + code + constants). */
+/* [b3recomp] A compute stage's machine code starts at data + control +0x708: 0 for bare code, 0x100 behind B3's 0x12345679
+ * header (graphics stages: 0x30, behind 0x12345678 and the program header). The constants' offset (control +0x700) is from
+ * the data's start; it is kept relative to the code, which is what the compute paths add it to. */
+static void compute_code(Stage *st, uint64_t control, uint64_t data) {
+    uint32_t off = rd32(control + 0x708);
+    if (off >= (1u << 20)) off = 0;
+    st->code = P(data + off);
+    memcpy(st->ctl, P(control + 0x6f0), 32);
+    if (st->ctl[4] >= off) st->ctl[4] -= off;
+}
 static void dump_stage_all(int serial, int index, uint64_t control, uint64_t data) {
     static const char *dir;
     static volatile LONG init;
@@ -4265,7 +4275,7 @@ static void prog_set_shaders_(Ctx *c) {
                              rd32(data), rd32(data + 4), rd32(data + 8), rd32(data + 12), rd32(control + 0x748), rd32(control + 0x74c), rd32(control + 0x750));
                 for (int k = 0; k < 3; k++) p->st[5].local[k] = rd32(control + 0x748 + (uint64_t)k * 4);
                 p->st[5].smem_bytes = rd32(control + 0x754); p->st[5].lmem_bytes = rd32(control + 0x758);
-                if (len > 0 && len < (4 << 20)) { p->st[5].code = P(data); p->st[5].code_len = len; p->st[5].glsl_state = 0; memcpy(p->st[5].ctl, P(control + 0x6f0), 32); }
+                if (len > 0 && len < (4 << 20)) { compute_code(&p->st[5], control, data); p->st[5].code_len = len; p->st[5].glsl_state = 0; }
             }
             continue;
         }
@@ -4280,7 +4290,7 @@ static void prog_set_shaders_(Ctx *c) {
                          rd32(data), rd32(data + 4), rd32(data + 8), rd32(data + 12), rd32(data + 0x30), rd32(data + 0x34), rd32(data + 0x38), rd32(data + 0x3c));
             for (int k = 0; k < 3; k++) p->st[5].local[k] = rd32(control + 0x748 + (uint64_t)k * 4);      /* work group size */
             p->st[5].smem_bytes = rd32(control + 0x754); p->st[5].lmem_bytes = rd32(control + 0x758);
-            if (len > 0 && len < (4 << 20)) { p->st[5].code = P(data); p->st[5].code_len = len; p->st[5].state = 4; p->st[5].dumped = 0; p->st[5].glsl_state = 0; memcpy(p->st[5].ctl, P(control + 0x6f0), 32); }
+            if (len > 0 && len < (4 << 20)) { compute_code(&p->st[5], control, data); p->st[5].code_len = len; p->st[5].state = 4; p->st[5].dumped = 0; p->st[5].glsl_state = 0; }
             continue;
         }
         if (!data || rd32(data) != 0x12345678u) { logf_limited(&nlog2, 10, "nvn_gl: program #%d shader %d: no text and no recognisable code section\n", p->serial, i); continue; }

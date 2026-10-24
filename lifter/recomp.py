@@ -953,6 +953,8 @@ class Env:
                     return True
                 if (w & 0xff000000) == 0x8b000000 and (w & 31) == r and (w >> 5) & 31 == r:
                     continue                                 # add xR, xR, xE (shifted or extended)
+                if (w >> 25) & 7 == 7 or ((w >> 25) & 5 == 4 and (w >> 26) & 1):
+                    continue                                 # SIMD / FP data processing or SIMD load/store: Rd/Rt is a V register
                 if (w & 31) == r or (w & 0x7c000000) == 0x14000000 or (w & 0xff000010) == 0x54000000 or (w & 0xfffffc1f) == 0xd65f0000:
                     return False                             # Rd/Rt is the register (conservative), b / bl / b.cond / ret
             return False
