@@ -516,7 +516,51 @@ static void crash_signal(int sig, siginfo_t *si, void *uc) {
     }
     report_and_exit(4);
 }
+/* Test aid (Linux): `kill -USR1 <pid>` prints the guest call stack of every thread (a hang without ptrace rights).
+ * The handler of SIGUSR1 sends SIGUSR2 to each thread in turn; each writes its own stack with write(2). */
+#include <dirent.h>
+const char *guest_thread_name_of(DWORD tid);         /* os_threads.c */
+#include <sys/syscall.h>
+static volatile int g_stack_done;
+static void stack_signal(int sig) {
+    (void)sig;
+    long tid = (long)syscall(SYS_gettid);
+    const char *nm = guest_thread_name_of((DWORD)tid);
+    Ctx *c = t_cur_ctx;
+    char b[2048]; int n = snprintf(b, sizeof b, "thread %ld %s:", tid, nm ? nm : "-");
+    if (c) {      /* the host unwinder stops before the lifted code: the guest's own frame chain (x29), within its stack */
+        uint64_t sp = c->x[31], fp = c->x[29];
+        n += snprintf(b + n, sizeof b - (size_t)n, " in f_%llx lr %llx |", (unsigned long long)c->fn, (unsigned long long)c->x[30]);
+        for (int i = 0; i < 24 && fp >= sp && fp - sp < (8u << 20) && !(fp & 7) && n < (int)sizeof b - 24; i++) {
+            const uint64_t *f = (const uint64_t *)(uintptr_t)fp;
+            n += snprintf(b + n, sizeof b - (size_t)n, " %llx", (unsigned long long)f[1]);
+            if (f[0] <= fp) break;
+            fp = f[0];
+        }
+    }
+    b[n++] = '\n';
+    if (write(1, b, (size_t)n) < 0) {}
+    g_stack_done = 1;
+}
+static void stacks_signal(int sig) {
+    (void)sig;
+    DIR *d = opendir("/proc/self/task");
+    struct dirent *e;
+    long self = (long)syscall(SYS_gettid);
+    if (write(1, "guest stacks of all threads (innermost first):\n", 47) < 0) {}
+    while (d && (e = readdir(d))) {
+        long tid = atol(e->d_name);
+        if (tid <= 0) continue;
+        if (tid == self) { stack_signal(SIGUSR2); continue; }
+        g_stack_done = 0;
+        syscall(SYS_tgkill, (long)getpid(), tid, SIGUSR2);
+        for (int w = 0; w < 200 && !g_stack_done; w++) usleep(1000);
+    }
+    if (d) closedir(d);
+}
 static void install_crash_handler(void) {
+    signal(SIGUSR1, stacks_signal);
+    signal(SIGUSR2, stack_signal);
     static uint8_t alt[1 << 16];
     stack_t ss = { .ss_sp = alt, .ss_size = sizeof alt };
     sigaltstack(&ss, NULL);
