@@ -1,8 +1,8 @@
 # b3recomp status
 
-Stage 3 (2026-10-24): the title screen and the start of chapter 1 render with their 3D scenes, at 60 fps, with sound and
-without any "not implemented" stop in a 300 s run. Cutscenes (movies) are still skipped.
-(16 threads, RX 9070 XT / RADV) with their own dump.
+Stage 4 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg) and the prologue of chapter 1 run, at 60 fps
+in-engine (30 fps movies), with sound, without a "not implemented" stop in 480 s. The Vulkan validation layer was not run
+(not installed on this PC).
 
 ## What builds
 
@@ -128,19 +128,36 @@ the developer's run: title, Bayonetta falling through the sky at the start of ch
 Still open from the list: the translated instructions are only checked by these pictures (no reference images of the
 console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no-ops.
 
+## Stage 4 (2026-10-24): movies, the prologue
+
+- **Movies on Linux**: `nnmovie_mf.c` keeps the movie:: protocol (Extractor / Decoder vtables, buffers, events) and uses
+  FFmpeg underneath on Linux (libavformat on the bytes the game's reader returns, libavcodec per selected track, swscale to
+  the tight NV12 the game uploads, swresample to s16 for audio tracks); Windows keeps Media Foundation (only its calls moved
+  into `src_read` / `src_seek` / `src_close`; **the Windows build was not rebuilt**). B3's movies are VP9 1600x900 30 fps
+  without an audio track (the soundtrack comes through Wwise).
+- Two things kept them from playing: `nn::os::TryWaitEvent` had no handler (B3's player polls its decoder events with it:
+  87,778 stub calls), and B3 allocates the Extractor / Decoder objects with its heap-aware operator new, so their deleting
+  destructors must call the game's `operator delete` (free() refused the block: a guest trap at the end of the first movie).
+- A 480 s run from the save (A every 3 s): `ev0000` (163 s, with the game's subtitles), `ev0005`, `ev0010`, `ev0011` play;
+  the prologue goes on through in-engine scenes (the hexagon city, Bayonetta and Viola, an arena with lava, close-ups,
+  "You have a job to do, soldier!"). The summoned-demon sequence of stage 3 no longer holds it (it was waiting for the
+  opening movie). 18,149 frames, 5 M draws, 0 skipped.
+- **Frame rate**: 60 fps in-engine; 30 fps while a movie plays (the movies' rate) and in one heavy scene (983 draws). Indirect
+  records in a compute buffer cost a GPU wait only after new GPU writes (was ~150 waits a frame: 27-49 fps).
+- **Vulkan validation**: not run: `VkLayer_khronos_validation.json` is not installed (`/usr/share/vulkan/explicit_layer.d`
+  does not exist; only Flatpak / Steam copies built for other runtimes are on the disk).
+
 ## Next blockers (most urgent first)
 
-1. **Past the opening**: after the fall, chapter 1 shows a long animated sequence of a summoned demon (about frame 10,000
-   on); A presses every 3 s do not end it. It may want another input (a QTE prompt is not visible), or the opening movie
-   it follows (`ev0000.webm`, skipped) drives it. Next: script other buttons / sticks, watch the game's input reads.
-2. **Movies**: `movie::` (subsdk0) plays VP9 WebM; Linux has only the failing placeholder (Media Foundation on Windows), so
-   every cutscene is skipped. Needs a VP9 decoder behind `movie::Extractor` / `Decoder` (libvpx or FFmpeg). B3's Extractor
-   vtable differs from Smash's (SetDataSource at +0x78).
-3. **Picture correctness**: no reference to compare with; the Vulkan validation layer is not installed here (would check
-   the new storage-image, depth-bounds and empty-pass paths).
-4. **Tessellation stages** (29 programs): translator and pipeline support; not reached in 300 s.
-5. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again).
-6. `nn::account::PopOpenUsers` (called once, harmless), the `nn::audio` Resampler imports (not reached), about 170 other
+1. **Vulkan validation** of the new paths (storage images, depth bounds, passes without attachments, indirect draws) once
+   `vulkan-validation-layers` is installed: `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` (or `SSBU_VK_DEBUG=1`).
+2. **Gameplay input**: the scripted runs only press A; whether the first fight is playable (movement, camera, combat with
+   a pad) is not tested.
+3. **Picture correctness**: no reference images to compare with.
+4. **Windows build** of the movie changes (not compiled here).
+5. **Tessellation stages** (29 programs): translator and pipeline support; not reached in 480 s.
+6. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again).
+7. `nn::account::PopOpenUsers` (called once, harmless), the `nn::audio` Resampler imports (not reached), about 170 other
    imports without a handler (none reached).
 
 ## Known shortcuts (marked `shortcut:` in the code)
@@ -159,6 +176,8 @@ console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no
 - Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel
   offset of an implicit-LOD sample is scaled by level 0's size; storage images need a format with storage support and the
   same texel size as the shader's typed format (else logged as missing).
+- Movies (FFmpeg): packets of a selected track read ahead of time wait in a queue of 512; past that the oldest is dropped
+  (`shortcut:` in `nnmovie_mf.c`).
 - Indirect draws are read on the CPU (one Vulkan draw per record) instead of `vkCmdDrawIndirect*`; records in a compute
   buffer of the batch cost a submit and a wait.
 - Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
