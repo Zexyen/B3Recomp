@@ -26,7 +26,7 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [b3recomp] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
-#define MX_VK_VERSION 9u                         /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 10u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
@@ -197,6 +197,14 @@ static VStage *vstage_new(uint64_t hb, int s, int code_len, const uint32_t *key,
     return v;
 }
 /* Any thread, no lock: fills v (in the table, state 1) from its record on disk, else with the translator and glslang. */
+static void module_name(VkShaderModule mod, const SSrc *src) {
+    if (!vkSetDebugUtilsObjectNameEXT || !mod || g_offline) return;
+    char nm[48]; snprintf(nm, sizeof nm, "program #%d stage %d", src->serial, src->stage);
+    VkDebugUtilsObjectNameInfoEXT ni = {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+    ni.objectType = VK_OBJECT_TYPE_SHADER_MODULE; ni.objectHandle = (uint64_t)(uintptr_t)mod; ni.pObjectName = nm;
+    vkSetDebugUtilsObjectNameEXT(V.device, &ni);
+    printf("nvn_vk: shader module 0x%llx = %s\n", (unsigned long long)ni.objectHandle, nm);      /* GPU-AV names the module by handle only */
+}
 static void vstage_build(VStage *v, const SSrc *src) {
     int s = v->stage, done = 0;
     char path[128];
@@ -208,7 +216,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         while (!done && fread(&e, 1, sizeof e, fp) == sizeof e) {
             VkShaderModule mod;
             if (e.magic != STAGEREC_MAGIC || e.fo != v->fo || !key_fits(s, v->key, e.key, e.dep, e.tex)) continue;
-            if (stage_rec_read(s, e.vh, &r) && (mod = module_from_spv(r.spv)) != NULL) { vstage_from_rec(v, &r, e.vh, mod); v->from_rec = 1; InterlockedIncrement64(&R.modules); done = 1; }
+            if (stage_rec_read(s, e.vh, &r) && (mod = module_from_spv(r.spv)) != NULL) { module_name(mod, src); vstage_from_rec(v, &r, e.vh, mod); v->from_rec = 1; InterlockedIncrement64(&R.modules); done = 1; }
         }
         fclose(fp);
     }
@@ -235,6 +243,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
             }
             if (in.screen_scale) { InterlockedIncrement64(&g_rs_stages); if (strstr(out.glsl, "mx_fcs)")) InterlockedIncrement64(&g_rs_fcs); if (strstr(out.glsl, "mx_tf(")) InterlockedIncrement64(&g_rs_tf); }
             v->mod = module_from_glsl(s, out.glsl, what, &spv_hash);
+            module_name(v->mod, src);
             v->cbufs = out.cbufs; v->ssbos = out.ssbos; v->ssbo_w = out.ssbo_written; v->images = out.images; v->in_attr = out.in_attr; v->out_attr = out.out_attr;
             v->dep = s == 0 ? out.int_dep : 0; v->tex_units = out.tex_units; v->uses_alpha = out.uses_alpha; v->nsmp = out.nsmp;
             memcpy(v->img_fmt, out.image_gl_format, sizeof v->img_fmt); memcpy(v->img_type, out.image_type, sizeof v->img_type);

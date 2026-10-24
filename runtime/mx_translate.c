@@ -1262,7 +1262,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             if (ld) {
                 if (r != 255) emit(e, " uint w = ad < %uu ? %s[%s] : 0u; %s = %s;", words * 4, arr, idx, D(e, r),
                                    sz & 1 ? S(e, "uint(bitfieldExtract(int(w), %s, %u))", sh, bits) : S(e, "bitfieldExtract(w, %s, %u)", sh, bits));
-            } else emit(e, " if (ad < %uu) %s[%s] = bitfieldInsert(%s[%s], %s, %s, %u);", words * 4, arr, idx, arr, idx, X(e, r), sh, bits);
+            } else if (shared)                                     /* lanes storing neighbouring bytes of one word at once: atomics, a read-modify-write loses all but one */
+                emit(e, " if (ad < %uu) { uint m = 0x%xu << %s; atomicAnd(smem[%s], ~m); atomicOr(smem[%s], (%s << %s) & m); }", words * 4, (1u << bits) - 1, sh, idx, idx, X(e, r), sh);
+            else emit(e, " if (ad < %uu) %s[%s] = bitfieldInsert(%s[%s], %s, %s, %u);", words * 4, arr, idx, arr, idx, X(e, r), sh, bits);
             break;
         }
         unsigned n = sz == 4 ? 1 : sz == 5 ? 2 : sz == 6 ? 4 : 0;

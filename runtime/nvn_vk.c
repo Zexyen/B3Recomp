@@ -100,6 +100,7 @@ VKF(X)
 static VkResult (VKAPI_PTR *vkEnumerateInstanceVersion)(uint32_t *);          /* absent from a Vulkan 1.0 loader */
 static VkResult (VKAPI_PTR *vkCreateDebugUtilsMessengerEXT)(VkInstance, const VkDebugUtilsMessengerCreateInfoEXT *, const VkAllocationCallbacks *, VkDebugUtilsMessengerEXT *);
 static void (VKAPI_PTR *vkDestroyDebugUtilsMessengerEXT)(VkInstance, VkDebugUtilsMessengerEXT, const VkAllocationCallbacks *);
+static PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT;      /* SSBU_VK_VALIDATE: shader modules are named by program, for the layer's messages */
 
 /* ---------------------------------------------------------------- state (render thread only, except the counters) */
 static struct {
@@ -327,6 +328,7 @@ int nvn_vk_init(void *hwnd) {
     if (V.validate) {
         vkCreateDebugUtilsMessengerEXT = (void *)vkGetInstanceProcAddr(V.instance, "vkCreateDebugUtilsMessengerEXT");
         vkDestroyDebugUtilsMessengerEXT = (void *)vkGetInstanceProcAddr(V.instance, "vkDestroyDebugUtilsMessengerEXT");
+        vkSetDebugUtilsObjectNameEXT = (void *)vkGetInstanceProcAddr(V.instance, "vkSetDebugUtilsObjectNameEXT");
         VkDebugUtilsMessengerCreateInfoEXT mi;
         memset(&mi, 0, sizeof mi);
         mi.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
