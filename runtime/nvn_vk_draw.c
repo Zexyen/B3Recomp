@@ -1187,7 +1187,7 @@ typedef struct VStage {
 } VStage;
 /* M4 (design section 5): what a stage needs to become a module again without the translator and glslang, in
  * ..\cache\vk\stage\<stage>_<hash of machine code, constants, variant, translator version>.st */
-#define MX_VK_VERSION 3u                           /* part of the stage hash: change it when mx_translate's Vulkan text changes */
+#define MX_VK_VERSION 5u                           /* part of the stage hash: change it when mx_translate's Vulkan text changes */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; } StageRec;
 static CRITICAL_SECTION g_sh_lock;                 /* the stage and pipeline tables while the start-up workers run */
 static VkPipelineCache g_pcache;
@@ -2173,6 +2173,11 @@ static int cb_overlap(uint64_t addr, uint64_t size) {
     int n = g_cb_scan ? g_cb_hi : 256;
     for (int i = 0; i < n; i++) if (g_cb[i].state == 1 && addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size) return 1;
     return 0;
+}
+/* [b3recomp] guest memory the CPU is about to read (indirect draw / dispatch records) holds what compute wrote into it */
+static void cpu_read_sync(uint64_t addr, uint64_t size) {
+    if (g_cb_live && cb_overlap(addr, size)) cb_sync();
+    if (g_cb_nkept) cb_kept_range(addr, size, 3);
 }
 static CB *cb_new(uint64_t addr, uint64_t size) {
     CB *c = NULL, *empty = NULL, *victim = NULL;
@@ -3339,10 +3344,9 @@ static void exec(const Cmd *m, int depth) {
     case OP_IMAGESTRIDE: R.image_stride = (int64_t)a[0]; break;
     case OP_BARRIER: if (a[0] & 0x10) nvn_front_barrier_texmem(); break;      /* ordering bits: every draw is recorded in order; feedback is handled at the draw */
     case OP_DISPATCH: { LONG64 t0 = tk(); compute_dispatch((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2]); g_tm[2] += tk() - t0; break; }
-    case OP_DISPATCH_INDIRECT: {               /* [b3recomp] a0 = address of three group counts, read after the GPU work before it (as nvn_gl.c does) */
+    case OP_DISPATCH_INDIRECT: {               /* [b3recomp] a0 = address of three group counts, read once compute output there has landed (cpu_read_sync) */
         uint32_t g[3] = {0, 0, 0};
-        cb_sync();
-        if (a[0]) memcpy(g, P(a[0]), 12);
+        if (a[0]) { cpu_read_sync(a[0], 12); memcpy(g, P(a[0]), 12); }
         LONG64 t0 = tk(); compute_dispatch(g[0], g[1], g[2]); g_tm[2] += tk() - t0;
         break;
     }
@@ -3413,6 +3417,36 @@ static void exec(const Cmd *m, int depth) {
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
+        break;
+    }
+    case OP_DRAW_INDIRECT: {                   /* [b3recomp] a0 mode, a1 index type, a2 index buffer, a3 records, a4 draws (or the maximum), a5 stride,
+                                                * a6 bit 0 elements, bit 1 count read from memory (blob = its address). The records are read on the CPU
+                                                * once the compute work that wrote them has landed (cpu_read_sync), one Vulkan draw each, as nvn_gl.c. */
+        unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1, n = (unsigned)a[4], stride = (unsigned)a[5], elements = (unsigned)(a[6] & 1), sz = elements ? 20 : 16;
+        if (a[6] & 2) { uint64_t param; memcpy(&param, blob, 8); if (param) cpu_read_sync(param, 4); uint32_t cnt = param ? rd32(param) : 0; if (cnt < n) n = cnt; }
+        if (!stride) stride = sz;
+        if (a[3] && n) cpu_read_sync(a[3], (uint64_t)(n - 1) * stride + sz);
+        if (!a[3] || !n || (elements && !a[2])) break;
+        if (elements && t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
+        uint64_t lo = ~0ull, hi = 0;
+        for (unsigned k = 0; k < n && elements; k++) {          /* the index range all records use */
+            uint32_t d[5]; memcpy(d, P(a[3] + (uint64_t)k * stride), sz);
+            if (d[0] && d[1]) { if (d[2] < lo) lo = d[2]; if ((uint64_t)d[2] + d[0] > hi) hi = (uint64_t)d[2] + d[0]; }
+        }
+        if (elements && hi <= lo) break;
+        BufRef ib;
+        if (elements) buf_ref(a[2] + (lo << t), (hi - lo) << t, (uint64_t)1 << t, &ib);      /* before the draw is prepared: a ring wrap submits */
+        LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0;
+        if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
+        if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        for (unsigned k = 0; k < n; k++) {
+            uint32_t d[5];                     /* arrays: count, instances, first, base instance; elements: count, instances, first index, base vertex, base instance */
+            memcpy(d, P(a[3] + (uint64_t)k * stride), sz);
+            if (!d[0] || !d[1]) continue;
+            if (elements) vkCmdDrawIndexed(R.cmd, d[0], d[1], (uint32_t)(d[2] - lo), (int32_t)d[3], d[4]);
+            else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
+            R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
+        }
         break;
     }
     case OP_COPY_BUF_TEX: cb_sync(); if (g_cb_nkept) cb_kept_all(3); copy_buf_tex(m); break;
