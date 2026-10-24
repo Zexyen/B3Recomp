@@ -1188,7 +1188,7 @@ typedef struct VStage {
 } VStage;
 /* M4 (design section 5): what a stage needs to become a module again without the translator and glslang, in
  * ..\cache\vk\stage\<stage>_<hash of machine code, constants, variant, translator version>.st */
-#define MX_VK_VERSION 5u                           /* part of the stage hash: change it when mx_translate's Vulkan text changes */
+#define MX_VK_VERSION 6u                           /* part of the stage hash: change it when mx_translate's Vulkan text changes */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; } StageRec;
 static CRITICAL_SECTION g_sh_lock;                 /* the stage and pipeline tables while the start-up workers run */
 static VkPipelineCache g_pcache;

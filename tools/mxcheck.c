@@ -96,6 +96,7 @@ int main(int argc, char **argv) {
             if (verbose) printf("%s stage %d: %s\n", de->d_name, s, out.why);
         } else {
             char log[4096];
+            if (out.images) { char k[64]; snprintf(k, sizeof k, "uses images (stage %d)", s); count(k); }
             if (compile(s, out.glsl, log, sizeof log)) ok_n++;
             else {
                 char *e = strstr(log, "ERROR: "), *nl;

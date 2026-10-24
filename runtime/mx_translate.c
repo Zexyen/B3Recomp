@@ -311,6 +311,22 @@ static const char *tex_offset(Mx *e, unsigned t, const char *reg, int bits) {   
     return S(e, "ivec3(bitfieldExtract(int(%s), 0, %d), bitfieldExtract(int(%s), %d, %d), bitfieldExtract(int(%s), %d, %d))", reg, bits, reg, step, bits, reg, 2 * step, bits);
 }
 /* stores the components selected by mask into consecutive registers from rd */
+/* [b3recomp] Vulkan GLSL wants texel offsets that are constant expressions; Maxwell's come from a register. Lowered for target 1:
+ * an integer fetch adds the offset to its coordinates (exact); a filtered sample moves its coordinates by offset / size of
+ * level lvl (exact at that level). shortcut: implicit-LOD samples use level 0 (wrong by a factor 2^lod on mip levels
+ * above 0); fine for unmipped screen-space textures, upgrade with a textureQueryLod-based size if mipmapped ones show it. */
+static const char *off_fetch(Mx *e, unsigned t, const char *coords, const char *off) {
+    return t == 1 ? S(e, "(%s + ivec2(%s, 0))", coords, off) : t == 3 ? S(e, "(%s + ivec3(%s, 0))", coords, off) : S(e, "(%s + %s)", coords, off);
+}
+static const char *off_shift(Mx *e, unsigned t, const char *smp, const char *coords, const char *off, const char *lvl) {
+    switch (t) {
+    case 0: return S(e, "(%s + float(%s) / float(textureSize(%s, %s)))", coords, off, smp, lvl);
+    case 1: return S(e, "(%s + vec2(float(%s) / float(textureSize(%s, %s).x), 0.0))", coords, off, smp, lvl);
+    case 2: return S(e, "(%s + vec2(%s) / vec2(textureSize(%s, %s)))", coords, off, smp, lvl);
+    case 3: return S(e, "(%s + vec3(vec2(%s) / vec2(textureSize(%s, %s).xy), 0.0))", coords, off, smp, lvl);
+    default: return S(e, "(%s + vec3(%s) / vec3(textureSize(%s, %s)))", coords, off, smp, lvl);
+    }
+}
 static void tex_store_mask(Mx *e, unsigned mask, unsigned rd, int is_int) {
     unsigned r = rd;
     for (unsigned k = 0; k < 4; k++) {
@@ -352,6 +368,7 @@ static void op_tex(Mx *e, uint64_t i) {
     int explicit_lod = blod == 1 || blod == 3 || blod == 7, bias = blod == 2 || blod == 6, is_int = tex_is_int(e, unit, dc);
     if (e->in->stage != MX_FRAGMENT && !explicit_lod) { explicit_lod = 1; bias = 0; lod = NULL; }
     const char *lodv = blod == 1 || !lod ? "0.0" : lod, *smp = SMP(e, unit, k_tex_base[t], dc), *call;
+    if (off && e->in->target == 1) { coords = off_shift(e, t, smp, coords, off, explicit_lod ? S(e, "int(%s)", lodv) : "0"); off = NULL; }
     if (dc) {
         const char *p = shadow_coords(e, t, coords, dim, dref);
         if (t == 7 && (explicit_lod || off || bias)) { fail(e, "TEX", "shadow cube array with lod/offset/bias"); return; }
@@ -437,6 +454,7 @@ static void op_tld(Mx *e, uint64_t i) {
     int is_int = tex_is_int(e, unit, 0);
     const char *smp = SMP(e, unit, base, 0), *call;
     if (t == 2 && !ms) coords = tf_scaled(e, unit, smp, coords, &off);
+    if (off && e->in->target == 1) { coords = off_fetch(e, t, coords, off); off = NULL; }
     if (ms) call = S(e, "texelFetch(%s, %s, %s)", smp, coords, smpl);
     else call = off ? S(e, "texelFetchOffset(%s, %s, %s, %s)", smp, coords, lod, off) : S(e, "texelFetch(%s, %s, %s)", smp, coords, lod);
     emit(e, "%s%s;", tv_decl(is_int, e->in->sint_tex >> unit & 1), call);
@@ -461,6 +479,7 @@ static void op_tlds(Mx *e, uint64_t i) {
         call = S(e, "texelFetch(%s, ivec2(%s, %s), 0)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, b)); break;
     case 4: off = tex_offset(e, 2, X(e, b), 4);
         if (TLDS_RS) { const char *sm = SMP(e, unit, "2D", 0); call = S(e, "texelFetch(%s, %s, 0)", sm, tf_scaled(e, unit, sm, S(e, "ivec2(%s, %s)", IR(e, a), IR(e, a + 1)), &off)); break; }
+        if (e->in->target == 1) { call = S(e, "texelFetch(%s, ivec2(%s, %s) + %s, 0)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, a + 1), off); break; }
         call = S(e, "texelFetchOffset(%s, ivec2(%s, %s), 0, %s)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, a + 1), off); break;
     case 5: if (TLDS_RS) { const char *sm = SMP(e, unit, "2D", 0); call = S(e, "texelFetch(%s, %s, %s)", sm, tf_scaled(e, unit, sm, S(e, "ivec2(%s, %s)", IR(e, a), IR(e, a + 1)), NULL), IR(e, b)); break; }
         call = S(e, "texelFetch(%s, ivec2(%s, %s), %s)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, a + 1), IR(e, b)); break;
@@ -469,6 +488,7 @@ static void op_tlds(Mx *e, uint64_t i) {
     case 8: call = S(e, "texelFetch(%s, ivec3(%s, %s, int(%s & 0xffffu)), 0)", SMP(e, unit, "2DArray", 0), IR(e, b), IR(e, b + 1), X(e, a)); break;
     case 12: off = tex_offset(e, 2, X(e, b + 1), 4);
         if (TLDS_RS) { const char *sm = SMP(e, unit, "2D", 0); call = S(e, "texelFetch(%s, %s, %s)", sm, tf_scaled(e, unit, sm, S(e, "ivec2(%s, %s)", IR(e, a), IR(e, a + 1)), &off), IR(e, b)); break; }
+        if (e->in->target == 1) { call = S(e, "texelFetch(%s, ivec2(%s, %s) + %s, %s)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, a + 1), off, IR(e, b)); break; }
         call = S(e, "texelFetchOffset(%s, ivec2(%s, %s), %s, %s)", SMP(e, unit, "2D", 0), IR(e, a), IR(e, a + 1), IR(e, b), off); break;
     default: fail(e, "TLDS", "TLDS encoding %u", enc); return;
     }
@@ -570,6 +590,7 @@ static void op_txd(Mx *e, uint64_t i) {
     }
     int is_int = tex_is_int(e, unit, 0);
     const char *smp = SMP(e, unit, k_tex_base[t], 0);
+    if (off && e->in->target == 1) { coords = off_shift(e, t, smp, coords, off, "0"); off = NULL; }
     emit(e, "%s%s;", tv_decl(is_int, e->in->sint_tex >> unit & 1),
          off ? S(e, "textureGradOffset(%s, %s, %s, %s, %s)", smp, coords, dx, dy, off) : S(e, "textureGrad(%s, %s, %s, %s)", smp, coords, dx, dy));
     tex_store_mask(e, mask, MXB(i, 0, 8), is_int);
@@ -623,6 +644,24 @@ static const char *img_qualifier(uint16_t fmt, int *cls) {
     return NULL;
 }
 
+/* [b3recomp] SULD / SUST with the image handle in a register: B3's shaders load that register from the bound image slot's
+ * handle word (MOV rN, c2[72 + 2k]) shortly before (all 799 such stores of B3's stages). The last instruction before pc,
+ * in code order, that writes the register must be that load; the slot k, else -1 (the stage is not translated). */
+static int handle_slot(Mx *e, unsigned pc, unsigned reg) {
+    for (unsigned k = pc - 1; k >= 1 && k < pc; k--) {
+        if (k % 4 == 0) continue;                                  /* scheduling words */
+        uint64_t j = *(const uint64_t *)(e->base + (size_t)k * 8);
+        int o = decode(j);
+        if (o < 0 || MXB(j, 0, 8) != reg) continue;
+        const char *nm = mx_op_name[o];
+        if (!strncmp(nm, "ST", 2) || strstr(nm, "SETP") || o == MXOP_SUST || o == MXOP_RED || o == MXOP_BRA || o == MXOP_EXIT || o == MXOP_KIL ||
+            o == MXOP_SYNC || o == MXOP_BRK || o == MXOP_CONT || o == MXOP_SSY || o == MXOP_PBK || o == MXOP_PCNT || o == MXOP_NOP || o == MXOP_BAR ||
+            o == MXOP_MEMBAR || o == MXOP_DEPBAR) continue;                 /* bits 0..7 are not a destination register */
+        unsigned w = MXB(j, 20, 14);
+        return o == MXOP_MOV_cbuf && MXB(j, 34, 5) == 2 && w >= 72 && w < 88 && !(w & 1) ? (int)(w - 72) / 2 : -1;
+    }
+    return -1;
+}
 static void insn(Mx *e, unsigned pc, uint64_t i) {
     int op = decode(i);
     unsigned pred = MXB(i, 16, 3), pneg = MXB(i, 19, 1);
@@ -753,11 +792,38 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         break;
     }
     case MXOP_FSWZADD: {                        /* [b3recomp] a * la[q] + b * lb[q], q = the 2-bit field of the swizzle (bits 28..35) for this lane of
-                                                 * its quad (suyu's tables: la = 1 -1 1 0, lb = 1 1 -1 1). NDV (bit 38) and CC are not modelled. */
-        if (MXB(i, 38, 1) || MXB(i, 47, 1)) { fail(e, "FSWZADD", "FSWZADD with NDV or CC"); break; }
+                                                 * its quad (suyu's tables: la = 1 -1 1 0, lb = 1 1 -1 1). NDV (bit 38, "no divergence") is a hint: the
+                                                 * same arithmetic. CC is not modelled. */
+        if (MXB(i, 47, 1)) { fail(e, "FSWZADD", "FSWZADD with CC"); break; }
         const char *lane = e->in->target == 1 ? (e->uses_sg = 1, "gl_SubgroupInvocationID") : "gl_SubGroupInvocationARB";
         emit(e, "uint q = (%uu >> ((%s & 3u) << 1)) & 3u;", (unsigned)MXB(i, 28, 8), lane);
         fres(e, i, S(e, "F(%s) * vec4(1.0, -1.0, 1.0, 0.0)[q] + F(%s) * vec4(1.0, 1.0, -1.0, 1.0)[q]", A8, R20), 0, 0);
+        break;
+    }
+    /* [b3recomp] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). shortcut: no-ops;
+     * correct where the driver keeps helper invocations active for subgroup shuffles (RADV, NVIDIA); upgrade with
+     * VK_KHR_shader_quad_control if edge pixels of such textures look wrong elsewhere. */
+    case MXOP_SAM: case MXOP_RAM:
+        break;
+    case MXOP_VMNMX: {                          /* [b3recomp] as suyu: d = op(min/max(a, b), c); a word-wide, selectors 2; op 0 MRG_16H 1 MRG_16L
+                                                 * 2 MRG_8B0 3 MRG_8B2 4 ACC 5 MIN 6 MAX; b = Rb (bit 50) or a 16-bit immediate read as a byte */
+        unsigned bsel = MXB(i, 28, 2), bw = MXB(i, 29, 2), asel = MXB(i, 36, 2), aw = MXB(i, 37, 2), vop = MXB(i, 51, 3);
+        int bsg = (int)MXB(i, 49, 1), dsg = (int)MXB(i, 54, 1), breg = (int)MXB(i, 50, 1);
+        if (MXB(i, 47, 1) || MXB(i, 55, 1) || asel != 2 || bsel != 2 || aw != 3 || vop > 6) { fail(e, "VMNMX", "VMNMX form %016llx", (unsigned long long)i); break; }
+        if (!breg) bw = 1;
+        const char *bv = breg ? R20 : S(e, "%uu", (unsigned)MXB(i, 20, 16));
+        const char *ob = bw == 3 ? bv : bsg ? S(e, "uint(bitfieldExtract(int(%s), 0, %d))", bv, bw == 2 ? 16 : 8) : S(e, "bitfieldExtract(%s, 0, %d)", bv, bw == 2 ? 16 : 8);
+        const char *lhs = bsg ? S(e, "uint(%s(int(%s), int(%s)))", MXB(i, 56, 1) ? "max" : "min", A8, ob) : S(e, "%s(%s, %s)", MXB(i, 56, 1) ? "max" : "min", A8, ob);
+        const char *rc = R39, *res;
+        switch (vop) {
+        case 0: res = S(e, "bitfieldInsert(%s, %s, 16, 16)", rc, lhs); break;
+        case 1: res = S(e, "bitfieldInsert(%s, %s, 0, 16)", rc, lhs); break;
+        case 2: res = S(e, "bitfieldInsert(%s, %s, 0, 8)", rc, lhs); break;
+        case 3: res = S(e, "bitfieldInsert(%s, %s, 16, 8)", rc, lhs); break;
+        case 4: res = S(e, "(%s + %s)", lhs, rc); break;
+        default: res = dsg ? S(e, "uint(%s(int(%s), int(%s)))", vop == 5 ? "min" : "max", lhs, rc) : S(e, "%s(%s, %s)", vop == 5 ? "min" : "max", lhs, rc); break;
+        }
+        emit(e, "uint vl = %s; %s = vl;", res, DST);
         break;
     }
     case MXOP_NOP: case MXOP_DEPBAR: case MXOP_MEMBAR: case MXOP_VOTE_vtg: case MXOP_CCTL: case MXOP_CCTLL: case MXOP_SSY: case MXOP_PBK: case MXOP_PCNT:
@@ -1230,7 +1296,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned ty = MXB(i, 33, 3), typed = MXB(i, 52, 1), szf = MXB(i, 20, 3), swz = MXB(i, 20, 4), off = MXB(i, 36, 13), r = MXB(i, 0, 8), cr = MXB(i, 8, 8);
         int ld = op == MXOP_SULD;
         const char *nm = ld ? "SULD" : "SUST";
-        if (!MXB(i, 51, 1)) { fail(e, ld ? "SULD (bindless)" : "SUST (bindless)", "%s with an image handle in a register", nm); break; }
+        if (!MXB(i, 51, 1)) {                                     /* handle in register Rc (bits 39..46): the slot it was loaded from */
+            int slot = handle_slot(e, pc, MXB(i, 39, 8));
+            if (slot < 0) { fail(e, ld ? "SULD (bindless)" : "SUST (bindless)", "%s with an image handle in a register not loaded from an image slot", nm); break; }
+            off = 72 + 2 * (unsigned)slot;
+        }
         if (MXB(i, 49, 2)) { fail(e, nm, "%s with clamp mode %u", nm, MXB(i, 49, 2)); break; }
         if (ty > 5 || (typed && (szf > 6 || MXB(i, 23, 1)))) { fail(e, nm, "%s type %u size %u", nm, ty, szf); break; }
         if (off < 72 || (off & 1) || (off - 72) / 2 >= 8) { fail(e, nm, "image handle at constant buffer word %u", off); break; }
