@@ -1,8 +1,9 @@
 # b3recomp status
 
-Stage 4 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg) and the prologue of chapter 1 run, at 60 fps
-in-engine (30 fps movies), with sound, without a "not implemented" stop in 480 s. The Vulkan validation layer was not run
-(not installed on this PC).
+Stage 5 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg), the prologue and **the first fights** run, with
+sound and scripted pad input (punch, kick, dodge, jump, movement: Verse 1 cleared, Verse 2 reached), without a "not
+implemented" stop in 1,500 s. 60 fps in-engine on light scenes, 30 fps movies, about 40 fps in fights (render-thread
+bound). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / known items, listed below.
 
 ## What builds
 
@@ -185,16 +186,59 @@ Left, judged benign or known:
   flow for stages with `BAR` would fix it (not done).
 - `WARNING-Setting-Limit-Adjusted`: GPU-AV itself.
 
+## Stage 5 (2026-10-24): the prologue goes on into chapter 1's cutscenes
+
+- **The prologue stopped on a still of Viola** (about 640 s from the save, frame ~19,000): `ev0011` is opened and
+  pre-rolled while `ev0010` plays, then taken in one burst when `ev0010` ends. B3's player [game 0x7100cd6cb4] keeps
+  decoded frames in a pool of 16 nodes. A frame acquired while the pool is empty [0x7100cd7244] is neither queued nor
+  released, so it is lost and its output buffer leaks. This decoder has no decoding time and offered 48 output buffers
+  (SSBU's number), so the burst overran the pool, the picture stopped after 16 frames and the decoder had no free buffer
+  left. **16 video output buffers** now (the codec stalls before the pool runs out). The earlier movies were losing frames
+  the same way (300 frames per 18.7 s of movie time before, 300 per 10 s now).
+- A 900 s run from the save (A every 3 s): `ev0000`, `ev0005`, `ev0010`, **`ev0011`, `ev0020`, `ev0021`, `ev0022`**
+  play, through the in-engine prologue scenes and into chapter 1's New York opening (the streets, the pizza truck).
+  31,336 frames, 5.4 M draws, 0 skipped, no stop.
+- Linux: `libopus-0.dll` maps to `libopus.so.0` (`nn::codec`'s HardwareOpusDecoder reported a work buffer of 0 bytes;
+  Wwise does its own Opus, so this was not the stall).
+- Test aids: `kill -USR1 <pid>` (Linux) prints each thread's guest thread name, current guest function, LR and x29 frame
+  chain (the hang above was found with it; ptrace is not allowed here). `SSBU_MOVIE_LOG` lines now name the decoder and
+  the guest caller.
+- `SSBU_SKIP_MOVIES=1` takes another path: the A presses reach the menu and open **Chapter Select, "Prologue: A Chaotic
+  Encounter"**. After the (cut) movies `ev0020`..`ev0026` it holds one camera view of water and buildings at 563 draws a
+  frame for over 4 minutes (not looked into; cutting movies short may itself be the cause).
+
+### Gameplay (2026-10-24)
+
+- **The first fights run.** Run `long1` (1,500 s, A every 3 s) took the Chapter Select route: Prologue "A Chaotic
+  Encounter", movies `ev0020` .. `ev0026` at full length, then gameplay at ~760 s (frame ~23,000) with the combat HUD
+  (Verse 1, the Punch / Kick / Shoot / Jump / Dodge prompts, combo points) against Homunculi and a giant Homunculus.
+  With A alone Bayonetta keeps dying ("THE WITCH HUNTS ARE OVER", retry) in Verse 1.
+- **Input beyond A works.** Run `fight1` (1,500 s, the same A presses plus an `SSBU_SCRIPT` of 1,716 steps from 700 s:
+  punch `V`=Y, kick `C`=X, dodge `S`=ZR, jump `X`=B, left stick right / left, punch+dodge): Verse 1 is cleared (1,525
+  combo points x1.75 on one shot) and the fight goes on into **Verse 2** (another giant Homunculus, another arena).
+  52,448 frames, 32 M draws, 0 skipped, no stop. `SCRIPT_MAX` is 4,096 steps now (was 256).
+- Screenshots: `/tmp/shots/b3_first_fight_verse1.png`, `b3_verse1_start.png`, `b3_verse1_combo.png`, `b3_verse2.png`,
+  `b3_verse2_fight.png`.
+
 ## Next blockers (most urgent first)
 
-2. **Gameplay input**: the scripted runs only press A; whether the first fight is playable (movement, camera, combat with
-   a pad) is not tested.
-3. **Picture correctness**: no reference images to compare with.
-4. **Windows build** of the movie changes (not compiled here).
-5. **Tessellation stages** (29 programs): translator and pipeline support; not reached in 480 s.
-6. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again).
-7. `nn::account::PopOpenUsers` (called once, harmless), the `nn::audio` Resampler imports (not reached), about 170 other
-   imports without a handler (none reached).
+1. **Fight frame rate**: 40 fps on average in the first fights (38-45 at 900-1,500 draws a frame; 60 in-engine on lighter
+   scenes and cutscenes). The render thread is the limit: per frame 13.2 ms batch replay (3.3 dispatch, 3.7 draw
+   preparation), 3.7 ms compute copy-back, 1.1 ms GPU wait (`nvn_vk_perf`, frames 42,000..42,300 of run `fight1`).
+2. **Which route a run takes** depends on when the A presses land on the title: either the movie route (`ev0000` ..
+   `ev0011`, then chapter 1) or Chapter Select → Prologue (`ev0020` .. `ev0026`, then the fights). An `SSBU_SEQ` with
+   `@draws` anchors would make it reproducible.
+3. **Camera input**: the keyboard / script mapping has no right stick; pads (SDL / XInput) were not tested here.
+4. **Picture correctness**: no reference images to compare with.
+5. **Windows build** of the movie changes (not compiled here).
+6. **Tessellation stages** (29 programs): translator and pipeline support. Not reached in 1,500 s of either route
+   (the draw would stop with "a draw with a geometry or tessellation stage").
+7. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
+   structured control flow for stages with `BAR`.
+8. **First-run warm-up**: minutes of held loading screens after a translator change (all 7,900 programs again; this
+   stage changed `MX_VK_VERSION` once).
+9. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
+   `nn::audio` Resampler imports (not reached), about 170 other imports without a handler (none reached).
 
 ## Known shortcuts (marked `shortcut:` in the code)
 

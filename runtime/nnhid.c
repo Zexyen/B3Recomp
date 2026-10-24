@@ -48,7 +48,7 @@ static int scripted(int vk) {
  * keyboard keys of the mapping above (Z X C V Q E A S I J K L), '!' = Enter (Plus), '-' = Backspace (Minus),
  * and lower-case u d l r = the arrow keys (left stick). Example: "38:Z 41:Z 60+0.6:r 62:Z 70:!".
  * Each step is announced on stdout when it starts, so it can be matched against the frame log. */
-#define SCRIPT_MAX 256
+#define SCRIPT_MAX 4096
 static struct { double at, len; char keys[12]; int said; } g_script[SCRIPT_MAX];
 static int g_script_count = -1;
 static ULONGLONG g_script_start;
