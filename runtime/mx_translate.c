@@ -1811,6 +1811,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
     out->ssbos = e->ssbos; out->ssbo_written = e->uses_gstore ? e->ssbos : 0;
     out->images = e->images; out->images_read = e->images_read; out->images_written = e->images_written;
     memcpy(out->image_gl_format, e->image_fmt, sizeof out->image_gl_format);
+    memcpy(out->image_type, e->image_type, sizeof out->image_type);
     out->insns = e->insns; out->blocks = e->blocks; out->uses_alpha = e->uses_alpha;
     out->nsmp = e->nsmp; memcpy(out->smp, e->smp, sizeof out->smp);
 done:

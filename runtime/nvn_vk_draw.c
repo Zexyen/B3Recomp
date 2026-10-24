@@ -239,6 +239,7 @@ static struct {
     float viewport[4], drange[2], blendc[4], point_size, line_width, polyoff[3];
     int scissor[4], have_viewport, have_scissor, rast_discard, depth_clamp, restart, render_off;
     int dbounds_on; float dbounds[2];             /* [b3recomp] nvnCommandBufferSetDepthBounds */
+    uint64_t nvn_img[6][8]; int pass_stores;      /* [b3recomp] image handles bound per stage (nvnCommandBufferBindImage); the open pass has storage image writes */
     int ncol; TargetRef col[8], depth; int have_targets;
     int64_t row_stride, image_stride;
     int dyn_dirty, vi_dirty, dyn3_dirty, dyn3_samples;      /* dyn3: the extended-dynamic-state-3 group (blend, masks, polygon mode, multisample) */
@@ -353,7 +354,12 @@ static int g_dump_on;                            /* [Recomps#1] TEST ONLY: SSBU_
 static void dump_pass_end(void);
 static void dump_pass_begin(int w, int h);
 static void dump_tex_op(Tex *s, Tex *d, const char *what);
-static void pass_end(void) { if (R.in_pass) { oq_end(); vkCmdEndRendering(R.cmd); R.in_pass = 0; if (g_dump_on) dump_pass_end(); } }
+static void storage_barrier(void) {                /* [b3recomp] shader writes to storage images are seen by everything after */
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
+static void pass_end(void) { if (R.in_pass) { oq_end(); vkCmdEndRendering(R.cmd); R.in_pass = 0; if (g_dump_on) dump_pass_end(); if (R.pass_stores) { R.pass_stores = 0; storage_barrier(); } } }
 static LONG64 g_tm[12];                          /* ticks: 0 wait for a submission, 1 copy-back, 2 dispatch, 3 batch replay, 4 present, 5 pipelines, 6 modules, 7 copy-back wait at batch start, 8 draw preparation */
 static LONG64 tk(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 /* Session 5, SSBU_VK_GPUTIME=1: two timestamp queries per command buffer (written at its first and after its last command),
@@ -653,6 +659,7 @@ typedef struct VView { EView e; int vtype, attach; VkImageView view; struct VVie
 struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
     int w, h, d, levels, layers, samples, expand, decode, is3d, feedback, bpb, bw, bh;
+    int storage;                                   /* [b3recomp] made with VK_IMAGE_USAGE_STORAGE_BIT */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
     VView *views; VTex *next, *prev;
 };
@@ -943,6 +950,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         int can_color = vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT && f.kind != 4 && !vt->decode && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
         if (can_color) ci.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) ci.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        if (can_color && vt->samples == 1 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) { ci.usage |= VK_IMAGE_USAGE_STORAGE_BIT; vt->storage = 1; }      /* [b3recomp] SULD / SUST */
         if (vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT) ci.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
         if (ci.imageType == VK_IMAGE_TYPE_2D && vt->w == vt->h && vt->layers >= 6 && vt->samples == 1) ci.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE; ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1089,7 +1097,8 @@ static VkImageView vt_view(VTex *vt, const EView *e, int dim, int attach) {
     n->e = *e; n->vtype = dim; n->attach = attach;
     ci.image = vt->img; ci.format = vt->fmt;
     if (e->format != vt->t->b.format && vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT && !vt->decode && !vt->expand) { VkFormat f = tex_vkfmt(e->format, &ex, &dec); if (f && !ex && !dec && fmt_aspect(f) == VK_IMAGE_ASPECT_COLOR_BIT) ci.format = f; }
-    if (attach) {
+    if (attach >= 2) ci.format = (VkFormat)(attach - 2);      /* [b3recomp] a storage view in the shader's typed format (resolve_image) */
+    if (attach == 1) {
         ci.viewType = VK_IMAGE_VIEW_TYPE_2D; ci.subresourceRange.aspectMask = vt->aspect;
         ci.subresourceRange.baseMipLevel = (uint32_t)e->lvl0; ci.subresourceRange.levelCount = 1; ci.subresourceRange.baseArrayLayer = (uint32_t)(vt->is3d ? 0 : e->lay0); ci.subresourceRange.layerCount = 1;
         if (vt->is3d) nvn_vk_missing("a 3D texture as render target");
@@ -1575,9 +1584,9 @@ static VkDescriptorSet set_alloc(VkDescriptorSetLayout layout) {
             continue;
         }
         if (s->npool == 16) vkd_fail("more than 16 descriptor pools in one command buffer");
-        VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32768}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}};
+        VkDescriptorPoolSize ps[3] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 32768}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16384}};
         VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        pi.maxSets = 8192; pi.poolSizeCount = 2; pi.pPoolSizes = ps;
+        pi.maxSets = 8192; pi.poolSizeCount = 3; pi.pPoolSizes = ps;
         VKC(vkCreateDescriptorPool(V.device, &pi, NULL, &s->pool[s->npool++]));
     }
 }
@@ -1621,7 +1630,7 @@ static VkDescriptorUpdateTemplate set0_template(VkDescriptorSetLayout dl, const 
 }
 static struct { uint64_t key; VkDescriptorSet set; uint32_t gen; VkDescriptorSetLayout dl; int n, off; } g_tset[4096];      /* texture sets of the command buffer being recorded */
 static struct { VTex *d2, *d1, *d3; VkImageView v[7]; } g_dummy;
-static struct { VkImageView view; VkSampler smp; VkImageLayout layout; } g_dtex[140], g_tset_list[32768];      /* g_tset_list: the lists of the cached sets, for the full comparison */
+static struct { VkImageView view; VkSampler smp; VkImageLayout layout; } g_dtex[160], g_tset_list[32768];      /* g_tset_list: the lists of the cached sets, for the full comparison */
 static int g_ndtex;
 static int g_ptm_on = -1;                          /* [Recomps#1] SSBU_VK_PREPTIME (draw_prepare) */
 const LONG64 *nvn_front_ww_times(void);            /* nvn_gl.c */
@@ -2463,6 +2472,44 @@ static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
     return e;
 }
 static void compute_pipe_make(VStage *v);
+/* [b3recomp] the Vulkan format of a typed image qualifier (GL internal format, mx_translate.c img_qualifier) and its bytes per texel */
+static VkFormat img_vkfmt(uint16_t gl, int *bytes) {
+    static const struct { uint16_t gl; uint16_t vk; uint8_t b; } t[] = {
+        {0x8814, VK_FORMAT_R32G32B32A32_SFLOAT, 16}, {0x881A, VK_FORMAT_R16G16B16A16_SFLOAT, 8}, {0x8230, VK_FORMAT_R32G32_SFLOAT, 8}, {0x822F, VK_FORMAT_R16G16_SFLOAT, 4},
+        {0x8C3A, VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4}, {0x822E, VK_FORMAT_R32_SFLOAT, 4}, {0x822D, VK_FORMAT_R16_SFLOAT, 2}, {0x805B, VK_FORMAT_R16G16B16A16_UNORM, 8},
+        {0x8059, VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4}, {0x8058, VK_FORMAT_R8G8B8A8_UNORM, 4}, {0x822C, VK_FORMAT_R16G16_UNORM, 4}, {0x822B, VK_FORMAT_R8G8_UNORM, 2},
+        {0x822A, VK_FORMAT_R16_UNORM, 2}, {0x8229, VK_FORMAT_R8_UNORM, 1}, {0x8F97, VK_FORMAT_R8G8B8A8_SNORM, 4}, {0x8D70, VK_FORMAT_R32G32B32A32_UINT, 16},
+        {0x8D76, VK_FORMAT_R16G16B16A16_UINT, 8}, {0x8D7C, VK_FORMAT_R8G8B8A8_UINT, 4}, {0x823C, VK_FORMAT_R32G32_UINT, 8}, {0x823A, VK_FORMAT_R16G16_UINT, 4},
+        {0x8238, VK_FORMAT_R8G8_UINT, 2}, {0x8236, VK_FORMAT_R32_UINT, 4}, {0x8234, VK_FORMAT_R16_UINT, 2}, {0x8232, VK_FORMAT_R8_UINT, 1},
+        {0x8D82, VK_FORMAT_R32G32B32A32_SINT, 16}, {0x8D88, VK_FORMAT_R16G16B16A16_SINT, 8}, {0x8D8E, VK_FORMAT_R8G8B8A8_SINT, 4}, {0x823B, VK_FORMAT_R32G32_SINT, 8},
+        {0x8239, VK_FORMAT_R16G16_SINT, 4}, {0x8237, VK_FORMAT_R8G8_SINT, 2}, {0x8235, VK_FORMAT_R32_SINT, 4}, {0x8233, VK_FORMAT_R16_SINT, 2}, {0x8231, VK_FORMAT_R8_SINT, 1}};
+    for (size_t k = 0; k < sizeof t / sizeof t[0]; k++) if (t[k].gl == gl) { *bytes = t[k].b; return (VkFormat)t[k].vk; }
+    *bytes = 0;
+    return VK_FORMAT_UNDEFINED;
+}
+/* [b3recomp] Storage image k of stage s (the handle nvnCommandBufferBindImage bound; it names a texture pool entry like a texture
+ * handle): its view (one level, identity swizzle, the shader's typed format if it has one) goes into g_dtex as {view, no
+ * sampler, GENERAL}. May end the pass (layout change). Returns 0 when it cannot be bound (logged, the draw / dispatch is left out). */
+static int resolve_image(int s, VStage *v, int k) {
+    static const int dimof[6] = {DIM_1D, -1, DIM_1DA, DIM_2D, DIM_2DA, DIM_3D};
+    Tex *t = NULL;
+    View view;
+    memset(&view, 0, sizeof view);
+    if (!(nvn_front_handle(R.tpool, NULL, R.nvn_img[s][k], &t, &view, NULL) & 1)) { nvn_vk_missing("a storage image whose handle names no texture (nvnCommandBufferBindImage)"); return 0; }
+    VTex *vt = vt_get(t);
+    int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
+    if (!vt || !vt->storage || dim < 0) { nvn_vk_missing("a storage image of a format, kind or sample count that cannot be a Vulkan storage image (or a buffer image)"); return 0; }
+    EView e;
+    eview_of(t, vt, &view, &e);
+    e.nlvl = 1; e.swz[0] = 2; e.swz[1] = 3; e.swz[2] = 4; e.swz[3] = 5;
+    if (dim == DIM_1D || dim == DIM_2D || dim == DIM_3D) e.nlay = 1;
+    VkFormat qf = v->img_fmt[k] ? img_vkfmt(v->img_fmt[k], &qb) : VK_FORMAT_UNDEFINED;
+    if (qf && qb != vt->bpb) { nvn_vk_missing("a typed storage image access whose texel size differs from the texture's"); return 0; }
+    VkImageView iv = vt_view(vt, &e, dim, qf ? 2 + (int)qf : 0);
+    vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL);
+    g_dtex[g_ndtex].view = iv; g_dtex[g_ndtex].smp = VK_NULL_HANDLE; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_GENERAL; g_ndtex++;
+    return 1;
+}
 static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uint32_t gy, uint32_t gz);
 static void compute_dispatch(uint32_t gx, uint32_t gy, uint32_t gz) {
     Prog *p = R.prog[5];
@@ -2474,7 +2521,6 @@ static void compute_dispatch(uint32_t gx, uint32_t gy, uint32_t gz) {
     uint32_t key[4] = {0, 0, R.tex_int[5], R.tex_sint[5]};
     VStage *v = vstage_get(p, 5, key, 0);
     if (!v) { nvn_vk_missing("nvnCommandBufferDispatchCompute: the compute stage could not be translated or compiled (the log names the program)"); return; }
-    if (v->images) { nvn_vk_missing("a compute program that uses images (nvnCommandBufferBindImage)"); return; }
     if (v->nsmp > 32) { nvn_vk_missing("a compute program with more than 32 samplers"); return; }
     if (!gx || !gy || !gz) return;
     int cp_how = 0;
@@ -2495,6 +2541,7 @@ static void compute_pipe_make(VStage *v) {         /* any thread */
         for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b0[n0++] = b; }
         if (v->ssbo_w) { VkDescriptorSetLayoutBinding b = {38, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b0[n0++] = b; }
         for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b1[n1++] = b; }
+        for (unsigned k = 0; k < 8; k++) if (v->images >> k & 1) { VkDescriptorSetLayoutBinding b = {32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; b1[n1++] = b; }      /* [b3recomp] */
         for (int i = 0; i < 2; i++) {
             VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             li.bindingCount = (uint32_t)(i ? n1 : n0); li.pBindings = i ? b1 : b0;
@@ -2521,6 +2568,7 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     /* textures, then buffers (both may submit: upload, ring wrap, copy-back), then the mask word, then the commands */
     g_ndtex = 0;
     for (int i = 0; i < v->nsmp; i++) resolve_sampler(5, v, i);
+    for (int k = 0; k < 8; k++) if ((v->images >> k & 1) && !resolve_image(5, v, k)) return;      /* [b3recomp] */
     if (g_ncdisp == 2048 || g_cb_pending) cb_sync();
     uint64_t wm_off = 0;
     for (int attempt = 0; ; attempt++) {           /* a copy-back in here (cb_sync) frees the CBs chosen before it: everything is then chosen again */
@@ -2580,10 +2628,17 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
         w[nw].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[nw].dstSet = sets[1]; w[nw].dstBinding = v->smp[i].binding; w[nw].descriptorCount = 1;
         w[nw].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[nw].pImageInfo = &ii[i]; nw++;
     }
+    for (int k = 0, i = v->nsmp; k < 8; k++) {     /* [b3recomp] storage images, after the samplers in g_dtex */
+        if (!(v->images >> k & 1)) continue;
+        ii[i].sampler = VK_NULL_HANDLE; ii[i].imageView = g_dtex[i].view; ii[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        w[nw].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[nw].dstSet = sets[1]; w[nw].dstBinding = 32 + (unsigned)k; w[nw].descriptorCount = 1;
+        w[nw].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[nw].pImageInfo = &ii[i]; nw++; i++;
+    }
     if (nw) vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cp);
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
     vkCmdDispatch(R.cmd, gx, gy, gz);
+    if (v->images) storage_barrier();              /* [b3recomp] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
@@ -2643,6 +2698,8 @@ static int draw_prepare(unsigned prim) {
     g_ndtex = 0;
     for (int i = 0; i < vs->nsmp; i++) resolve_sampler(0, vs, i);
     if (fs) for (int i = 0; i < fs->nsmp; i++) resolve_sampler(1, fs, i);
+    int stores = 0;                                /* [b3recomp] storage images, after the samplers in g_dtex */
+    for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
     PT(1);
     /* 2. buffers: every range the draw reads, into the ring (may wrap the ring = submit) */
     static BufRef bufs[80];
@@ -2733,7 +2790,7 @@ static int draw_prepare(unsigned prim) {
     {
         static VkWriteDescriptorSet w[220];
         static VkDescriptorBufferInfo bi[80];
-        static VkDescriptorImageInfo ii[140];
+        static VkDescriptorImageInfo ii[160];
         /* M4: buffers change with every draw: pushed into the command buffer (no set, no pool) when the device can; the
          * textures of a draw repeat: one set per distinct list (layout, views, samplers, image layouts) per command buffer */
         VkDescriptorSet sets[2] = {NULL, NULL};
@@ -2764,7 +2821,7 @@ static int draw_prepare(unsigned prim) {
         if (p->nb[1]) {
             uint64_t key = fnv(0xcbf29ce484222325ULL, &p->dl[1], sizeof p->dl[1]);
             unsigned slot;
-            if (p->dl[1] == g_udl[1]) for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
+            if (p->dl[1] == g_udl[1]) for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
             for (int i = 0; i < g_ndtex; i++) { key = fnv(key, &g_dtex[i].view, sizeof g_dtex[i].view); key = fnv(key, &g_dtex[i].smp, sizeof g_dtex[i].smp); key = fnv(key, &g_dtex[i].layout, sizeof g_dtex[i].layout); }
             if (!key) key = 1;
             for (slot = (unsigned)key & 4095; g_tset[slot].gen == g_tset_gen && g_tset[slot].key != key; slot = (slot + 1) & 4095) {}
@@ -2783,6 +2840,16 @@ static int draw_prepare(unsigned prim) {
                         memset(&w[n1], 0, sizeof w[n1]);
                         w[n1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[n1].dstSet = sets[1]; w[n1].dstBinding = v->smp[i].binding; w[n1].descriptorCount = 1;
                         w[n1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[n1].pImageInfo = &ii[it]; n1++; it++;
+                    }
+                }
+                for (int s = 0; s < (fs ? 2 : 1); s++) {      /* [b3recomp] storage images */
+                    VStage *v = s ? fs : vs;
+                    for (unsigned k = 0; k < 8; k++) {
+                        if (!(v->images >> k & 1)) continue;
+                        ii[it].sampler = VK_NULL_HANDLE; ii[it].imageView = g_dtex[it].view; ii[it].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                        memset(&w[n1], 0, sizeof w[n1]);
+                        w[n1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[n1].dstSet = sets[1]; w[n1].dstBinding = 40u * (unsigned)s + 32 + k; w[n1].descriptorCount = 1;
+                        w[n1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; w[n1].pImageInfo = &ii[it]; n1++; it++;
                     }
                 }
                 vkUpdateDescriptorSets(V.device, (uint32_t)n1, w, 0, NULL);
@@ -2822,6 +2889,7 @@ static int draw_prepare(unsigned prim) {
                 else printf("%c%d:%llx+%llx ", s ? 'f' : 'v', k, (unsigned long long)R.ubo[s][k - 3].addr, (unsigned long long)R.ubo[s][k - 3].size); } }
         printf("\n");
     }
+    if (stores) R.pass_stores = 1;                 /* [b3recomp] pass_end makes the writes visible */
     return 1;
 }
 
@@ -3317,7 +3385,11 @@ static void exec(const Cmd *m, int depth) {
     case OP_DEPTHCLAMP: R.depth_clamp = a[0] & 1; R.dyn3_dirty = 1; if ((a[0] & 1) && !D.f2.features.depthClamp) nvn_vk_missing("depth clamp on a GPU without depthClamp"); break;
     case OP_PRIMRESTART: R.restart = a[0] & 1; break;
     case OP_PATCHSIZE: break;                      /* only read by tessellation, which stops at the draw */
-    case OP_IMAGES: break;                         /* only read by compute programs: DispatchCompute stops with its name until M3 */
+    case OP_IMAGES: {                              /* [b3recomp] (stage, first, count) + handles: resolved at the draw / dispatch (resolve_image) */
+        int stage = (int)a[0] % 6, first = (int)a[1], count = (int)a[2];
+        for (int i = 0; i < count && first + i < 8; i++) if (first + i >= 0) memcpy(&R.nvn_img[stage][first + i], blob + i * 8, 8);
+        break;
+    }
     case OP_FENCE: if (a[0]) { SyncObj *o = P(a[0]); if (!o->dead) { o->s = (void *)(uintptr_t)(cmd_submit(NULL, NULL) + 1); sync_ran(o); } } break;      /* sync_ran: finding 138 */
     case OP_WAITSYNC: break;                       /* one queue: what was submitted before has run before */
     /* [Recomps#1] counters and reports, as the OpenGL back end writes them (nvn_gl.c OP_COUNTER_*): an NVNcounterData

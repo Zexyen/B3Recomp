@@ -78,6 +78,7 @@ typedef struct {
     uint32_t ssbos, ssbo_written;    /* game storage buffers referenced (LDG / STG) and whether the shader writes them */
     uint32_t images, images_read, images_written;      /* image units used (SULD / SUST) */
     uint16_t image_gl_format[8];     /* internal format each used image must be bound with (typed accesses name their own) */
+    uint8_t image_type[8];           /* [b3recomp] SULD / SUST type of each used image: 0 1D, 1 buffer, 2 1D array, 3 2D, 4 2D array, 5 3D */
     uint32_t int_dep;                /* which bits of int_attrs / int_tex influenced the code (vertex: attrs, fragment: textures) */
     int insns, blocks, uses_alpha;
     /* target 1: the samplers the text declares in set 1 (the back end binds a view of that type, or a dummy of that type) */

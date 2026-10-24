@@ -24,9 +24,10 @@ typedef struct VStage {
     VkShaderModule mod; struct VStage *next, *next_h;
     VkPipeline lib, lib2; volatile LONG lib_state, lib2_state;      /* session 9 (SSBU_VK_GPL=2): the stage's pipeline library; lib2: a vertex stage with the empty fragment shader state */
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
+    uint16_t img_fmt[8]; uint8_t img_type[8];      /* [b3recomp] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
-#define MX_VK_VERSION 8u                         /* part of every hash: change it when mx_translate's Vulkan text or these records change */
-typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; } StageRec;
+#define MX_VK_VERSION 9u                         /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
 typedef struct { int stage, code_len, serial; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem; } SSrc;
@@ -170,6 +171,7 @@ static void vstage_from_rec(VStage *v, const StageRec *r, uint64_t vh, VkShaderM
     v->h = vh; v->hb = r->hb; v->code_len = r->code_len; memcpy(v->key, r->key, 16); v->fo = r->fo;
     v->cbufs = r->cbufs; v->ssbos = r->ssbos; v->ssbo_w = r->ssbo_w; v->images = r->images; v->dep = r->dep; v->tex_units = r->tex_units; v->in_attr = r->in_attr; v->out_attr = r->out_attr;
     v->uses_alpha = r->uses_alpha; v->nsmp = r->nsmp; memcpy(v->smp, r->smp, sizeof v->smp);
+    memcpy(v->img_fmt, r->img_fmt, sizeof v->img_fmt); memcpy(v->img_type, r->img_type, sizeof v->img_type);
     v->mod = mod; v->ok = 1;
 }
 static int key_fits(int s, const uint32_t *want, const uint32_t *have, uint32_t dep, uint32_t tex) {
@@ -235,6 +237,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
             v->mod = module_from_glsl(s, out.glsl, what, &spv_hash);
             v->cbufs = out.cbufs; v->ssbos = out.ssbos; v->ssbo_w = out.ssbo_written; v->images = out.images; v->in_attr = out.in_attr; v->out_attr = out.out_attr;
             v->dep = s == 0 ? out.int_dep : 0; v->tex_units = out.tex_units; v->uses_alpha = out.uses_alpha; v->nsmp = out.nsmp;
+            memcpy(v->img_fmt, out.image_gl_format, sizeof v->img_fmt); memcpy(v->img_type, out.image_type, sizeof v->img_type);
             for (int i = 0; i < out.nsmp && i < 64; i++) {
                 const char *ty = out.smp[i].type;
                 int arr = strstr(ty, "Array") != NULL, dim = strstr(ty, "Cube") ? (arr ? DIM_CUBEA : DIM_CUBE) : strstr(ty, "3D") ? DIM_3D : strstr(ty, "1D") ? (arr ? DIM_1DA : DIM_1D) : (arr ? DIM_2DA : DIM_2D);
@@ -251,6 +254,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
                 r.magic = STAGEREC_MAGIC; r.stage = s; r.code_len = v->code_len; memcpy(r.key, v->key, 16); r.fo = v->fo; r.spv = spv_hash; r.hb = v->hb;
                 r.cbufs = v->cbufs; r.ssbos = v->ssbos; r.ssbo_w = v->ssbo_w; r.images = v->images; r.dep = v->dep; r.tex_units = v->tex_units; r.in_attr = v->in_attr; r.out_attr = v->out_attr;
                 r.uses_alpha = v->uses_alpha; r.nsmp = v->nsmp; memcpy(r.smp, v->smp, sizeof r.smp);
+                memcpy(r.img_fmt, v->img_fmt, sizeof r.img_fmt); memcpy(r.img_type, v->img_type, sizeof r.img_type);
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.st", vkc_dir(), s, (unsigned long long)v->h);
                 if ((fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }
                 memset(&e, 0, sizeof e);
@@ -451,6 +455,7 @@ static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, 
     for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
+    for (unsigned k = 0; k < 8; k++) if (v->images >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[(*n1)++] = b; }      /* [b3recomp] */
 }
 static Pipe *pipe_find(const PKey *k, uint64_t h) { for (Pipe *p = g_pipes[h & 1023]; p; p = p->next) if (!memcmp(&p->k, k, sizeof *k)) return p; return NULL; }      /* g_sh_lock held */
 static Pipe *pipe_new(const PKey *k, VStage *vs, VStage *fs, uint64_t h, int state) {                                                                                 /* g_sh_lock held */
@@ -569,7 +574,7 @@ static PairLib *pairlib_ensure(VStage *vs, VStage *fs, int samples, int sshade, 
     LeaveCriticalSection(&g_sh_lock);
     if (!mine) { if (*how == 2) { InterlockedIncrement64(&g_gpl_wait); InterlockedAdd64(&g_gpl_wait_tk, tk() - t0); } return l; }
     *how = 1;
-    VkDescriptorSetLayoutBinding b0[80], b1[140];
+    VkDescriptorSetLayoutBinding b0[80], b1[160];
     layout_bindings(vs, 0, b0, &l->nb[0], b1, &l->nb[1]);
     if (fs) layout_bindings(fs, 1, b0, &l->nb[0], b1, &l->nb[1]);
     for (int i = 0; i < 2; i++) {
@@ -695,13 +700,14 @@ static int gpl_sep(void) { static int m = -1; if (m < 0) m = D.has_gpl && vk_gpl
 static void gpl_universal(void) {
     EnterCriticalSection(&g_gpl_lock);
     if (!g_ulayout) {
-        static VkDescriptorSetLayoutBinding b0[66], b1[128];
+        static VkDescriptorSetLayoutBinding b0[66], b1[144];
         int n0 = 0, n1 = 0;
         for (unsigned s = 0; s < 2; s++) {
             VkFlags sf = s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
             for (unsigned n = 1; n < 18; n++) { VkDescriptorSetLayoutBinding b = {40u * s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned k = 0; k < 16; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned u = 0; u < 32; u++) { VkDescriptorSetLayoutBinding b = {40u * s + u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[n1++] = b; b.binding += 240; b1[n1++] = b; }
+            for (unsigned k = 0; k < 8; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[n1++] = b; }      /* [b3recomp] storage images */
         }
         for (int i = 0; i < 2; i++) {
             VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -885,7 +891,7 @@ static double pipe_build(Pipe *p) {
         { LARGE_INTEGER fq; QueryPerformanceFrequency(&fq); return (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart; }
     }
 whole:;
-    VkDescriptorSetLayoutBinding b0[80], b1[140];
+    VkDescriptorSetLayoutBinding b0[80], b1[160];
     layout_bindings(vs, 0, b0, &p->nb[0], b1, &p->nb[1]);
     if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]);
     for (int i = 0; i < 2; i++) {
