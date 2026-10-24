@@ -144,13 +144,49 @@ console), the texel-offset lowering's implicit-LOD shortcut, `SAM` / `RAM` as no
   opening movie). 18,149 frames, 5 M draws, 0 skipped.
 - **Frame rate**: 60 fps in-engine; 30 fps while a movie plays (the movies' rate) and in one heavy scene (983 draws). Indirect
   records in a compute buffer cost a GPU wait only after new GPU writes (was ~150 waits a frame: 27-49 fps).
-- **Vulkan validation**: not run: `VkLayer_khronos_validation.json` is not installed (`/usr/share/vulkan/explicit_layer.d`
-  does not exist; only Flatpak / Steam copies built for other runtimes are on the disk).
+- **Vulkan validation**: not run at the time (the layer was installed later: see the next section).
+
+## Vulkan validation (2026-10-24, layer 1.4.363, RADV on an RX 9070 XT)
+
+`SSBU_VK_VALIDATE=1 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`; the messages are counted per VUID and the sorted totals
+printed at exit (`vk-validation summary:`). Raise the layer's cap of 10 per ID with
+`VK_KHRONOS_VALIDATION_DUPLICATE_MESSAGE_LIMIT`. Each pass ran from the save through the title, the opening movie and the
+prologue (300-420 s, 9,000-12,600 frames, A every 3 s):
+
+| pass | settings | before | after |
+|---|---|---|---|
+| core | default | 1 leak at `vkDestroyDevice` (14 objects) + benign | benign only |
+| sync | `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` | `SYNC-HAZARD-WRITE-AFTER-WRITE` (vkCmdBlitImage twice into one image) | benign only (10,812 frames) |
+| GPU-AV | `VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true` | `SharedMemoryDataRace-*` in 2 compute programs | the same 2 (known, below) |
+
+Fixed:
+- The loading bar / first-run screen blitted over the presented frame (and the bar over its track) with no barrier
+  between the transfer writes: `xfer_wait()` before each.
+- Shutdown now frees the compute buffers' landing buffers, the read-back free list, the kept vertex buffers and the
+  occlusion query pool (the 14 leaked objects).
+- Translator: an 8 / 16-bit `STS` was a read-modify-write of the 32-bit word, so lanes storing neighbouring bytes in
+  the same instruction lost all but one; now `atomicAnd` + `atomicOr`. `MX_VK_VERSION` 10 (all stages are translated
+  again on the next run: one warm-up).
+- Under validation, shader modules carry the name `program #<n> stage <s>` (GPU-AV prints it), and
+  `nvn_vk: shader module 0x... = ...` is logged for each.
+
+No message about the paths added in stages 3-4 (storage images, depth bounds, passes without attachments, indirect
+draws read on the CPU, the movie's NV12 uploads).
+
+Left, judged benign or known:
+- `Undefined-Value-ShaderOutputNotConsumed-DynamicRendering` (warning, ~400,000 per run): a fragment stage writes a
+  colour output and the pass has no attachment there (depth-only and target-less passes). Vulkan discards it.
+- `SharedMemoryDataRace-RaceOnStore` in program #7836 (compute, 64 wide): every invocation stores 0 to `smem[0]` at
+  entry, the same value from the same instruction. The game's own shader does it the same way; harmless.
+- `SharedMemoryDataRace-RaceOnLoadStoreVsAtomic` in program #7839: init by invocation 0, `barrier()`, `atomicMin/Max`,
+  `barrier()`, loads. Correct as written, but the translator puts the barriers inside its `for (;;) switch (pc)` dispatch
+  loop, so invocations reach the same barrier in different loop iterations. Per SPIR-V that is not uniform control
+  flow, so GPU-AV cannot pair the barriers. It works on RADV, where a 64-wide group is one wave. A structured control
+  flow for stages with `BAR` would fix it (not done).
+- `WARNING-Setting-Limit-Adjusted`: GPU-AV itself.
 
 ## Next blockers (most urgent first)
 
-1. **Vulkan validation** of the new paths (storage images, depth bounds, passes without attachments, indirect draws) once
-   `vulkan-validation-layers` is installed: `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` (or `SSBU_VK_DEBUG=1`).
 2. **Gameplay input**: the scripted runs only press A; whether the first fight is playable (movement, camera, combat with
    a pad) is not tested.
 3. **Picture correctness**: no reference images to compare with.

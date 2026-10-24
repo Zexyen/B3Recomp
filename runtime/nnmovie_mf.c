@@ -1010,7 +1010,7 @@ static void dlog(Dec *d, const char *fmt, ...) {      /* SSBU_MOVIE_LOG: one lin
     va_start(ap, fmt);
     vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    printf("movie[%5lu %8llu] %c %s\n", GetCurrentThreadId(), (unsigned long long)GetTickCount64(), d->is_video ? 'V' : 'A', line);
+    printf("movie[%5lu %8llu] %c%04llx %s\n", GetCurrentThreadId(), (unsigned long long)GetTickCount64(), d->is_video ? 'V' : 'A', (unsigned long long)((uintptr_t)d >> 4 & 0xffff), line);      /* the hex: which decoder */
 }
 
 /* Frees every sample the decoder holds and empties all lists (caller holds the lock). */
@@ -1305,7 +1305,7 @@ static void dec_AcquireOutputBufferIndex(Ctx *c) {    /* (int *index, int64 *tim
     wr64(A2, (uint64_t)ts);
     wr32(A3, flags);
     wr32(A4, (uint32_t)more);
-    dlog(d, "AcquireOutput -> %d t=%.3f flags %x (more %d)", idx, ts / 1e6, flags, more);
+    dlog(d, "AcquireOutput -> %d t=%.3f flags %x (more %d, lr %llx)", idx, ts / 1e6, flags, more, (unsigned long long)c->x[30]);
     RET(r);
 }
 
@@ -1382,6 +1382,7 @@ static void dec_GetOutputBuffer(Ctx *c) {             /* (int index, Buffer *out
     }
     dec_unlock(d);
     if (r) dlog(d, "GetOutputBuffer %d REFUSED (not held by the game)", i);
+    else dlog(d, "GetOutputBuffer %d t=%.3f (lr %llx)", i, s->ts / 1e6, (unsigned long long)c->x[30]);
     RET(r);
 }
 
@@ -1414,7 +1415,7 @@ static void dec_ReleaseOutputBufferIndex(Ctx *c) {    /* (int index) */
         ev = dec_pump(d);                             /* a waiting input can now be decoded into this buffer */
     }
     dec_unlock(d);
-    dlog(d, "ReleaseOutput %d%s", i, ok ? "" : " IGNORED (not held by the game)");
+    dlog(d, "ReleaseOutput %d%s (lr %llx)", i, ok ? "" : " IGNORED (not held by the game)", (unsigned long long)c->x[30]);
     dec_signal(d, ev);
     RET(ST_OK);
 }
@@ -1471,7 +1472,11 @@ static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, De
     d->type = (int)A1; d->fmt = (int)A2; d->mode = (int)A3;
     d->is_video = d->type >= 1 && d->type <= 3;
     d->nin = 8;                                       /* compressed-data buffers: only bound how far the feed runs ahead of the codec */
-    d->nout = d->is_video ? 48 : 64;                                     /* decoded frames the game may hold or leave queued before the codec stalls: it queues more than a second of video before showing the first frame */
+    /* [b3recomp] decoded frames the game may hold before the codec stalls. B3's player [game 0x7100cd6cb4] keeps them in a
+     * pool of 16 nodes; a frame acquired while the pool is empty [0x7100cd7244] is neither queued nor released, so the
+     * picture stops (ev0011, which is pre-rolled while ev0010 plays and then taken in one burst: this decoder has no
+     * decoding time). 16 = the pool: the codec stalls first. (SSBU's player wanted 48: over a second before its first frame.) */
+    d->nout = d->is_video ? 16 : 64;
     d->mem = calloc((size_t)d->nin, SLOT_BYTES);
     wr64(A0, (uint64_t)(uintptr_t)g_dec_vtable);
     wr64(A0 + 8, (uint64_t)(uintptr_t)d);
