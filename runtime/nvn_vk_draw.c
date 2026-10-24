@@ -3986,6 +3986,11 @@ static void ovl_text(VkImage dst, int x, int y, int dot, const char *s) {
         }
     }
 }
+static void xfer_wait(void) {                  /* a transfer write before another into the same pixels (sync validation: WRITE_AFTER_WRITE) */
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+}
 static void overlay_draw(VkImage dst) {                /* dst: the swapchain image, or in HDR the 8-bit picture (finding 147) */
     if (g_ovl.on < 0) g_ovl.on = !(getenv("SSBU_VK_PROGRESS") && !atoi(getenv("SSBU_VK_PROGRESS")));
     if ((!g_ovl.on && !g_ovl.screen) || g_ovl.thick <= 0) return;
@@ -4018,6 +4023,7 @@ static void overlay_draw(VkImage dst) {                /* dst: the swapchain ima
         VkImageBlit b;
         int xe = pass ? x0 + (int)((float)(x1 - x0) * f) : x1;
         if (xe <= x0) continue;
+        xfer_wait();                                /* over the presented frame, then the bar over the track */
         memset(&b, 0, sizeof b);
         b.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.srcSubresource.layerCount = 1; b.srcSubresource.baseArrayLayer = pass ? 0 : 1;
         b.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; b.dstSubresource.layerCount = 1;
@@ -4025,7 +4031,7 @@ static void overlay_draw(VkImage dst) {                /* dst: the swapchain ima
         b.dstOffsets[0].x = pass ? x0 : x0 - 2; b.dstOffsets[0].y = pass ? y0 : y0 - 2; b.dstOffsets[1].x = pass ? xe : x1 + 2; b.dstOffsets[1].y = pass ? y1 : y1 + 2; b.dstOffsets[1].z = 1;
         vkCmdBlitImage(R.cmd, g_ovl.img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
     }
-    if (g_ovl.screen) {                             /* session 14: the first-run preparation screen: four lines of text over the bar */
+    if (g_ovl.screen) { xfer_wait();                           /* session 14: the first-run preparation screen: four lines of text over the bar */
         int dot = H / 180 > 1 ? H / 180 : 2;
         for (int i = 0; i < 4; i++) if (g_ovl.text[i][0]) { int d = i ? dot : dot * 2; ovl_text(dst, (W - (int)strlen(g_ovl.text[i]) * 6 * d) / 2, H / 4 + i * dot * 22, d, g_ovl.text[i]); }
     }
@@ -4543,9 +4549,7 @@ swap: ;
                     if (x0 > 0 || y0 > 0) {
                         VkClearColorValue z; memset(&z, 0, sizeof z); z.float32[3] = 1.0f;
                         vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr);
-                        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* the clear before the blit into the same image */
-                        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                        vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+                        xfer_wait();      /* the clear before the blit into the same image */
                         b.dstOffsets[0].x = x0; b.dstOffsets[0].y = y0; b.dstOffsets[1].x = x0 + w; b.dstOffsets[1].y = y0 + h;
                     }
                 }
@@ -4997,6 +5001,12 @@ static void vkd_shutdown(void) {
     g_hdr.pipe = NULL; g_hdr.pl = NULL; g_hdr.vs = g_hdr.fs = NULL;
     if (g_ovl.made) { vkDestroyImage(V.device, g_ovl.img, NULL); g_ovl.made = 0; }      /* the progress bar's image; its memory goes with the blocks */
     for (int i = 0; i < 256; i++) if (g_cb[i].buf) { vkDestroyBuffer(V.device, g_cb[i].buf, NULL); g_cb[i].buf = NULL; g_cb[i].state = 0; }
+    for (int i = 0; i < 256; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
+    for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
+    g_lr_nfree = 0;
+    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    vrc_collect();
+    if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;
     for (int i = 0; i < 4096; i++) for (VStage *v = g_vstage[i], *n; v; v = n) {
         n = v->next;
