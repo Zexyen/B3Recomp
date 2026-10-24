@@ -240,6 +240,7 @@ static struct {
     int scissor[4], have_viewport, have_scissor, rast_discard, depth_clamp, restart, render_off;
     int dbounds_on; float dbounds[2];             /* [b3recomp] nvnCommandBufferSetDepthBounds */
     uint64_t nvn_img[6][8]; int pass_stores;      /* [b3recomp] image handles bound per stage (nvnCommandBufferBindImage); the open pass has storage image writes */
+    int null_w, null_h;                            /* [b3recomp] size of a pass without render targets (from the viewport of its draw) */
     int ncol; TargetRef col[8], depth; int have_targets;
     int64_t row_stride, image_stride;
     int dyn_dirty, vi_dirty, dyn3_dirty, dyn3_samples;      /* dyn3: the extended-dynamic-state-3 group (blend, masks, polygon mode, multisample) */
@@ -1515,6 +1516,7 @@ static int pass_begin(void) {
             if (!w) { w = lvl_(vt->w, target_level(&R.depth)); h = lvl_(vt->h, target_level(&R.depth)); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
         }
     }
+    if (!w && !R.have_targets && R.null_w > 0 && R.null_h > 0) { w = R.null_w; h = R.null_h; }      /* [b3recomp] no attachments (draw_prepare) */
     if (!w) return 0;
     {   /* [Recomps#1] SSBU_VK_PASSLOG=1: every distinct pass layout once (game sizes, image sizes, scaled or not, formats) */
         static int on = -1, n;
@@ -1872,6 +1874,41 @@ static LONG CALLBACK cg_veh(EXCEPTION_POINTERS *x) {
     ReleaseSRWLockExclusive(&g_cg_lock);
     return res;
 }
+/* [b3recomp] TEST ONLY: SSBU_VK_WATCHFS=<fragment stage hash>,<storage index>: the storage range that stage reads at its first
+ * draw is watched: its page is made read-only and every write INTO the range is logged with the guest function that made it
+ * (the page is opened at the fault and closed again at the next draw). To find who fills a buffer the shaders read. */
+Ctx *current_guest_ctx(void);                      /* hostrt.c */
+static uintptr_t g_wf_lo, g_wf_hi, g_wf_plo, g_wf_phi;
+static volatile LONG g_wf_open;
+static LONG CALLBACK wf_veh(EXCEPTION_POINTERS *x) {
+    if (x->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || x->ExceptionRecord->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+    uintptr_t a = (uintptr_t)x->ExceptionRecord->ExceptionInformation[1];
+    if (!g_wf_phi || a < g_wf_plo || a >= g_wf_phi) return EXCEPTION_CONTINUE_SEARCH;
+    DWORD old;
+    VirtualProtect((void *)g_wf_plo, g_wf_phi - g_wf_plo, PAGE_READWRITE, &old);
+    if (a >= g_wf_lo && a < g_wf_hi) {
+        static volatile LONG n;
+        Ctx *c = current_guest_ctx();
+        if (InterlockedIncrement(&n) <= 40) printf("nvn_vk_watch: write of %llx (range %llx+%llx) by thread %lu, guest fn %llx, lr %llx, host code %p\n", (unsigned long long)a, (unsigned long long)g_wf_lo,
+                                                   (unsigned long long)(g_wf_hi - g_wf_lo), (unsigned long)GetCurrentThreadId(), c ? (unsigned long long)c->fn : 0ull, c ? (unsigned long long)c->x[30] : 0ull, (void *)x->ExceptionRecord->ExceptionAddress);
+    }
+    InterlockedExchange(&g_wf_open, 1);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+static void watch_fs(VStage *fs) {                 /* render thread, at a draw */
+    static uint64_t want = 1; static int k;
+    if (want == 1) { const char *e = getenv("SSBU_VK_WATCHFS"); want = 0; if (e) { want = strtoull(e, NULL, 16); k = strchr(e, ',') ? atoi(strchr(e, ',') + 1) : 0; } }
+    if (!want) return;
+    if (!g_wf_phi && fs && fs->h == want && R.ssbo[1][k].addr) {
+        g_wf_lo = (uintptr_t)R.ssbo[1][k].addr; g_wf_hi = g_wf_lo + (uintptr_t)R.ssbo[1][k].size;
+        g_wf_plo = g_wf_lo & ~(uintptr_t)4095; g_wf_phi = (g_wf_hi + 4095) & ~(uintptr_t)4095;
+        AddVectoredExceptionHandler(1, wf_veh);
+        printf("nvn_vk_watch: watching %llx+%llx (storage %d of fragment stage %016llx), now %08x %08x %08x %08x\n", (unsigned long long)g_wf_lo, (unsigned long long)(g_wf_hi - g_wf_lo), k,
+               (unsigned long long)want, ((uint32_t *)g_wf_lo)[0], ((uint32_t *)g_wf_lo)[1], ((uint32_t *)g_wf_lo)[2], ((uint32_t *)g_wf_lo)[3]);
+        g_wf_open = 1;
+    }
+    if (g_wf_phi && InterlockedExchange(&g_wf_open, 0)) { DWORD old; VirtualProtect((void *)g_wf_plo, g_wf_phi - g_wf_plo, PAGE_READONLY, &old); }
+}
 static int cb_keep_mode(void) {
     if (g_cb_keep < 0) {
         const char *e = getenv("SSBU_VK_CBKEEP");
@@ -2192,6 +2229,44 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
     if (g_cb_live && cb_overlap(addr, size)) cb_sync();
     if (g_cb_nkept) cb_kept_range(addr, size, 3);
 }
+/* [b3recomp] Where the CPU reads indirect draw / dispatch records. GPU-driven culling writes them with compute: a CB of this
+ * batch that holds the whole range is read through its mapping once the GPU has run what is recorded so far (submit + wait:
+ * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
+ * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
+static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
+    CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
+    if (c && c->mem.map) {
+        if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
+            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            pass_end();
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        }
+        uint64_t sr = cmd_submit(NULL, NULL);
+        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
+        if (R.done < sr) R.done = sr;
+        R.cb_waits++;
+        return (const uint8_t *)c->mem.map + (addr - c->addr);
+    }
+    if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
+        for (int n = 0; n < g_kept_n; n++) {
+            CB *k = &g_cb[g_kept_idx[n]];
+            if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || !k->mem.map) continue;
+            if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
+            if (k->wrote) break;
+            return (const uint8_t *)k->mem.map + (addr - k->addr);
+        }
+    cpu_read_sync(addr, size);
+    return P(addr);
+}
+/* [b3recomp] TEST ONLY (with SSBU_VK_DRAWLOG): a storage range of a draw / dispatch and its first words as the GPU will see them */
+static void drawlog_ssbo(const char *who, int k, Range r, int written) {
+    CB *c = g_cb_live && r.addr ? cb_inside(r.addr, r.size) : NULL;
+    const uint32_t *w = c && c->mem.map ? (const uint32_t *)((const uint8_t *)c->mem.map + (r.addr - c->addr)) : r.addr ? (const uint32_t *)P(r.addr) : NULL;
+    printf("  %s s%d %llx+%llx%s%s", who, k, (unsigned long long)r.addr, (unsigned long long)r.size, written ? " W" : "", c ? " (live CB)" : "");
+    if (w && r.size >= 16) printf(" = %08x %08x %08x %08x", w[0], w[1], w[2], w[3]);
+    printf("\n");
+}
 static CB *cb_new(uint64_t addr, uint64_t size) {
     CB *c = NULL, *empty = NULL, *victim = NULL;
     if (cb_keep_mode() && g_cb_nkept) {            /* SSBU_VK_CBKEEP: the buffer of the last dispatch into this very range, as the GPU left it */
@@ -2232,7 +2307,9 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         int found = 0;
         for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) found = 1;
         if (!found) want &= ~(VkFlags)VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-        if (g_cb_dl < 0) g_cb_dl = getenv("SSBU_VK_CBMEM") ? atoi(getenv("SSBU_VK_CBMEM")) : cb_keep_mode() ? 1 : 0;      /* default 1 with SSBU_VK_CBKEEP (the CPU then reads them only at a landing), 0 without */
+        /* [b3recomp] default 0: B3 reads compute output back on the CPU every frame (about 16 MB), and CPU reads of device-local
+         * host-visible memory (BAR) took 300 ms a frame (3 fps in chapter 1); host-cached memory: 4 ms. SSBU_VK_CBMEM=1: BAR. */
+        if (g_cb_dl < 0) g_cb_dl = getenv("SSBU_VK_CBMEM") ? atoi(getenv("SSBU_VK_CBMEM")) : 0;
         if (g_cb_dl == 1) {                        /* round 16: where the GPU writes and reads them without the bus (the CPU reads them only at a landing) */
             VkFlags dl = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
             for (uint32_t i = 0; i < D.mp.memoryTypeCount; i++)
@@ -2601,6 +2678,10 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
         if (attempt == 3) vkd_fail("compute program #%d: its buffers cannot be bound without a copy-back in between", p->serial);
     }
     nvn_front_ccmp_dispatch(R.ubo[5], R.ssbo[5], v->ssbo_w, st->code, st->code_len, gx, gy, gz);      /* SSBU_COMPUTE_CMP */
+    if (drawlog_on()) {                            /* [b3recomp] TEST ONLY: SSBU_VK_DRAWLOG */
+        printf("DLC f%lld cs=#%d groups %u %u %u images 0x%x\n", nvn_front_frame_next(), p->serial, gx, gy, gz, v->images);
+        for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) drawlog_ssbo("cs", (int)k, R.ssbo[5][k], (int)(v->ssbo_w >> k & 1));
+    }
     cmd_begin();
     if (g_pt_on > 0 && g_pt_slot[R.cur].last_what != 1) pt_mark(0, 0, 0, 0, 0, 0, 1);
     static VkWriteDescriptorSet w[80];
@@ -2671,9 +2752,12 @@ static int draw_prepare(unsigned prim) {
     if (g_ptm_on > 0) { g_ptm_t = tk(); g_ptm_n++; }
     static const int8_t topo[7] = {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, -1, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN};
     static const uint8_t tclass[7] = {0, 1, 1, 1, 2, 2, 2};
-    if (!R.have_targets || R.render_off) return 0;
+    /* [b3recomp] a draw without render targets (B3's luminance reduction: fragment shaders that only store to buffers) runs in a pass
+     * with no attachments, as large as its viewport */
+    if (!R.have_targets && !R.render_off) { R.null_w = (int)(R.viewport[0] + R.viewport[2] + 0.5f); R.null_h = (int)(R.viewport[1] + R.viewport[3] + 0.5f); }
+    if ((!R.have_targets && (R.null_w <= 0 || R.null_h <= 0)) || R.render_off) { if (drawlog_on()) printf("DLS f%lld skipped: %s (vs #%d fs #%d, viewport %g,%g %gx%g)\n", nvn_front_frame_next(), R.render_off ? "rendering switched off (SetRenderEnable)" : "no render targets", R.prog[0] ? R.prog[0]->serial : -1, R.prog[1] ? R.prog[1]->serial : -1, (double)R.viewport[0], (double)R.viewport[1], (double)R.viewport[2], (double)R.viewport[3]); return 0; }      /* [b3recomp] TEST ONLY log */
     if (prim > 6 || topo[prim] < 0) { static char msg[64]; snprintf(msg, sizeof msg, "a draw with NVN primitive type %u", prim); nvn_vk_missing(msg); return 0; }
-    if (!R.prog[0]) return 0;
+    if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [b3recomp] TEST ONLY log */
     if (R.prog[2] || R.prog[3] || R.prog[4]) { nvn_vk_missing("a draw with a geometry or tessellation stage"); return 0; }
     uint32_t ints = 0, sints = 0;
     for (int i = 0; i < 16 && i < R.nattr; i++) {
@@ -2698,6 +2782,7 @@ static int draw_prepare(unsigned prim) {
     g_ndtex = 0;
     for (int i = 0; i < vs->nsmp; i++) resolve_sampler(0, vs, i);
     if (fs) for (int i = 0; i < fs->nsmp; i++) resolve_sampler(1, fs, i);
+    watch_fs(fs);                                  /* [b3recomp] TEST ONLY: SSBU_VK_WATCHFS */
     int stores = 0;                                /* [b3recomp] storage images, after the samplers in g_dtex */
     for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
     PT(1);
@@ -2721,7 +2806,13 @@ static int draw_prepare(unsigned prim) {
             if (!(v->ssbos >> k & 1)) continue;
             BufRef *b = &bufs[nbuf++];
             b->zero = !(R.ssbo[s][k].addr && R.ssbo[s][k].size); b->buf = R.ring;
-            if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
+            if (!b->zero && (v->ssbo_w >> k & 1)) {   /* [b3recomp] the draw stores to it: a compute buffer (CB) of this batch, copied back like a dispatch's */
+                Range r = R.ssbo[s][k];
+                CB *c = g_cb_live ? cb_inside(r.addr, r.size) : NULL;
+                if (c && (r.addr - c->addr) % sal) c = NULL;
+                if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
+                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1;
+            } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
     PT(2);
@@ -2882,6 +2973,7 @@ static int draw_prepare(unsigned prim) {
                (unsigned long long)R.ds, R.blend_on, R.blend[0][0], R.blend[0][1], R.blend[0][2], R.blend[0][3], R.blend[0][4], R.blend[0][5], R.logic, R.chanmask, R.alpha_func, R.alpha_ref,
                R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.pass_w, R.pass_h, R.pass_rs, R.ncol, R.ncol && R.col[0].tex ? R.col[0].tex->b.format : 0, R.depth.tex != NULL, R.depth.tex ? R.depth.tex->b.format : 0,
                R.viewport[0], R.viewport[1], R.viewport[2], R.viewport[3], R.scissor[0], R.scissor[1], R.scissor[2], R.scissor[3], R.have_scissor);
+        for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; printf("  %s stage: ssbos 0x%x written 0x%x cbufs 0x%x images 0x%x from_rec %d\n", s ? "fs" : "vs", v->ssbos, v->ssbo_w, v->cbufs, v->images, v->from_rec); for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) drawlog_ssbo(s ? "fs" : "vs", (int)k, R.ssbo[s][k], (int)(v->ssbo_w >> k & 1)); }      /* [b3recomp] */
         for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; Stage *st = &R.prog[s]->st[s];
             for (int k = 1; k < 18; k++) if (v->cbufs >> k & 1) {
                 if (k == 1) printf("%c1:code+%x ", s ? 'f' : 'v', st->ctl[3]);
@@ -3413,7 +3505,8 @@ static void exec(const Cmd *m, int depth) {
         if (m->op == OP_COUNTER_REPORT && a[1]) { uint64_t d[2] = {0, vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; }
         break;
     }
-    case OP_REPORT_VALUE: if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; } break;
+    case OP_REPORT_VALUE: if (drawlog_on()) printf("DLW f%lld report %llx\n", nvn_front_frame_next(), (unsigned long long)a[1]);      /* [b3recomp] TEST ONLY */
+        if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); memcpy(P(a[1]), d, 16); R.gen++; } break;
     case OP_CONSRASTER: if (a[0] & 1) nvn_vk_missing("conservative rasterisation (nvnCommandBufferSetConservativeRasterEnable)"); break;
     case OP_DEPTHBOUNDS: {                         /* [b3recomp] a0 bit 0 enable, a1 = near, far (two floats): fragments pass where the stored depth is inside */
         float v[2]; memcpy(v, &a[1], 8);
@@ -3430,13 +3523,16 @@ static void exec(const Cmd *m, int depth) {
     case OP_DISPATCH: { LONG64 t0 = tk(); compute_dispatch((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2]); g_tm[2] += tk() - t0; break; }
     case OP_DISPATCH_INDIRECT: {               /* [b3recomp] a0 = address of three group counts, read once compute output there has landed (cpu_read_sync) */
         uint32_t g[3] = {0, 0, 0};
-        if (a[0]) { cpu_read_sync(a[0], 12); memcpy(g, P(a[0]), 12); }
+        if (a[0]) memcpy(g, indirect_src(a[0], 12), 12);
         LONG64 t0 = tk(); compute_dispatch(g[0], g[1], g[2]); g_tm[2] += tk() - t0;
         break;
     }
-    case OP_COPY_BUF_BUF: cb_sync(); if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;      /* guest memory is read / written: what compute wrote must be there (as OpenGL's compute_flush) */
-    case OP_UPDATE_UBO: cb_sync(); if (g_cb_nkept) cb_kept_range(a[0] + a[2], a[3], 3); if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
-    case OP_CLEAR_BUF: cb_sync(); if (g_cb_nkept) cb_kept_range(a[0], a[1], 3); if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
+    case OP_COPY_BUF_BUF: if (drawlog_on()) printf("DLW f%lld copy %llx -> %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2]);      /* [b3recomp] TEST ONLY */
+        cb_sync(); if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;      /* guest memory is read / written: what compute wrote must be there (as OpenGL's compute_flush) */
+    case OP_UPDATE_UBO: if (drawlog_on()) printf("DLW f%lld update %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)(a[0] + a[2]), (unsigned long long)a[3]);      /* [b3recomp] TEST ONLY */
+        cb_sync(); if (g_cb_nkept) cb_kept_range(a[0] + a[2], a[3], 3); if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
+    case OP_CLEAR_BUF: if (drawlog_on()) printf("DLW f%lld clear %llx +%llx = %08x\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned)a[2]);      /* [b3recomp] TEST ONLY */
+        cb_sync(); if (g_cb_nkept) cb_kept_range(a[0], a[1], 3); if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
     case OP_CLEARCOLOR: {
         unsigned i = (unsigned)a[0] & 7, mask = (unsigned)a[2] & 15;
         if (!R.have_targets || R.render_off || (int)i >= R.ncol || !R.col[i].tex) break;
@@ -3507,14 +3603,14 @@ static void exec(const Cmd *m, int depth) {
                                                 * a6 bit 0 elements, bit 1 count read from memory (blob = its address). The records are read on the CPU
                                                 * once the compute work that wrote them has landed (cpu_read_sync), one Vulkan draw each, as nvn_gl.c. */
         unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1, n = (unsigned)a[4], stride = (unsigned)a[5], elements = (unsigned)(a[6] & 1), sz = elements ? 20 : 16;
-        if (a[6] & 2) { uint64_t param; memcpy(&param, blob, 8); if (param) cpu_read_sync(param, 4); uint32_t cnt = param ? rd32(param) : 0; if (cnt < n) n = cnt; }
+        if (a[6] & 2) { uint64_t param; memcpy(&param, blob, 8); uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; }
         if (!stride) stride = sz;
-        if (a[3] && n) cpu_read_sync(a[3], (uint64_t)(n - 1) * stride + sz);
+        const uint8_t *rec = a[3] && n ? indirect_src(a[3], (uint64_t)(n - 1) * stride + sz) : NULL;
         if (!a[3] || !n || (elements && !a[2])) break;
         if (elements && t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
         uint64_t lo = ~0ull, hi = 0;
         for (unsigned k = 0; k < n && elements; k++) {          /* the index range all records use */
-            uint32_t d[5]; memcpy(d, P(a[3] + (uint64_t)k * stride), sz);
+            uint32_t d[5]; memcpy(d, rec + (uint64_t)k * stride, sz);
             if (d[0] && d[1]) { if (d[2] < lo) lo = d[2]; if ((uint64_t)d[2] + d[0] > hi) hi = (uint64_t)d[2] + d[0]; }
         }
         if (elements && hi <= lo) break;
@@ -3525,7 +3621,7 @@ static void exec(const Cmd *m, int depth) {
         if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         for (unsigned k = 0; k < n; k++) {
             uint32_t d[5];                     /* arrays: count, instances, first, base instance; elements: count, instances, first index, base vertex, base instance */
-            memcpy(d, P(a[3] + (uint64_t)k * stride), sz);
+            memcpy(d, rec + (uint64_t)k * stride, sz);
             if (!d[0] || !d[1]) continue;
             if (elements) vkCmdDrawIndexed(R.cmd, d[0], d[1], (uint32_t)(d[2] - lo), (int32_t)d[3], d[4]);
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
