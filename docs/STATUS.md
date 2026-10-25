@@ -463,6 +463,10 @@ halved in 2:1 steps first).
 
   The pictures: the scene, fog, effects, the HUD, subtitles, the title, the main menu, loading screens, a cutscene and the
   game-over screen drawn at the scale, nothing misplaced or cut. In 4K the 60 fps cutscene runs at 56.4 fps (p90 21 ms).
+- **graphics.ini on Linux**: until this round the file was never read on Linux (the program's folder was cut at '\'
+  only); now `config/graphics.ini` is (resolution_scale and cutscene_fps from the file checked). The tracked file sets
+  `anisotropic_filtering = 8` (from B2recomp), which now applies on Linux too; its `resolution_scale` was 2.0 (B2's
+  2560x1440; 3200x1800 for B3) and is back to 1.0. `controllers.ini` (nnpad_sdl.c) has the same cut, not changed.
 - **First run at a scale other than 1.0**: the fragment stages are another translation (one for every scale, keyed
   `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
   behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
