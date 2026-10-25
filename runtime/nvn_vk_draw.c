@@ -1845,7 +1845,8 @@ static uint64_t g_kept_lo = ~0ull, g_kept_hi, g_live_lo = ~0ull, g_live_hi;     
 static LONG64 g_ck_hits, g_ck_fills, g_ck_fill_bytes, g_ck_land[5], g_ck_land_bytes, g_ck_guard_fail, g_ck_unwatched, g_ck_gwords, g_ck_conflicts, g_ck_land_tk, g_ck_land_max;     /* landings by cause: 0 not dispatched into for two batches, 1 a read of an overlapping range, 2 a new compute buffer over another extent, 3 a guest-memory command, 4 the game wrote a page of the range */
 uint64_t nvn_front_mem_newest(const void *p, size_t n);      /* nvn_gl.c */
 static SRWLOCK g_cg_lock = SRWLOCK_INIT;
-static struct { uintptr_t lo, hi; DWORD old; } g_cg[256];
+#define CB_N 1024                                  /* [b3recomp] compute buffers of one batch (was 256: a fight of a later chapter wrote more) */
+static struct { uintptr_t lo, hi; DWORD old; } g_cg[CB_N];
 static volatile LONG64 g_cg_reads, g_cg_writes, g_cg_render;
 static uintptr_t g_cg_span_lo = ~(uintptr_t)0, g_cg_span_hi;
 static DWORD g_cg_render_tid;
@@ -1856,7 +1857,7 @@ static LONG CALLBACK cg_veh(EXCEPTION_POINTERS *x) {
     LONG res = EXCEPTION_CONTINUE_SEARCH;
     if (a < g_cg_span_lo || a >= g_cg_span_hi) return res;
     AcquireSRWLockExclusive(&g_cg_lock);
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < CB_N; i++) {
         if (!g_cg[i].hi || a < g_cg[i].lo || a >= g_cg[i].hi) continue;
         DWORD old;
         VirtualProtect((void *)g_cg[i].lo, g_cg[i].hi - g_cg[i].lo, g_cg[i].old, &old);
@@ -1939,7 +1940,7 @@ static void cg_unguard(int i) {
     ReleaseSRWLockExclusive(&g_cg_lock);
 }
 typedef struct { uint64_t wm_off; uint32_t written; int16_t cb[16]; } CDisp;
-static CB g_cb[256];
+static CB g_cb[CB_N];
 static CDisp g_cdisp[2048];
 static int g_ncdisp, g_cb_live, g_cb_pending, g_cb_cached = -1;
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
@@ -1995,7 +1996,7 @@ static uint32_t g_cb_epoch;
 static void cb_land(int midbatch) {                /* the GPU has finished everything that wrote a CB */
     LONG64 t0 = tk();
     cb_masks();
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < CB_N; i++) {
         CB *c = &g_cb[i];
         if (!c->state || c->state >= 3) continue;
         if (g_cb_keep > 0 && c->state == 2) {      /* SSBU_VK_CBKEEP: the batch is over: the buffer stays, nothing is copied */
@@ -2102,21 +2103,21 @@ static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in gu
 }
 static void cb_landing_poll(void) {                /* at the start of a batch: landings whose copy has finished; never waits */
     int open = 0;
-    for (int i = 0; i < 256; i++) if (g_cb[i].state == 4 && R.done < g_cb[i].lserial) open = 1;
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 4 && R.done < g_cb[i].lserial) open = 1;
     if (open) for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && vkGetFenceStatus(V.device, R.slot[i].fence) == VK_SUCCESS) slot_wait(&R.slot[i]);
-    for (int i = 0; i < 256; i++) if (g_cb[i].state == 4 && R.done >= g_cb[i].lserial) cb_land_finish(&g_cb[i]);
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 4 && R.done >= g_cb[i].lserial) cb_land_finish(&g_cb[i]);
 }
 /* The kept and landing buffers as they are at the START of the batch (cb_kept_index, from vk_submit): during a batch the
  * set only shrinks (a buffer becomes kept only when a batch has finished), so a walk over this list sees every one. With
  * a landing in flight the count stays above zero for the whole batch, and every range a draw names was compared with
  * all 256 entries (runs p16_e_bfe / p16t_bf_g: draw preparation 4.1 -> 5.5-6.5 ms); now with the few of the list, inside
  * bounds that are exact at the start of the batch. */
-static int16_t g_kept_idx[256];
+static int16_t g_kept_idx[CB_N];
 static int g_kept_n;
 static void cb_kept_index(void) {
     g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0;
     if (!g_cb_nkept) return;
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < CB_N; i++) {
         if (g_cb[i].state < 3) continue;
         g_kept_idx[g_kept_n++] = (int16_t)i;
         if (g_cb[i].addr < g_kept_lo) g_kept_lo = g_cb[i].addr;
@@ -2151,14 +2152,14 @@ static int cb_guest_wrote(CB *k) {
     if (!nw) { g_ck_unwatched++; return 0; }
     return nw > k->ww;
 }
-static void cb_kept_all(int cause) { for (int i = 0; i < 256 && g_cb_nkept; i++) { if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else if (g_cb[i].state == 4) cb_land_force(&g_cb[i], cause); } }
+static void cb_kept_all(int cause) { for (int i = 0; i < CB_N && g_cb_nkept; i++) { if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else if (g_cb[i].state == 4) cb_land_force(&g_cb[i], cause); } }
 static void cb_kept_age(void) {                    /* at the start of a batch */
     static int lim = -1;
     if (lim < 0) lim = getenv("SSBU_VK_CBAGE") && atoi(getenv("SSBU_VK_CBAGE")) > 0 ? atoi(getenv("SSBU_VK_CBAGE")) : 2;      /* batches a kept buffer may stay without a dispatch into it */
     if (g_cb_async < 0) g_cb_async = !(getenv("SSBU_VK_CBASYNC") && !atoi(getenv("SSBU_VK_CBASYNC")));
     cb_landing_poll();
     oq_poll();                                     /* [Recomps#1] */
-    for (int i = 0; i < 256 && g_cb_nkept; i++) {
+    for (int i = 0; i < CB_N && g_cb_nkept; i++) {
         CB *c = &g_cb[i];
         if (c->state == 3 && c->touch) { c->touch = 0; c->age = 0; c->kserial = R.serial + 1; continue; }      /* drawn from in the last batch: every command of that batch is in a submission up to this number */
         if (c->state != 3 || ++c->age <= lim) continue;
@@ -2207,7 +2208,7 @@ static void cb_sync(void) {                        /* guest memory must hold wha
 static void cb_batch_end(void) {
     if (!g_cb_live) return;
     g_cb_serial = cmd_submit(NULL, NULL);
-    for (int i = 0; i < 256; i++) if (g_cb[i].state == 1) { g_cb[i].state = 2; g_cb[i].kserial = g_cb_serial; g_cb[i].touch = 0; }
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 1) { g_cb[i].state = 2; g_cb[i].kserial = g_cb_serial; g_cb[i].touch = 0; }
     g_cb_pending = g_cb_live; g_cb_live = 0; g_live_lo = ~0ull; g_live_hi = 0;
 }
 /* Round "four players" (P3): both searches are made for every buffer a draw names (about 2.5 million entries looked at per
@@ -2216,12 +2217,12 @@ static void cb_batch_end(void) {
  * in the same order. SSBU_VK_CBSCAN=0 = the walk over all 256 as before. */
 static int g_cb_hi, g_cb_scan = -1, g_cb_bound = -1;
 static CB *cb_inside(uint64_t addr, uint64_t size) {
-    int n = g_cb_scan ? g_cb_hi : 256;
+    int n = g_cb_scan ? g_cb_hi : CB_N;
     for (int i = 0; i < n; i++) if (g_cb[i].state == 1 && addr >= g_cb[i].addr && addr + size <= g_cb[i].addr + g_cb[i].size) return &g_cb[i];
     return NULL;
 }
 static int cb_overlap(uint64_t addr, uint64_t size) {
-    int n = g_cb_scan ? g_cb_hi : 256;
+    int n = g_cb_scan ? g_cb_hi : CB_N;
     for (int i = 0; i < n; i++) if (g_cb[i].state == 1 && addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size) return 1;
     return 0;
 }
@@ -2270,6 +2271,7 @@ static void drawlog_ssbo(const char *who, int k, Range r, int written) {
     if (w && r.size >= 16) printf(" = %08x %08x %08x %08x", w[0], w[1], w[2], w[3]);
     printf("\n");
 }
+static LONG64 g_cb_evicted;                       /* [b3recomp] kept buffers landed early for want of a slot */
 static CB *cb_new(uint64_t addr, uint64_t size) {
     CB *c = NULL, *empty = NULL, *victim = NULL;
     if (cb_keep_mode() && g_cb_nkept) {            /* SSBU_VK_CBKEEP: the buffer of the last dispatch into this very range, as the GPU left it */
@@ -2285,16 +2287,30 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         }
         cb_kept_range(addr, size, 2);
     }
-    for (int i = 0; i < 256 && !c; i++) {
-        CB *k = &g_cb[i];
-        if (k->state || k->busy > R.done) continue;
-        if (!k->buf) { if (!empty) empty = k; }
-        else if (k->cap >= size && k->cap <= size * 2 + 4096) c = k;
-        else if (!victim) victim = k;
+    for (int pass = 0; pass < 2 && !c && !empty && !victim; pass++) {
+        if (pass) {                                /* [b3recomp] every slot holds a kept buffer (a fight of a later chapter: 660 ranges): the least
+                                                    * recently used one not named in this batch lands, and its slot is taken once the GPU is past it */
+            CB *old = NULL;
+            for (int i = 0; i < g_cb_hi; i++) { CB *k = &g_cb[i]; if (k->state == 3 && !k->touch && (!old || k->kserial < old->kserial)) old = k; }
+            if (!old) break;
+            cb_kept_land(old, 2);
+            g_cb_evicted++;
+            if (old->busy > R.done) {
+                for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= old->busy) slot_wait(&R.slot[i]);
+                if (old->busy > R.done) old->busy = R.done;      /* submitted and finished (the slots above), or never submitted */
+            }
+        }
+        for (int i = 0; i < CB_N && !c; i++) {
+            CB *k = &g_cb[i];
+            if (k->state || k->busy > R.done) continue;
+            if (!k->buf) { if (!empty) empty = k; }
+            else if (k->cap >= size && k->cap <= size * 2 + 4096) c = k;
+            else if (!victim) victim = k;
+        }
     }
     if (!c) {
         c = empty ? empty : victim;
-        if (!c) vkd_fail("more than 256 storage buffers written by compute in one batch");
+        if (!c) vkd_fail("more than 1024 storage buffers written by compute in one batch");
         if (c->buf) { vkDestroyBuffer(V.device, c->buf, NULL); vmem_free(c->mem); c->buf = NULL; }      /* free and not busy: nothing in flight names it */
         if (g_cb_cached < 0) {                     /* read back by the CPU: cached host memory when the device has it */
             g_cb_cached = 0;
@@ -3276,7 +3292,7 @@ int nvn_front_draw_tag(void); int nvn_front_draw_tag_next(void); void nvn_front_
 static uint64_t g_dt_voff[16];
 static VkBuffer g_dt_vb[16];
 static void *dt_host(uint64_t a) { return P(a); }
-static const uint8_t *dt_map(VkBuffer b) { if (b == R.ring) return R.ring_mem.map; for (int i = 0; i < 256; i++) if (g_cb[i].state && g_cb[i].buf == b) return g_cb[i].mem.map; return NULL; }
+static const uint8_t *dt_map(VkBuffer b) { if (b == R.ring) return R.ring_mem.map; for (int i = 0; i < CB_N; i++) if (g_cb[i].state && g_cb[i].buf == b) return g_cb[i].mem.map; return NULL; }
 static void dt_vk(int fight, int idx, int ok, const Cmd *m, int indexed, const BufRef *ib) {
     const uint64_t *a = m->a;
     unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1;
@@ -3915,6 +3931,15 @@ static volatile LONG g_bmp_pending;
 static DWORD WINAPI bmp_write_thread(LPVOID arg) {      /* [Recomps#1] encode and write one screenshot (save_bmp_vk) */
     BmpJob *j = arg;
     int w = j->w, h = j->h, bgr = j->bgr;
+    {   /* TEST: SSBU_SHOT_SCALE=<k>: every k-th pixel of every k-th row (small pictures of many frames in a row) */
+        static int k = -1;
+        if (k < 0) k = getenv("SSBU_SHOT_SCALE") ? atoi(getenv("SSBU_SHOT_SCALE")) : 1;
+        if (k > 1) {
+            int w2 = w / k, h2 = h / k;
+            for (int y = 0; y < h2; y++) for (int x = 0; x < w2; x++) memcpy(j->px + ((size_t)y * w2 + x) * 4, j->px + ((size_t)y * k * w + (size_t)x * k) * 4, 4);
+            w = w2; h = h2;
+        }
+    }
     uint8_t head[54] = {'B', 'M'}, *rowb;
     uint32_t row = ((uint32_t)w * 3 + 3) & ~3u, size = 54 + row * (uint32_t)h, v;
     FILE *f = fopen(j->path, "wb");
@@ -4431,7 +4456,7 @@ static void prep_first_hold(LONG64 frame) {
 static void vk_present(void *arg) { vk_present2(arg, 0); }
 static void vk_present2(void *arg, int progress) {
     PresentJob *j = arg;
-    static int shot = -2, every, shot_from;
+    static int shot = -2, every, shot_from, shot_to;
     if (!V.alive) return;
     LONG64 t_present = tk();
     LONG64 tp[8] = {0, 0, 0, 0, 0, 0, 0, 0};      /* round 17: the present job timed in parts ("nvn_vk_presentlong:"): after the barrier, before / after the kept present of the last frame, after the acquire, after the blit's submission, after the present call, after the front end's frame end */
@@ -4462,13 +4487,13 @@ static void vk_present2(void *arg, int progress) {
     }
     g_render_tid = GetCurrentThreadId();
     if (g_skip_fr_n) { g_skip_frames++; printf("nvn_vk_skipf: frame %lld (%s): %lld draws left out (shader_wait = skip)\n", (long long)frame, g_in_fight ? "fight" : "no fight", (long long)g_skip_fr_n); g_skip_fr_n = 0; }
-    if (shot == -2) { shot = getenv("SSBU_SHOT") ? atoi(getenv("SSBU_SHOT")) : -1; every = getenv("SSBU_SHOT_EVERY") ? atoi(getenv("SSBU_SHOT_EVERY")) : 0; shot_from = getenv("SSBU_SHOT_FROM") ? atoi(getenv("SSBU_SHOT_FROM")) : 0; }
+    if (shot == -2) { shot = getenv("SSBU_SHOT") ? atoi(getenv("SSBU_SHOT")) : -1; every = getenv("SSBU_SHOT_EVERY") ? atoi(getenv("SSBU_SHOT_EVERY")) : 0; shot_from = getenv("SSBU_SHOT_FROM") ? atoi(getenv("SSBU_SHOT_FROM")) : 0; shot_to = getenv("SSBU_SHOT_TO") ? atoi(getenv("SSBU_SHOT_TO")) : 0x7fffffff; }
     pass_end();
     if (g_dump_on && frame == g_dump_frame) dump_flush();      /* [Recomps#1] TEST ONLY: SSBU_VK_DUMPTEX */
     { int step = nvn_front_take_step_shot(); if (step && vt) { char path[300]; const char *dir = getenv("SSBU_SHOT_DIR"); snprintf(path, sizeof path, "%s%sstep_%03d.bmp", dir ? dir : "", dir ? "/" : "", step - 1); save_bmp_vk(path, vt); } }
     nvn_front_draw_tag_clear();
     if (j->shot_fight && vt) { char path[300]; const char *dir = getenv("SSBU_SHOT_DIR"); snprintf(path, sizeof path, "%s%sfight_%05d.bmp", dir ? dir : "", dir ? "/" : "", j->shot_fight); save_bmp_vk(path, vt); printf("shot: fight frame %d saved at presented frame %lld (Vulkan)\n", j->shot_fight, (long long)frame); }      /* session 13, SSBU_SHOT_FIGHT */
-    if (vt && (frame == shot || (every > 0 && frame >= shot_from && frame % every == 0))) {
+    if (vt && (frame == shot || (every > 0 && frame >= shot_from && frame <= shot_to && frame % every == 0))) {
         char path[300];
         const char *dir = getenv("SSBU_SHOT_DIR");
         snprintf(path, sizeof path, "%s%sframe_%lld.bmp", dir ? dir : "", dir ? "/" : "", (long long)frame);
@@ -5044,8 +5069,8 @@ static void vkd_shutdown(void) {
     if (g_hdr.fs) vkDestroyShaderModule(V.device, g_hdr.fs, NULL);
     g_hdr.pipe = NULL; g_hdr.pl = NULL; g_hdr.vs = g_hdr.fs = NULL;
     if (g_ovl.made) { vkDestroyImage(V.device, g_ovl.img, NULL); g_ovl.made = 0; }      /* the progress bar's image; its memory goes with the blocks */
-    for (int i = 0; i < 256; i++) if (g_cb[i].buf) { vkDestroyBuffer(V.device, g_cb[i].buf, NULL); g_cb[i].buf = NULL; g_cb[i].state = 0; }
-    for (int i = 0; i < 256; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].buf) { vkDestroyBuffer(V.device, g_cb[i].buf, NULL); g_cb[i].buf = NULL; g_cb[i].state = 0; }
+    for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
     for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
@@ -5067,6 +5092,7 @@ static void vkd_shutdown(void) {
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
     printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);
+    printf("nvn_vk: compute buffers: %lld kept ones landed early for want of a slot (table of %d)\n", (long long)g_cb_evicted, CB_N);
     { extern unsigned tex_astc_hdr_blocks, tex_astc_bad_blocks; printf("tex_decode: ASTC blocks decoded on the CPU with HDR endpoints: %u; invalid (transparent black): %u\n", tex_astc_hdr_blocks, tex_astc_bad_blocks); }
     printf("nvn_vk: drawing part shut down: %lld images, %lld pipelines, %lld shader modules, %d samplers destroyed; %lld bytes of block space lost to fragmentation records\n", (long long)R.images, (long long)R.pipelines, (long long)R.modules, g_nsmp, (long long)g_mem_leak);
 }
