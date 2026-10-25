@@ -30,7 +30,7 @@ typedef struct VStage {
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
-typedef struct { int stage, code_len, serial; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem; } SSrc;
+typedef struct { int stage, code_len, serial; const uint8_t *code, *cdata; uint32_t cdata_size, local[3], smem, lmem, tess[4]; } SSrc;      /* tess: the evaluation stage's mode (Stage.tess) */
 static CRITICAL_SECTION g_sh_lock;
 static CONDITION_VARIABLE g_sh_cv, g_jq_cv;        /* g_sh_cv: something was finished; g_jq_cv: a job was queued */
 /* ---- Session 12: the freeze watchdog's wait registry (nvn_vk_wd.c writes the report). Every wait of ours that has no
@@ -109,13 +109,15 @@ static int ssrc_of(SSrc *o, const Prog *p, int s) {
     if (!st->code || st->code_len <= 0) return 0;
     o->stage = s; o->code = st->code; o->code_len = st->code_len; o->serial = p->serial;
     if (st->ctl[3] && st->ctl[4]) { o->cdata = st->code - (s == 5 ? 0 : 0x30) + st->ctl[4]; o->cdata_size = st->ctl[3]; }      /* a compute stage has no program header */
-    memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes;
+    memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
 }
 static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION;
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
+    if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [b3recomp] the mode is part of the evaluation stage's text */
+    if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [b3recomp] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -232,7 +234,8 @@ static void vstage_build(VStage *v, const SSrc *src) {
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;
         }
-        snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s ? "fragment" : "vertex");
+        if (s == 4) { in.tess_prim = src->tess[0]; in.tess_spacing = src->tess[1]; in.tess_point = src->tess[2]; in.tess_order = src->tess[3]; }
+        snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
         if (s == 1 && RS_ON) in.screen_scale = 1;
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
@@ -349,7 +352,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
 
 /* ---------------------------------------------------------------- pipelines */
 typedef struct { uint32_t vs, fs, chanmask, sample_mask; int32_t cfmt[8], dfmt; uint8_t topo_class, ncolor, samples, poly, a2c, dclamp, logic, sshade, blend_on, pad[3]; uint8_t blend[8][8]; } PKey;
-typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; } Pipe;      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
+typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; } Pipe;      /* tcs, tes, patch: [b3recomp] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
 static Pipe *g_pipes[1024];
 static void pkey_targets(PKey *k);
 static int pkey_targets_of(PKey *k, int ncol, const TargetRef *col, const TargetRef *depth);
@@ -460,7 +463,7 @@ static VkBlendFactor blend_factor(unsigned f) {
 }
 static VkBlendOp blend_op(unsigned e) { static const uint8_t m[6] = {VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, VK_BLEND_OP_SUBTRACT, VK_BLEND_OP_REVERSE_SUBTRACT, VK_BLEND_OP_MIN, VK_BLEND_OP_MAX}; return (VkBlendOp)m[e < 6 ? e : 1]; }
 static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, int *n0, VkDescriptorSetLayoutBinding *b1, int *n1) {
-    VkFlags sf = s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+    VkFlags sf = s == 3 ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT : s == 4 ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
@@ -843,7 +846,7 @@ static double pipe_build(Pipe *p) {
     const PKey *k = &p->k;
     VStage *vs = p->vs, *fs = p->fs;
     LONG64 t0 = tk();
-    if (D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, SSBU_VK_GPL=2: linked from one library per stage */
+    if (!p->tcs && D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, SSBU_VK_GPL=2: linked from one library per stage */
         int how, how2 = 0, n = 0;
         VkPipeline libs[4];
         libs[n++] = gpl_vilib(k->topo_class < 3 ? k->topo_class : 2);
@@ -875,7 +878,7 @@ static double pipe_build(Pipe *p) {
         LeaveCriticalSection(&g_sh_lock);
         { LARGE_INTEGER fq; QueryPerformanceFrequency(&fq); return (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart; }
     }
-    if (D.has_gpl) {                               /* session 9: linked from libraries */
+    if (!p->tcs && D.has_gpl) {                    /* session 9: linked from libraries */
         int how;
         PairLib *l = pairlib_ensure(vs, fs, k->samples, k->sshade, &how);
         if (!l->lib) goto whole;                   /* finding 120: a pair library the driver refused */
@@ -903,6 +906,7 @@ whole:;
     VkDescriptorSetLayoutBinding b0[80], b1[160];
     layout_bindings(vs, 0, b0, &p->nb[0], b1, &p->nb[1]);
     if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]);
+    if (p->tcs) { layout_bindings(p->tcs, 3, b0, &p->nb[0], b1, &p->nb[1]); layout_bindings(p->tes, 4, b0, &p->nb[0], b1, &p->nb[1]); }
     for (int i = 0; i < 2; i++) {
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.bindingCount = (uint32_t)p->nb[i]; li.pBindings = i ? b1 : b0;
@@ -914,13 +918,18 @@ whole:;
     pl.setLayoutCount = 2; pl.pSetLayouts = p->dl; pl.pushConstantRangeCount = 1; pl.pPushConstantRanges = &pc;
     VKC(vkCreatePipelineLayout(V.device, &pl, NULL, &p->layout));
 
-    VkPipelineShaderStageCreateInfo st[2];
+    VkPipelineShaderStageCreateInfo st[4];
+    uint32_t nst = 0;
     memset(st, 0, sizeof st);
-    st[0].sType = st[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    st[0].stage = VK_SHADER_STAGE_VERTEX_BIT; st[0].module = vs->mod; st[0].pName = "main";
-    st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[1].module = fs ? fs->mod : NULL; st[1].pName = "main";
+    for (int i = 0; i < 4; i++) { st[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st[i].pName = "main"; }
+    st[nst].stage = VK_SHADER_STAGE_VERTEX_BIT; st[nst++].module = vs->mod;
+    if (p->tcs) { st[nst].stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; st[nst++].module = p->tcs->mod; st[nst].stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; st[nst++].module = p->tes->mod; }
+    if (fs) { st[nst].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[nst++].module = fs->mod; }
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    ia.topology = k->topo_class == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : k->topo_class == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    ia.topology = p->tcs ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : k->topo_class == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : k->topo_class == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    /* [b3recomp] the tessellator's domain origin as in OpenGL (the back end flips the viewport the OpenGL way), so GL_CCW keeps its meaning */
+    VkPipelineTessellationDomainOriginStateCreateInfo tdo = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO, NULL, VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT};
+    VkPipelineTessellationStateCreateInfo ts = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, &tdo, 0, p->patch ? p->patch : 1};
     VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
     vp.viewportCount = 1; vp.scissorCount = 1;
     VkPipelineRasterizationProvokingVertexStateCreateInfoEXT pv = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT};
@@ -971,7 +980,7 @@ whole:;
     if (fmt_aspect((VkFormat)k->dfmt) & VK_IMAGE_ASPECT_DEPTH_BIT) ri.depthAttachmentFormat = (VkFormat)k->dfmt;
     if (k->dfmt && (fmt_aspect((VkFormat)k->dfmt) & VK_IMAGE_ASPECT_STENCIL_BIT)) ri.stencilAttachmentFormat = (VkFormat)k->dfmt;
     VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    gi.pNext = &ri; gi.stageCount = fs ? 2 : 1; gi.pStages = st; gi.pInputAssemblyState = &ia; gi.pViewportState = &vp; gi.pRasterizationState = &rs; gi.pMultisampleState = &ms;
+    gi.pNext = &ri; gi.stageCount = nst; gi.pStages = st; gi.pTessellationState = p->tcs ? &ts : NULL; gi.pInputAssemblyState = &ia; gi.pViewportState = &vp; gi.pRasterizationState = &rs; gi.pMultisampleState = &ms;
     gi.pDepthStencilState = &ds; gi.pColorBlendState = &cb; gi.pDynamicState = &dy; gi.layout = p->layout;
     if (!D.has_vids) gi.pVertexInputState = &vi;
     static volatile LONG nfail;
@@ -1120,6 +1129,22 @@ static void predict_pair(PairRec *pr, int i) {
     job_push(j);
 }
 /* Render thread, at a draw: the pipeline of the key; made here, or waited for, when it is not ready (the frame is late). */
+/* [b3recomp] Tessellated pipelines (B3: 29 control / evaluation pairs): made whole (no libraries) on the render thread at their
+ * first draw and kept here, keyed by the draw's key, the two stages and the patch size; not in g_pipes, pipes.bin or the workers'
+ * queues. shortcut: made at the draw (a hitch the first time; the driver's pipeline cache keeps it for the next run); upgrade to
+ * the workers and pipes.bin if a game tessellates much more. */
+static Pipe *g_tpipes[64];
+static Pipe *tess_pipe_get(const PKey *k, VStage *vs, VStage *tcs, VStage *tes, VStage *fs, uint32_t patch) {
+    uint64_t h = fnv(fnv(fnv(0xcbf29ce484222325ULL, k, sizeof *k), &tcs->id, sizeof tcs->id), &tes->id, sizeof tes->id) ^ patch;
+    for (Pipe *p = g_tpipes[h & 63]; p; p = p->next) if (p->tcs == tcs && p->tes == tes && p->patch == patch && p->fs == fs && p->vs == vs && !memcmp(&p->k, k, sizeof *k)) return p;
+    Pipe *p = calloc(1, sizeof *p);
+    p->k = *k; p->vs = vs; p->fs = fs; p->tcs = tcs; p->tes = tes; p->patch = patch; p->state = 1;
+    LONG64 t0 = tk();
+    pipe_build(p);
+    hold_note(H_PIPE_DRAW, tk() - t0);
+    p->next = g_tpipes[h & 63]; g_tpipes[h & 63] = p;
+    return p;
+}
 static Pipe *pipe_get(const PKey *k, VStage *vs, VStage *fs) {
     /* [Recomps#1] finding 93: the pipeline of the draw before, when the key is the same and it is made and used: what the
      * lookup below returns then, without the byte-wise hash of the key and the lock (render thread only; pipelines live

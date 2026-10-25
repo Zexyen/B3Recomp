@@ -28,8 +28,8 @@ __declspec(dllexport) int ssbu_glsl_to_spirv(int stage, const char *src, uint32_
     if (!InitOnceExecuteOnce(&g_once, init_once, NULL, NULL)) { if (log) snprintf(log, log_size, "glslang_initialize_process failed"); return 0; }
     memset(&in, 0, sizeof in);
     in.language = GLSLANG_SOURCE_GLSL;
-    in.stage = stage == 0 ? GLSLANG_STAGE_VERTEX : stage == 1 ? GLSLANG_STAGE_FRAGMENT : stage == 5 ? GLSLANG_STAGE_COMPUTE : GLSLANG_STAGE_COUNT;
-    if (in.stage == GLSLANG_STAGE_COUNT) { if (log) snprintf(log, log_size, "stage %d is not vertex (0), fragment (1) or compute (5)", stage); return 0; }
+    in.stage = stage == 0 ? GLSLANG_STAGE_VERTEX : stage == 1 ? GLSLANG_STAGE_FRAGMENT : stage == 3 ? GLSLANG_STAGE_TESSCONTROL : stage == 4 ? GLSLANG_STAGE_TESSEVALUATION : stage == 5 ? GLSLANG_STAGE_COMPUTE : GLSLANG_STAGE_COUNT;
+    if (in.stage == GLSLANG_STAGE_COUNT) { if (log) snprintf(log, log_size, "stage %d is not vertex (0), fragment (1), tessellation control (3) / evaluation (4) or compute (5)", stage); return 0; }
     in.client = GLSLANG_CLIENT_VULKAN;
     in.client_version = GLSLANG_TARGET_VULKAN_1_3;
     in.target_language = GLSLANG_TARGET_SPV;

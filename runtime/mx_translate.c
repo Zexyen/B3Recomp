@@ -1790,6 +1790,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
             else emit(&h, "layout(%s, %s, %s%s) in;\n", in->tess_prim == 7 ? "quads" : in->tess_prim == 4 ? "triangles" : "isolines",
                       in->tess_spacing == 0x8e7b ? "fractional_odd_spacing" : in->tess_spacing == 0x8e7c ? "fractional_even_spacing" : "equal_spacing",
                       in->tess_order == 0x900 ? "cw" : "ccw", in->tess_point ? ", point_mode" : "");
+            /* the built-in blocks match the neighbours' exactly (VUID-RuntimeSpirv-OpVariable-08746): the vertex stage's output block is
+             * {gl_Position, gl_PointSize}; this control stage writes only gl_Position. shortcut: a vertex stage that also writes clip
+             * distances does not match; upgrade if a tessellated program's vertex stage has them. */
+            if (in->stage == MX_TESS_CONTROL) emit(&h, "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; } gl_in[gl_MaxPatchVertices];\nout gl_PerVertex { vec4 gl_Position; } gl_out[];\n");
+            else emit(&h, "in gl_PerVertex { vec4 gl_Position; } gl_in[gl_MaxPatchVertices];\n");
             for (unsigned n = 0; n < 32; n++) if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in vec4 in_attr%u[];\n", n, n);
             if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u[];\n", n, n);
         }

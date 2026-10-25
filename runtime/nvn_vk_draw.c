@@ -230,6 +230,7 @@ static struct {
     Range ubo[6][16], ssbo[6][32], vbuf[32];
     uint64_t nvn_tex[6][32], c2[6][112];
     uint32_t tex_int[6], tex_sint[6];
+    uint32_t patch;                                /* [b3recomp] nvnCommandBufferSetPatchSize */
     uint32_t vattr[32]; int nattr;
     struct { uint32_t stride, divisor; } vstream[32];
     uint64_t ds; uint32_t chanmask, sample_mask;
@@ -2750,6 +2751,7 @@ static uint64_t c2_ref(int s) {
     g_c2k[s].off = off; g_c2k[s].gen = R.gen; g_c2k[s].ver = g_c2_ver[s]; g_c2k[s].ok = 1; g_c2k_n[0]++;
     return off;
 }
+static LONG64 g_tess_draws, g_tess_pipes;          /* [b3recomp] */
 static int draw_prepare(unsigned prim) {
     if (g_ptm_on < 0) g_ptm_on = getenv("SSBU_VK_PREPTIME") && atoi(getenv("SSBU_VK_PREPTIME"));
     if (g_ptm_on > 0) { g_ptm_t = tk(); g_ptm_n++; }
@@ -2759,9 +2761,12 @@ static int draw_prepare(unsigned prim) {
      * with no attachments, as large as its viewport */
     if (!R.have_targets && !R.render_off) { R.null_w = (int)(R.viewport[0] + R.viewport[2] + 0.5f); R.null_h = (int)(R.viewport[1] + R.viewport[3] + 0.5f); }
     if ((!R.have_targets && (R.null_w <= 0 || R.null_h <= 0)) || R.render_off) { if (drawlog_on()) printf("DLS f%lld skipped: %s (vs #%d fs #%d, viewport %g,%g %gx%g)\n", nvn_front_frame_next(), R.render_off ? "rendering switched off (SetRenderEnable)" : "no render targets", R.prog[0] ? R.prog[0]->serial : -1, R.prog[1] ? R.prog[1]->serial : -1, (double)R.viewport[0], (double)R.viewport[1], (double)R.viewport[2], (double)R.viewport[3]); return 0; }      /* [b3recomp] TEST ONLY log */
-    if (prim > 6 || topo[prim] < 0) { static char msg[64]; snprintf(msg, sizeof msg, "a draw with NVN primitive type %u", prim); nvn_vk_missing(msg); return 0; }
+    int tess = R.prog[3] || R.prog[4];             /* [b3recomp] NVN primitive 14 = patches, with a control and an evaluation stage */
+    if (tess ? prim != 14 || !R.prog[3] || !R.prog[4] || !R.patch || R.patch > V.props.limits.maxTessellationPatchSize : prim > 6 || topo[prim] < 0) {
+        static char msg[96]; snprintf(msg, sizeof msg, "a draw with NVN primitive type %u%s", prim, tess ? " and a tessellation stage (without the other one, or not patches)" : ""); nvn_vk_missing(msg); return 0; }
+    VkPrimitiveTopology vtopo = tess ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : (VkPrimitiveTopology)topo[prim];
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [b3recomp] TEST ONLY log */
-    if (R.prog[2] || R.prog[3] || R.prog[4]) { nvn_vk_missing("a draw with a geometry or tessellation stage"); return 0; }
+    if (R.prog[2]) { nvn_vk_missing("a draw with a geometry stage"); return 0; }
     uint32_t ints = 0, sints = 0;
     for (int i = 0; i < 16 && i < R.nattr; i++) {
         int nf = (int)(R.vattr[i] & 0xff), k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
@@ -2776,25 +2781,39 @@ static int draw_prepare(unsigned prim) {
      * which hashed the machine code each time). */
     VStage *cur = R.prog[0]->st[0].vk;
     VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, 0), *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
-    if (vs) { uint32_t need = fs ? fs->in_attr & ~(vs->out_attr & ~vs->fo) : 0; if (need != vs->fo) vs = vstage_get(R.prog[0], 0, key0, need); }
-    if (g_skip_flag) { g_skip_flag = 0; if (!vs || (!depth_only && !fs)) return 0; }      /* shader_wait = skip: the draw is left out (counted in vstage_get) */
-    if (!vs || (!depth_only && !fs)) { nvn_vk_missing("a draw whose vertex or fragment stage could not be translated or compiled (the log names the stage)"); return 0; }
+    VStage *tcs = NULL, *tes = NULL;
+    if (tess) {                                    /* [b3recomp] each stage declares the inputs of the next one that it never writes (forced outputs) */
+        uint32_t key3[4] = {0, 0, R.tex_int[3], R.tex_sint[3]}, key4[4] = {0, 0, R.tex_int[4], R.tex_sint[4]};
+        VStage *c3 = R.prog[3]->st[3].vk, *c4 = R.prog[4]->st[4].vk;
+        tes = vstage_get(R.prog[4], 4, key4, c4 ? c4->fo : 0);
+        if (tes) { uint32_t need = fs ? fs->in_attr & ~(tes->out_attr & ~tes->fo) : 0; if (need != tes->fo) tes = vstage_get(R.prog[4], 4, key4, need); }
+        tcs = vstage_get(R.prog[3], 3, key3, c3 ? c3->fo : 0);
+        if (tcs && tes) { uint32_t need = tes->in_attr & ~(tcs->out_attr & ~tcs->fo); if (need != tcs->fo) tcs = vstage_get(R.prog[3], 3, key3, need); }
+    }
+    VStage *vnext = tess ? tcs : fs;               /* what reads the vertex stage's outputs */
+    if (vs) { uint32_t need = vnext ? vnext->in_attr & ~(vs->out_attr & ~vs->fo) : 0; if (need != vs->fo) vs = vstage_get(R.prog[0], 0, key0, need); }
+    if (g_skip_flag) { g_skip_flag = 0; if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) return 0; }      /* shader_wait = skip: the draw is left out (counted in vstage_get) */
+    if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) { nvn_vk_missing("a draw whose vertex, fragment or tessellation stage could not be translated or compiled (the log names the stage)"); return 0; }
+    VStage *sv[4]; int sx[4], nsv = 0;             /* [b3recomp] the draw's stages and their NVN stage numbers, in one order for every list below */
+    sv[nsv] = vs; sx[nsv++] = 0;
+    if (fs) { sv[nsv] = fs; sx[nsv++] = 1; }
+    if (tess) { sv[nsv] = tcs; sx[nsv++] = 3; sv[nsv] = tes; sx[nsv++] = 4; }
 
     PT(0);
     /* 1. textures (may upload, change layouts, end the pass) */
     g_ndtex = 0;
-    for (int i = 0; i < vs->nsmp; i++) resolve_sampler(0, vs, i);
-    if (fs) for (int i = 0; i < fs->nsmp; i++) resolve_sampler(1, fs, i);
+    for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
     watch_fs(fs);                                  /* [b3recomp] TEST ONLY: SSBU_VK_WATCHFS */
     int stores = 0;                                /* [b3recomp] storage images, after the samplers in g_dtex */
-    for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
+    for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
     PT(1);
     /* 2. buffers: every range the draw reads, into the ring (may wrap the ring = submit) */
-    static BufRef bufs[80];
+    static BufRef bufs[160];                       /* [b3recomp] up to four stages (tessellation) */
     int nbuf = 0;
     uint64_t sal = V.props.limits.minStorageBufferOffsetAlignment ? V.props.limits.minStorageBufferOffsetAlignment : 1;
-    for (int s = 0; s < (fs ? 2 : 1); s++) {
-        VStage *v = s ? fs : vs;
+    for (int j = 0; j < nsv; j++) {
+        int s = sx[j];
+        VStage *v = sv[j];
         Stage *st = &R.prog[s]->st[s];
         for (unsigned n = 1; n < 18; n++) {
             if (!(v->cbufs >> n & 1)) continue;
@@ -2850,7 +2869,7 @@ static int draw_prepare(unsigned prim) {
     PT(4);
     PKey k;
     memset(&k, 0, sizeof k);
-    k.vs = vs->id; k.fs = fs ? fs->id : 0; k.topo_class = tclass[prim]; k.logic = R.logic; k.sshade = fs ? (uint8_t)R.prog[1]->sample_shading : 0;
+    k.vs = vs->id; k.fs = fs ? fs->id : 0; k.topo_class = tess ? 3 : tclass[prim]; k.logic = R.logic; k.sshade = fs ? (uint8_t)R.prog[1]->sample_shading : 0;
     if (!D.has_eds3) {                             /* without extended dynamic state 3 this state is part of the key */
         k.chanmask = R.chanmask; k.sample_mask = R.sample_mask; k.poly = R.poly[2] < 3 ? R.poly[2] : 2;
         k.a2c = R.ms[1] != 0; k.dclamp = R.depth_clamp && D.f2.features.depthClamp; k.blend_on = R.blend_on;
@@ -2858,16 +2877,26 @@ static int draw_prepare(unsigned prim) {
     }
     if (!D.has_vids) { uint32_t n = vlay_number(vbd, vnb, vad, vna); pkey_vlay_set(&k, n); vs->vlay = n; }      /* finding 116 */
     pkey_targets(&k);
-    Pipe *p = pipe_get(&k, vs, fs);
+    Pipe *p = tess ? tess_pipe_get(&k, vs, tcs, tes, fs, R.patch) : pipe_get(&k, vs, fs);
     if (!p) return 0;                              /* shader_wait = skip: the pipeline is being made by a worker, the draw is left out (counted in pipe_get) */
     if (!p->p) { g_fail_draws++; return 0; }       /* finding 120: the driver refused this pipeline: the draw is left out */
+    if (tess) {                                    /* [b3recomp] tessellated draws: counted; each pipeline named at its first use */
+        g_tess_draws++;
+        {   static long long lo = -1, hi = -1, n;      /* the runs of frames that have tessellated draws, one line each */
+            long long f = nvn_front_frame_next();
+            if (lo >= 0 && f > hi + 1) { printf("nvn_vk: tessellated draws in frames %lld..%lld: %lld\n", lo, hi, n); lo = -1; }
+            if (lo < 0) { lo = f; n = 0; }
+            hi = f; n++; }
+        if (!p->used) { p->used = 1; printf("nvn_vk: tessellated pipeline %lld at frame %lld: programs #%d / #%d / #%d / #%d (vertex / control / evaluation / fragment), patch size %u\n",
+                                            (long long)++g_tess_pipes, (long long)nvn_front_frame_next(), R.prog[0]->serial, R.prog[3]->serial, R.prog[4]->serial, fs ? R.prog[1]->serial : -1, R.patch); }
+    }
     if (!R.pipe_bound) R.dyn3_dirty = 1;          /* a new command buffer, or a pipeline of our own with static state was bound */
     if (R.pipe_bound != p) { vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->p); R.pipe_bound = p; }
     PT(5);
     if (R.dyn_dirty) { set_dynamic_state(); R.dyn_dirty = 0; }
     if (D.has_eds3 && (R.dyn3_dirty || R.dyn3_samples != k.samples)) { set_dynamic_state3(k.samples); R.dyn3_dirty = 0; }
     {   int rst = R.restart && ((D.has_plr && !(g_vk_test & 16)) || prim == 3 || prim == 5 || prim == 6);      /* SSBU_VK_TEST bit 16 (session 14, test): no restart in list topologies */
-        if (topo[prim] != g_dsh_topo || !dsh_on()) { vkCmdSetPrimitiveTopology(R.cmd, (VkPrimitiveTopology)topo[prim]); g_dsh_topo = topo[prim]; g_dsh_sent++; } else g_dsh_kept++;
+        if ((int)vtopo != g_dsh_topo || !dsh_on()) { vkCmdSetPrimitiveTopology(R.cmd, vtopo); g_dsh_topo = (int)vtopo; g_dsh_sent++; } else g_dsh_kept++;
         if (rst != g_dsh_rst || !dsh_on()) { vkCmdSetPrimitiveRestartEnable(R.cmd, rst); g_dsh_rst = rst; g_dsh_sent++; } else g_dsh_kept++; }
     PT(6);
     /* 4. vertex input (described above; without the extension the bound pipeline holds the layout) */
@@ -2882,8 +2911,8 @@ static int draw_prepare(unsigned prim) {
     PT(7);
     /* 5. descriptors */
     {
-        static VkWriteDescriptorSet w[220];
-        static VkDescriptorBufferInfo bi[80];
+        static VkWriteDescriptorSet w[320];
+        static VkDescriptorBufferInfo bi[160];
         static VkDescriptorImageInfo ii[160];
         /* M4: buffers change with every draw: pushed into the command buffer (no set, no pool) when the device can; the
          * textures of a draw repeat: one set per distinct list (layout, views, samplers, image layouts) per command buffer */
@@ -2891,10 +2920,11 @@ static int draw_prepare(unsigned prim) {
         int nw = 0, ib = 0, it = 0;
         if (!p->push0 && p->nb[0]) sets[0] = set_alloc(p->dl[0]);
         PT(11);
-        VkDescriptorUpdateTemplate ut = sets[0] ? set0_template(p->dl[0], vs, fs) : VK_NULL_HANDLE;      /* finding 145: then only bi[] is filled */
+        VkDescriptorUpdateTemplate ut = sets[0] && !tess ? set0_template(p->dl[0], vs, fs) : VK_NULL_HANDLE;      /* finding 145: then only bi[] is filled */
         /* [Recomps#1] finding 93: each write is filled whole below (no memset of all 194 entries of the universal layout, 12 KB per draw) */
-        for (int s = 0; s < (fs ? 2 : 1); s++) {
-            VStage *v = s ? fs : vs;
+        for (int j = 0; j < nsv; j++) {
+            int s = sx[j];
+            VStage *v = sv[j];
             for (unsigned n = 1; n < 34; n++) {
                 unsigned bit = n < 18 ? v->cbufs >> n & 1 : v->ssbos >> (n - 18) & 1;
                 if (!bit) continue;
@@ -2915,7 +2945,7 @@ static int draw_prepare(unsigned prim) {
         if (p->nb[1]) {
             uint64_t key = fnv(0xcbf29ce484222325ULL, &p->dl[1], sizeof p->dl[1]);
             unsigned slot;
-            if (p->dl[1] == g_udl[1]) for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
+            if (p->dl[1] == g_udl[1]) for (int j = 0; j < nsv; j++) { VStage *v = sv[j]; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
             for (int i = 0; i < g_ndtex; i++) { key = fnv(key, &g_dtex[i].view, sizeof g_dtex[i].view); key = fnv(key, &g_dtex[i].smp, sizeof g_dtex[i].smp); key = fnv(key, &g_dtex[i].layout, sizeof g_dtex[i].layout); }
             if (!key) key = 1;
             for (slot = (unsigned)key & 4095; g_tset[slot].gen == g_tset_gen && g_tset[slot].key != key; slot = (slot + 1) & 4095) {}
@@ -2927,8 +2957,8 @@ static int draw_prepare(unsigned prim) {
             else {
                 int n1 = 0;
                 sets[1] = set_alloc(p->dl[1]);
-                for (int s = 0; s < (fs ? 2 : 1); s++) {
-                    VStage *v = s ? fs : vs;
+                for (int j = 0; j < nsv; j++) {
+                    VStage *v = sv[j];
                     for (int i = 0; i < v->nsmp; i++) {
                         ii[it].sampler = g_dtex[it].smp; ii[it].imageView = g_dtex[it].view; ii[it].imageLayout = g_dtex[it].layout;
                         memset(&w[n1], 0, sizeof w[n1]);
@@ -2936,8 +2966,9 @@ static int draw_prepare(unsigned prim) {
                         w[n1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[n1].pImageInfo = &ii[it]; n1++; it++;
                     }
                 }
-                for (int s = 0; s < (fs ? 2 : 1); s++) {      /* [b3recomp] storage images */
-                    VStage *v = s ? fs : vs;
+                for (int j = 0; j < nsv; j++) {      /* [b3recomp] storage images */
+                    int s = sx[j];
+                    VStage *v = sv[j];
                     for (unsigned k = 0; k < 8; k++) {
                         if (!(v->images >> k & 1)) continue;
                         ii[it].sampler = VK_NULL_HANDLE; ii[it].imageView = g_dtex[it].view; ii[it].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -3479,7 +3510,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_RASTDISCARD: R.rast_discard = a[0] & 1; R.dyn_dirty = 1; break;
     case OP_DEPTHCLAMP: R.depth_clamp = a[0] & 1; R.dyn3_dirty = 1; if ((a[0] & 1) && !D.f2.features.depthClamp) nvn_vk_missing("depth clamp on a GPU without depthClamp"); break;
     case OP_PRIMRESTART: R.restart = a[0] & 1; break;
-    case OP_PATCHSIZE: break;                      /* only read by tessellation, which stops at the draw */
+    case OP_PATCHSIZE: R.patch = (uint32_t)a[0]; break;
     case OP_IMAGES: {                              /* [b3recomp] (stage, first, count) + handles: resolved at the draw / dispatch (resolve_image) */
         int stage = (int)a[0] % 6, first = (int)a[1], count = (int)a[2];
         for (int i = 0; i < count && first + i < 8; i++) if (first + i >= 0) memcpy(&R.nvn_img[stage][first + i], blob + i * 8, 8);
@@ -4989,6 +5020,7 @@ static void vkd_shutdown(void) {
     R.done = ~0ull; nvn_front_done_moved(); garbage_collect();
     while (g_vtex_all) { VTex *vt = g_vtex_all; if (vt->t) vt->t->vk = NULL; vt_destroy(vt); }
     for (int i = 0; i < 1024; i++) for (Pipe *p = g_pipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); if (p->p_fast) vkDestroyPipeline(V.device, p->p_fast, NULL); if (!p->libbed) { vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); } free(p); }
+    for (int i = 0; i < 64; i++) for (Pipe *p = g_tpipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); free(p); }      /* [b3recomp] tessellated pipelines */
     gpl_destroy();
     for (int i = 0; i < 8; i++) for (int k = 0; k < 2; k++) if (g_sem[i][k]) { vkDestroySemaphore(V.device, g_sem[i][k], NULL); g_sem[i][k] = NULL; }
     for (int i = 0; i < 16; i++) if (g_sem_img[i]) { vkDestroySemaphore(V.device, g_sem_img[i], NULL); g_sem_img[i] = NULL; }
@@ -5022,5 +5054,6 @@ static void vkd_shutdown(void) {
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
+    printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);
     printf("nvn_vk: drawing part shut down: %lld images, %lld pipelines, %lld shader modules, %d samplers destroyed; %lld bytes of block space lost to fragmentation records\n", (long long)R.images, (long long)R.pipelines, (long long)R.modules, g_nsmp, (long long)g_mem_leak);
 }

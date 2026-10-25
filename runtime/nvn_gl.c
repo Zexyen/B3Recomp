@@ -4298,6 +4298,7 @@ static void prog_set_shaders_(Ctx *c) {
         int s = stage_of_type[(rd32(data + 0x30) >> 10) & 15], len = (int)rd32(control + 0x6f8);
         if (s < 0 || len <= 0 || len > (4 << 20)) { logf_limited(&nlog2, 10, "nvn_gl: program #%d shader %d: unexpected program header %08x, code size %d\n", p->serial, i, rd32(data + 0x30), len); continue; }
         p->st[s].code = P(data + 0x30); p->st[s].code_len = len; p->st[s].state = 4; p->st[s].dumped = 0; p->st[s].glsl_state = 0; memcpy(p->st[s].ctl, P(control + 0x6f0), 32);
+        if (s == 4) memcpy(p->st[4].tess, P(control + 0x738), 16);      /* [b3recomp] GLSLC tessellation info: primitive mode, spacing, point mode, vertex order (mx_translate.h) */
     }
     if (g_rb == &rb_vk) { LONG64 tb = pf_now(); nvn_vk_program_set(p); nvn_setsh_part[4] += pf_now() - tb; RET(1); return; }       /* V1 M4: the stages go to the Vulkan workers at once (nvn_vk_m4.c) */
     if (!pw_queue_prog(p))
