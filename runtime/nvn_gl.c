@@ -837,6 +837,67 @@ static uint64_t ww_tex_newest(const uint8_t *p, size_t n, uint64_t seen, uint64_
     return newest;
 }
 
+/* [b3recomp] A texture level decoded on the CPU (ASTC: the GPU here has none) is split into bands of block rows that a few
+ * worker threads decode with this one: a 1024x1024 ASTC 10x10 level took 15-20 ms on the render thread, and a new area or
+ * effect brings several at once (frames of 60-170 ms in Tokyo). A band of block rows is itself an image tex_decode_rgba8
+ * decodes. The caller waits until every woken worker has left the job, so no worker reads the next job half written.
+ * SSBU_TEXDEC_THREADS=<n> workers (default 6, 0 = all on the calling thread); single-threaded while SSBU_ASTC_DUMP /
+ * SSBU_ASTC_LOG are set (their per-image output). The decoder's counters (tex_astc_bad_blocks ...) may then lose an
+ * increment: informational. */
+#define DEC_MAX 16
+static struct { int nf, w, h, bh, rows, nbands; size_t srow, drow; const uint8_t *src; uint8_t *dst; volatile LONG next, left; } g_dj;
+static HANDLE g_dec_go[DEC_MAX], g_dec_fin;
+static int g_dec_n = -1;
+static void dec_bands(void) {
+    LONG i;
+    while ((i = InterlockedIncrement(&g_dj.next) - 1) < g_dj.nbands) {
+        int y0 = i * g_dj.rows, h = g_dj.h - y0 * g_dj.bh;
+        if (h > g_dj.rows * g_dj.bh) h = g_dj.rows * g_dj.bh;
+        tex_decode_rgba8(g_dj.nf, g_dj.src + (size_t)y0 * g_dj.srow, g_dj.w, h, g_dj.dst + (size_t)y0 * g_dj.bh * g_dj.drow);
+    }
+}
+static DWORD WINAPI dec_worker(LPVOID a) {
+    for (;;) {
+        WaitForSingleObject(g_dec_go[(intptr_t)a], INFINITE);
+        dec_bands();
+        if (InterlockedDecrement(&g_dj.left) == 0) SetEvent(g_dec_fin);
+    }
+    return 0;
+}
+static void decode_par(int nf, const void *src, int w, int h, uint8_t *dst) {
+    const TexFormat *tf = tex_format(nf);
+    if (g_dec_n < 0) {
+        const char *e = getenv("SSBU_TEXDEC_THREADS");
+        g_dec_n = e ? atoi(e) : 6;
+        if (g_dec_n > DEC_MAX) g_dec_n = DEC_MAX;
+        if (getenv("SSBU_ASTC_DUMP") || getenv("SSBU_ASTC_LOG") || g_dec_n < 0) g_dec_n = 0;
+        if (g_dec_n) g_dec_fin = CreateEventA(NULL, FALSE, FALSE, NULL);
+        for (int k = 0; k < g_dec_n; k++) { g_dec_go[k] = CreateEventA(NULL, FALSE, FALSE, NULL); CloseHandle(CreateThread(NULL, 0, dec_worker, (LPVOID)(intptr_t)k, 0, NULL)); }
+    }
+    int wb = tf ? (w + tf->bw - 1) / tf->bw : 0, hb = tf ? (h + tf->bh - 1) / tf->bh : 0;
+    static volatile LONG busy;
+    if (!g_dec_n || !tf || (size_t)wb * hb < 2048 || InterlockedExchange(&busy, 1)) { tex_decode_rgba8(nf, src, w, h, dst); return; }      /* small (under about 0.5 ms), or another thread's job runs */
+    g_dj.nf = nf; g_dj.w = w; g_dj.h = h; g_dj.bh = tf->bh; g_dj.srow = (size_t)wb * tf->bpb; g_dj.drow = (size_t)w * 4;
+    g_dj.src = (const uint8_t *)src; g_dj.dst = dst;
+    g_dj.rows = (hb + (g_dec_n + 1) * 4 - 1) / ((g_dec_n + 1) * 4); g_dj.nbands = (hb + g_dj.rows - 1) / g_dj.rows;
+    g_dj.left = g_dec_n;
+    InterlockedExchange(&g_dj.next, 0);                         /* last: the job is complete before anyone takes a band */
+    for (int k = 0; k < g_dec_n; k++) SetEvent(g_dec_go[k]);
+    dec_bands();
+    WaitForSingleObject(g_dec_fin, INFINITE);
+    InterlockedExchange(&busy, 0);
+    {   /* TEST ONLY: SSBU_TEXDEC_CHECK=1: each job decoded once more on this thread and compared */
+        static int chk = -1; static long jobs, bad;
+        if (chk < 0) chk = getenv("SSBU_TEXDEC_CHECK") != NULL;
+        if (chk) {
+            uint8_t *ref = malloc((size_t)w * h * 4);
+            tex_decode_rgba8(nf, src, w, h, ref);
+            jobs++; bad += memcmp(ref, dst, (size_t)w * h * 4) != 0;
+            free(ref);
+            if (jobs % 100 == 1 || bad == 1) printf("tex_decode: TEST: parallel decode check: %ld jobs, %ld differ from one thread's\n", jobs, bad);
+        }
+    }
+}
 static void tex_upload_memory(Tex *t, const Fmt *f) {
     static uint8_t *tmp;
     static size_t tmp_cap;
@@ -868,7 +929,7 @@ static void tex_upload_memory(Tex *t, const Fmt *f) {
             if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
             tex_deswizzle_level(&L, l, p, tmp);
             if (tf && tf->sw_decode) {
-                tex_decode_rgba8(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
+                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
                 tex_put(t, &sw, l, layer, 0, 0, 0, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin);
             } else tex_put(t, f, l, layer, 0, 0, 0, L.lvl_w[l], L.lvl_h[l], L.lvl_d[l], tmp);
             g_st.tex_bytes += (LONG64)lin;
@@ -5773,7 +5834,7 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
             tex_deswizzle_level(&L, l, p, tmp);
             if (decode) {
                 unsigned bad0 = tex_astc_bad_blocks;
-                tex_decode_rgba8(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
+                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
                 if (tex_astc_bad_blocks != bad0 && getenv("SSBU_ASTC_LOG"))      /* TEST ONLY: which texture and level the rejected blocks came from */
                     printf("tex_decode: TEST: %u rejected in format 0x%x %dx%d level %d of %d layer %d, layout %02x %02x %02x %02x %02x %02x %02x %02x, flags 0x%x\n", tex_astc_bad_blocks - bad0, b->format, b->width, b->height, l, L.levels, layer,
                            b->layout[0], b->layout[1], b->layout[2], b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], (unsigned)b->flags);
