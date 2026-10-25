@@ -309,6 +309,45 @@ Tegra returns transparent black for them (yuzu PR #8910 made its decoders do the
   It skips blocks either side rejects, so it does not test what an invalid block becomes.
 - The exit log has `tex_decode: ASTC blocks decoded on the CPU with HDR endpoints: N; invalid (transparent black): M`;
   `SSBU_ASTC_LOG=1` (test) names each image with invalid blocks (format, size, count, the first non-zero one).
+- **Correction (2026-10-25):** most of those all-zero blocks were not in the game's data; they came from the layout bug
+  below (the padding GOBs of sheared textures). Transparent black stays the right answer for the real ones.
+
+## Block width of packaged textures: medal-screen flicker, gun texture (2026-10-25)
+
+The user's hand run of ded5dc9 showed the fire/ink panel of the Verse medal screen flickering, and Bayonetta's guns with
+blue bands and patchy gold. Both came from one bug: **byte 1 of the packaged texture layout is the block width** (log2
+GOBs) and `tex_layout` ignored it. B3's ASTC 6x6 effect atlases and Bayonetta's gun texture have byte 1 = 4 (layout
+`03 04 00 00 07 00 01 00`): a block of 16 x 8 GOBs, one 64 KB tile.
+
+- **The rule, read off the game's memory** (`SSBU_TEX_RAWDUMP`): a level at least one block wide has its rows padded to a
+  multiple of the block width; a narrower level is not padded at all. 1024x1024 ASTC 6x6: rows of 43 -> 48 GOBs, 22 -> 32,
+  then 11, 6, 3, ... as they are; levels at 0, 589,824, 851,968, 897,024, 909,312, ... (every level of the dumps now
+  decodes with 0 invalid blocks). The layer stride counts the block width too. `tools/astccmp` checks these offsets on
+  every run.
+- **Flicker**, same scripted route, the medal screen (214 frames, right half of the picture, `/tmp/re/gaptest.py`): with
+  byte 1 ignored, 205 frames change and change back (A-B-A); now 14. The change over 1 frame fell from 7.7 to 3.7 (over 8
+  frames: 10.7 and 9.4), so what moves now is the ink's animation. Pictures: `/tmp/shots/flicker_before_after.png` (six
+  frames each, top before), `/tmp/shots/flick5_seq.png`.
+- **Invalid ASTC blocks** in a 400 s run: 92,237 with byte 1 ignored, 2,083 now. Those are all in one building normal map
+  (ASTC 10x10, 1024x1024, plain layout) whose unused areas are all-zero blocks; astc-encoder rejects them too.
+- **Guns**: their colour texture is ASTC 6x6 sRGB 1024x1024 with byte 1 = 4. Before: sheared bands, 2,183 invalid
+  blocks; now clean: `/tmp/shots/gun_albedo_old_vs_new.png`. The texture itself is a saturated purple body with gold
+  filigree and a gold-ringed disc, so the guns stay purple and gold. In the game (Tokyo boss cutscene):
+  `/tmp/shots/guns2_9936_crop.png`, solid purple and gold, no bands. Not reproduced here: the user's Verse 1 close-up
+  (another save point); a look by hand there is the check left.
+- **The decoder on real data**: all 3,010 ASTC images of a 380 s run (`SSBU_ASTC_DUMP`, 11 formats, 4x4 to 10x10, linear
+  and sRGB) compared block by block with astc-encoder (`astccmp --file`): none more than 1 apart, and every block this
+  decoder rejects the reference rejects too.
+- **Speed**: the same scripted 700 s run on this save (it ends in the heavy Tokyo scenes, not the chapter-1 fight) from
+  frame 19800: 44.1 fps before, 35.0 and 42.8 in two runs after. The difference is a few windows with stalls of about
+  160 ms (p99), at different frames in each run and with no texture uploads in them; the median frame time is the
+  same. The chapter-1 fight (59.7 fps) needs the older save and was not run again.
+
+## Compute buffers: a full table (2026-10-25)
+
+The user's later save (Tokyo chapter) stopped with "more than 256 storage buffers written by compute in one batch".
+A full table now lands its least recently used kept buffer and reuses the slot (72 times in 700 s there), and the table
+holds 1,024. The heavy Tokyo scenes run at about 35 fps (not looked into yet).
 
 ## Next blockers (most urgent first)
 
