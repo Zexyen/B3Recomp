@@ -2215,25 +2215,35 @@ static void cb_sync(void) {                        /* guest memory must hold wha
     }
     cb_land(mid);
 }
+/* [b3recomp] the entries made live (state 1) in this batch, in order; an entry that left state 1 since is skipped where the list
+ * is read. buf_ref asks cb_inside / cb_overlap for about 15,000 ranges a frame in Tokyo, and the walk up to g_cb_hi (several
+ * hundred entries once the table holds kept buffers) was the largest part of buf_ref; live entries are a few dozen. Live
+ * entries do not overlap (cb_new lands an overlapping one first), so the order does not change what is found. */
+static int g_live_idx[CB_N], g_live_n;
+static void cb_live_add(CB *c) {
+    if (g_live_n == CB_N) {                        /* full of entries that left state 1: keep the live ones */
+        int n = 0;
+        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) g_live_idx[n++] = g_live_idx[i];
+        g_live_n = n;
+    }
+    g_live_idx[g_live_n++] = (int)(c - g_cb);
+}
 static void cb_batch_end(void) {
     if (!g_cb_live) return;
     g_cb_serial = cmd_submit(NULL, NULL);
-    for (int i = 0; i < CB_N; i++) if (g_cb[i].state == 1) { g_cb[i].state = 2; g_cb[i].kserial = g_cb_serial; g_cb[i].touch = 0; }
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) { c->state = 2; c->kserial = g_cb_serial; c->touch = 0; } }
+    g_live_n = 0;
     g_cb_pending = g_cb_live; g_cb_live = 0; g_live_lo = ~0ull; g_live_hi = 0;
 }
-/* Round "four players" (P3): both searches are made for every buffer a draw names (about 2.5 million entries looked at per
- * frame with four fighters: 1.9 ms of the render thread). g_cb_hi = one past the highest entry cb_new has ever handed out
- * (it never goes down): entries above it have state 0, so stopping there finds exactly what the walk over all 256 found,
- * in the same order. SSBU_VK_CBSCAN=0 = the walk over all 256 as before. */
-static int g_cb_hi, g_cb_scan = -1, g_cb_bound = -1;
+/* g_cb_hi = one past the highest entry cb_new has ever handed out (it never goes down): the walks for kept buffers stop
+ * there. The searches for live ones read g_live_idx (above). */
+static int g_cb_hi, g_cb_bound = -1;
 static CB *cb_inside(uint64_t addr, uint64_t size) {
-    int n = g_cb_scan ? g_cb_hi : CB_N;
-    for (int i = 0; i < n; i++) if (g_cb[i].state == 1 && addr >= g_cb[i].addr && addr + size <= g_cb[i].addr + g_cb[i].size) return &g_cb[i];
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) return c; }
     return NULL;
 }
 static int cb_overlap(uint64_t addr, uint64_t size) {
-    int n = g_cb_scan ? g_cb_hi : CB_N;
-    for (int i = 0; i < n; i++) if (g_cb[i].state == 1 && addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size) return 1;
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) return 1; }
     return 0;
 }
 /* [b3recomp] guest memory the CPU is about to read (indirect draw / dispatch records) holds what compute wrote into it */
@@ -2289,7 +2299,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
             CB *k = &g_cb[i];
             if (k->state != 3 || k->addr != addr || k->size != size) continue;
             if (g_cb_ww && cb_guest_wrote(k)) { cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
-            k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++;
+            k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
             if (addr < g_live_lo) g_live_lo = addr;
             if (addr + size > g_live_hi) g_live_hi = addr + size;
@@ -2348,10 +2358,9 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VKC(vkBindBufferMemory(V.device, c->buf, c->mem.mem, c->mem.off));
         R.cb_made++;
     }
-    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0;
+    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0; cb_live_add(c);
     if (addr < g_live_lo) g_live_lo = addr;
     if (addr + size > g_live_hi) g_live_hi = addr + size;
-    if (g_cb_scan < 0) g_cb_scan = !(getenv("SSBU_VK_CBSCAN") && !atoi(getenv("SSBU_VK_CBSCAN")));
     if ((int)(c - g_cb) + 1 > g_cb_hi) g_cb_hi = (int)(c - g_cb) + 1;
     if (g_cb_merge < 0) g_cb_merge = !(getenv("SSBU_VK_CBMERGE") && !atoi(getenv("SSBU_VK_CBMERGE")));
     if (g_cb_ww < 0) g_cb_ww = !(getenv("SSBU_VK_CBWW") && !atoi(getenv("SSBU_VK_CBWW")));
