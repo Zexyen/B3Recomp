@@ -233,6 +233,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
+    {   /* [b3recomp] SSBU_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
+        const char *e = getenv("SSBU_WINDOW"); int w, h;
+        if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
+    }
     {   /* [b3recomp] cutscene_fps: the game library (game_shim_eh.c) reads SSBU_CUTSCENE_FPS; a set variable (test runs) wins */
         const char *e = getenv("SSBU_CUTSCENE_FPS");
         if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;

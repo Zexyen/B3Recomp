@@ -702,7 +702,15 @@ void nvn_vk_rs_base(int w, int h) {
     printf("nvn_vk_scale: screen size %dx%d (the game's window texture; was %dx%d)\n", w, h, g_rs_bw, g_rs_bh);
     g_rs_bw = w; g_rs_bh = h;
 }
-static int rs_screen_class(int w, int h) { for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1; return 0; }
+/* [b3recomp] B3 draws its scene into 1600x896 targets (1440x816 when its dynamic resolution steps down) with chains of halves
+ * down to 45x25, besides its 1600x900 window: a target of the window's shape (within 1.5 %), 40 x 22 or larger, is of the
+ * screen class too (shadow maps and other square or odd targets are not). Uploaded textures (packaged) are never scaled. */
+static int rs_screen_class(int w, int h) {
+    for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
+    if (w < 40 || h < 22) return 0;
+    double a = (double)w / h, b = (double)g_rs_bw / g_rs_bh;
+    return a > b * 0.985 && a < b * 1.015;
+}
 /* A coordinate of the game's grid on a scaled image (nearest image texel edge, inside 0..max). */
 static int rs_edge(int v, float s, int max) { double r = floor((double)v * s + 0.5); return r < 0 ? 0 : r > max ? max : (int)r; }      /* [Recomps#1] clamped before the conversion (finding 83: rs_rect) */
 /* Session 9: the textures of the game's window (nvn_gl.c win_initialize keeps the list; also noted here at every present).
@@ -713,6 +721,15 @@ static Tex *g_wintex[8];
 static LONG64 g_rs_mixed;
 static int wintex_is(const Tex *t) { if (nvn_front_tex_is_window(t)) return 1; for (int i = 0; i < 8; i++) if (g_wintex[i] == t) return 1; return 0; }
 static void wintex_note(Tex *t) { if (!t || wintex_is(t)) return; for (int i = 0; i < 8; i++) if (!g_wintex[i]) { g_wintex[i] = t; return; } }
+/* [b3recomp] Textures that stay at the game's size: a scaled image the game binds as a storage image (B3: fragment programs
+ * #1693 / #5548 write 800x448, 720x408 and 512x288 targets with SUST at gl_FragCoord in the game's pixels) is dropped and made
+ * again at its size the first time (resolve_image); its contents are written by the shader. */
+static Tex *g_rs_keep[256];
+static int g_rs_nkeep;
+static LONG64 g_rs_demoted;
+static int g_rs_demoting;                          /* vk_drop called by the demotion below (not a finalize) */
+static int rs_keep_has(const Tex *t) { for (int i = 0; i < g_rs_nkeep; i++) if (g_rs_keep[i] == t) return 1; return 0; }
+static void rs_keep_forget(const Tex *t) { for (int i = 0; i < g_rs_nkeep; i++) if (g_rs_keep[i] == t) { g_rs_keep[i] = g_rs_keep[--g_rs_nkeep]; return; } }
 static int rs_ui_native(void) { static int on = -1; if (on < 0) on = getenv("SSBU_VK_UI_NATIVE") && atoi(getenv("SSBU_VK_UI_NATIVE")); return on; }
 static VTex *g_vtex_all;
 static struct { VTex *vt; uint64_t serial; } *g_garbage;
@@ -767,6 +784,7 @@ static void vk_drop(int kind, void *host) {
     if (kind != K_TEX) return;
     Tex *t = host;
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
+    if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [b3recomp] finalized: a later texture at this address starts over */
     VTex *vt = t->vk;
     if (!vt) return;
     t->vk = NULL;
@@ -937,7 +955,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->levels = nvn_front_tex_levels(t); vt->layers = nvn_front_tex_layers(t); vt->samples = b->samples > 1 ? b->samples : 1; vt->is3d = b->target == 2;
         if (b->target == 0 || b->target == 3) { ci.imageType = VK_IMAGE_TYPE_1D; vt->h = 1; if (b->target == 3) vt->layers = b->height > 0 && b->depth <= 1 ? b->height : vt->layers; }
         else ci.imageType = vt->is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-        if (RS_ON && (b->target == 1 || b->target == 5) && vt->layers == 1 && !vt->decode && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) &&
+        if (RS_ON && (b->target == 1 || b->target == 5) && vt->layers == 1 && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
             (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
             vt->w = (int)((float)gw * rs_scale() + 0.5f); vt->h = (int)((float)gh * rs_scale() + 0.5f);
@@ -946,6 +964,15 @@ static VTex *vt_get2(Tex *t, int sync) {
             while ((vt->w >> lv) || (vt->h >> lv)) lv++;
             if (vt->levels > lv) vt->levels = lv;
             g_rs_images++;
+        }
+        {   /* [b3recomp] TEST ONLY: SSBU_VK_RTLOG=1: each distinct 2D image of an attachable format (game size, format, layers, scaled) once */
+            static int on = -1; static uint64_t seen[512]; static int nseen;
+            if (on < 0) on = getenv("SSBU_VK_RTLOG") != NULL;
+            if (on && (b->target == 1 || b->target == 5 || b->target == 4) && !vt->decode && (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))) {
+                uint64_t key = (uint64_t)b->width << 40 | (uint64_t)b->height << 24 | (uint64_t)b->format << 8 | (uint64_t)vt->layers ^ (uint64_t)b->flags << 56, k;
+                for (k = 0; k < (uint64_t)nseen && seen[k] != key; k++) {}
+                if (k == (uint64_t)nseen && nseen < 512) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: image %dx%d format 0x%x target %d layers %d levels %d samples %d flags 0x%x -> %s (frame %lld)\n", b->width, b->height, b->format, b->target, vt->layers, vt->levels, vt->samples, (unsigned)b->flags, vt->rs ? "scaled" : "game size", nvn_front_frame_next()); }
+            }
         }
         ci.format = vt->fmt; ci.extent.width = (uint32_t)vt->w; ci.extent.height = (uint32_t)vt->h; ci.extent.depth = (uint32_t)(vt->is3d ? vt->d : 1);
         ci.mipLevels = (uint32_t)vt->levels; ci.arrayLayers = (uint32_t)(vt->is3d ? 1 : vt->layers); ci.samples = (VkSampleCountFlagBits)vt->samples; ci.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -1679,6 +1706,13 @@ static void resolve_sampler(int s, VStage *v, int i) {
             if (n < 3) printf("nvn_vk: (detail of the next line) frame %lld, program #%d, texture format 0x%x, %d x %d x %d, %d levels, draws so far with a dummy for a view-kind mismatch: %lld\n", (long long)nvn_front_frame_next(), R.prog[s] ? R.prog[s]->serial : -1, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), (long long)R.dummy_kind);
             if (n++ < 20) printf("nvn_vk: texture unit %u of the %s stage: the shader declares view kind %d, the texture is kind %d (target %d, %d samples): a dummy is bound\n", u, s ? "fragment" : "vertex", dim, have, e.target, vt->samples); }
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[2] += x - rt0; rt0 = x; }
+        if (s == 5 && vt->rs) {   /* [b3recomp] TEST ONLY: SSBU_VK_RTLOG=1: a compute stage samples a scaled image (once per program and size) */
+            static int on = -1; static uint64_t seen[1024]; static int nseen;
+            if (on < 0) on = getenv("SSBU_VK_RTLOG") != NULL;
+            uint64_t key = (uint64_t)(R.prog[s] ? R.prog[s]->serial : 0) << 32 ^ (uint64_t)t->b.width << 16 ^ (uint64_t)t->b.height, q;
+            for (q = 0; on && q < (uint64_t)nseen && seen[q] != key; q++) {}
+            if (on && q == (uint64_t)nseen && nseen < 1024) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: stage 5 program #%d samples a SCALED %dx%d format 0x%x (unit %u)\n", R.prog[s] ? R.prog[s]->serial : -1, t->b.width, t->b.height, t->b.format, u); }
+        }
         if (r & 2) g_dtex[g_ndtex].smp = sampler_get(&sp);
         if (drawlog_on()) printf("DLT s%d u%u tex=%p fmt=0x%x %dx%dx%d lv=%d tgt=%d view(fmt=0x%x lvl0=%d nlvl=%d swz=%d%d%d%d) dim=%d have=%d ok=%d rs=%d smp=%d min=%u mag=%u wrap=%u,%u,%u lod=%g..%g bias=%g aniso=%g cmode=%u border=%g,%g,%g,%g\n",
                                s, u, (void *)t, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), t->b.target, e.format, e.lvl0, e.nlvl, e.swz[0], e.swz[1], e.swz[2], e.swz[3], dim, have, ok, vt->rs,
@@ -2633,6 +2667,11 @@ static int resolve_image(int s, VStage *v, int k) {
     memset(&view, 0, sizeof view);
     if (!(nvn_front_handle(R.tpool, NULL, R.nvn_img[s][k], &t, &view, NULL) & 1)) { nvn_vk_missing("a storage image whose handle names no texture (nvnCommandBufferBindImage)"); return 0; }
     VTex *vt = vt_get(t);
+    if (vt && vt->rs && g_rs_nkeep < 256) {        /* [b3recomp] a storage image stays at the game's size (g_rs_keep) */
+        g_rs_keep[g_rs_nkeep++] = t; g_rs_demoted++;
+        g_rs_demoting = 1; vk_drop(K_TEX, t); g_rs_demoting = 0;
+        vt = vt_get(t);
+    }
     int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
     if (!vt || !vt->storage || dim < 0) { nvn_vk_missing("a storage image of a format, kind or sample count that cannot be a Vulkan storage image (or a buffer image)"); return 0; }
     EView e;
@@ -2641,6 +2680,13 @@ static int resolve_image(int s, VStage *v, int k) {
     if (dim == DIM_1D || dim == DIM_2D || dim == DIM_3D) e.nlay = 1;
     VkFormat qf = v->img_fmt[k] ? img_vkfmt(v->img_fmt[k], &qb) : VK_FORMAT_UNDEFINED;
     if (qf && qb != vt->bpb) { nvn_vk_missing("a typed storage image access whose texel size differs from the texture's"); return 0; }
+    {   /* [b3recomp] TEST ONLY: SSBU_VK_RTLOG=1: the storage images of each stage, once per (program, image size) */
+        static int on = -1; static uint64_t seen[1024]; static int nseen;
+        if (on < 0) on = getenv("SSBU_VK_RTLOG") != NULL;
+        uint64_t key = (uint64_t)(R.prog[s] ? R.prog[s]->serial : 0) << 32 ^ (uint64_t)t->b.width << 16 ^ (uint64_t)t->b.height ^ (uint64_t)s << 60, q;
+        for (q = 0; on && q < (uint64_t)nseen && seen[q] != key; q++) {}
+        if (on && q == (uint64_t)nseen && nseen < 1024) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: stage %d program #%d storage image %d: %dx%d format 0x%x -> %s\n", s, R.prog[s] ? R.prog[s]->serial : -1, k, t->b.width, t->b.height, t->b.format, vt->rs ? "SCALED" : "game size"); }
+    }
     VkImageView iv = vt_view(vt, &e, dim, qf ? 2 + (int)qf : 0);
     vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL);
     g_dtex[g_ndtex].view = iv; g_dtex[g_ndtex].smp = VK_NULL_HANDLE; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_GENERAL; g_ndtex++;
@@ -5089,6 +5135,7 @@ static void vkd_shutdown(void) {
     }
     frstat_report();
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: SSBU_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
+    if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size because they are storage images (g_rs_keep)\n", (long long)g_rs_demoted);      /* [b3recomp] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
     if (RS_ON) printf("nvn_vk_scale: the scaled images made took %.0f MB of device memory in all\n", (double)g_rs_bytes / 1048576.0);      /* PR #8 review */
