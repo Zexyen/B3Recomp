@@ -3662,6 +3662,13 @@ static void pf_frame_mark(LONG64 frame) {
     if (!freq) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); freq = f.QuadPart; }
     if (last) g_pf_ft[frame % 300] = (double)(now - last) * 1000.0 / (double)freq;
     if (last && g_hitch_ms) hitch_frame((long long)frame, (double)(now - last) * 1000.0 / (double)freq, g_frame_dispatch > 0);
+    {   /* [b3recomp] TEST ONLY: SSBU_FRAMETIMES=<file>: a line per frame "<frame> <ms since the previous one> <present interval the game asked for>" */
+        static FILE *ftf; static int fto;
+        if (!fto) { const char *e = getenv("SSBU_FRAMETIMES"); fto = 1; if (e) ftf = fopen(e, "w"); }
+        int display_interval(void);
+        if (ftf && last) fprintf(ftf, "%lld %.3f %d\n", (long long)frame, (double)(now - last) * 1000.0 / (double)freq, display_interval());
+        if (ftf && frame % 300 == 0) fflush(ftf);
+    }
     last = now;
     if (g_joblog_frame > 0 && frame == g_joblog_frame + g_joblog_frames) joblog_print();      /* SSBU_JOBLOG */
     if (frame % 300) return;
@@ -5509,7 +5516,7 @@ static void wb_get_num_textures(Ctx *c) { RET(rd32(A0) & 0xff); }
 static void wb_get_num_active(Ctx *c) { RET(rd8(A0 + 5) ? rd8(A0 + 5) : (rd32(A0) & 0xff)); }
 static void wb_get_texture(Ctx *c) { RET((uint32_t)A1 < 6 ? rd64(A0 + 8 + (A1 & 7) * 8) : 0); }
 static void win_finalize(Ctx *c) { gl_barrier(); Window *w = hobj(A0, K_WIN); if (w) { wr32(A0 + 8, 0); w->count = 0; } nvn_label_drop(A0); }
-static void win_set_interval(Ctx *c) { Window *w = hobj(A0, K_WIN); if (w) { if (w->interval != (int)A1) printf("nvn: nvnWindowSetPresentInterval %d (was %d)\n", (int)A1, w->interval); w->interval = (int)A1; display_set_interval((int)A1); } }   /* [Recomps#1] logged */
+static void win_set_interval(Ctx *c) { Window *w = hobj(A0, K_WIN); if (w) { if (w->interval != (int)A1) printf("nvn: nvnWindowSetPresentInterval %d (was %d), frame %lld, from %llx\n", (int)A1, w->interval, nvn_front_frame_next(), (unsigned long long)c->x[30]); w->interval = (int)A1; display_set_interval((int)A1); } }   /* [Recomps#1] logged */
 static void win_get_interval(Ctx *c) { Window *w = hobj(A0, K_WIN); RET(w ? w->interval : 1); }
 static void win_get_native(Ctx *c) { Window *w = hobj(A0, K_WIN); RET(w ? w->native : 0); }
 static void win_get_num_textures(Ctx *c) { Window *w = hobj(A0, K_WIN); RET(w ? w->count : 0); }
