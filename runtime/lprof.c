@@ -3,7 +3,7 @@
  * A thread of its own sends a real-time signal to each thread of the process in turn (about 4,000 samples a second in all); the
  * handler stores the interrupted PC and a short host call chain (backtrace(); it ends where unwind tables end, e.g. in
  * lifted code). The file lists per sample: thread id, the thread's guest name or "-", the PCs innermost first; then the
- * mappings (/proc/self/maps), so scripts/lprof_report.py can turn addresses into function names (nm of game_native and
+ * presented frame ("@<frame>", last), and the mappings (/proc/self/maps), so scripts/lprof_report.py can turn addresses into function names (nm of b3-game and
  * game.so; lifted functions are f_<guest address>). Included by boot.c (Linux only), like prof15.c. */
 #include <execinfo.h>
 #include <signal.h>
@@ -16,7 +16,8 @@
 #define LP_SIG (SIGRTMIN + 2)                    /* not SIGPROF: SDL3 threads (and the threads they start) block SIGPROF / SIGALRM */
 #define LP_DEPTH 12
 #define LP_MAX (1 << 22)                        /* 4M samples (about 420 MB): 150 s of 50 threads */
-typedef struct { int tid, n; void *pc[LP_DEPTH]; } LpSample;
+typedef struct { int tid, n, frame; void *pc[LP_DEPTH]; } LpSample;
+extern volatile LONG64 g_prof15_frame;            /* display.c: presented frames */
 static LpSample *g_lp;
 static volatile long g_lp_n;
 static volatile int g_lp_ack;
@@ -28,7 +29,7 @@ static void lp_signal(int sig, siginfo_t *si, void *ucv) {
         LpSample *s = &g_lp[i];
         void *tmp[LP_DEPTH + 3];
         int k = backtrace(tmp, LP_DEPTH + 3), j = 0;
-        s->tid = (int)syscall(SYS_gettid);
+        s->tid = (int)syscall(SYS_gettid); s->frame = (int)g_prof15_frame;
         s->pc[j++] = (void *)((ucontext_t *)ucv)->uc_mcontext.gregs[REG_RIP];
         for (int m = 2; m < k && j < LP_DEPTH; m++) s->pc[j++] = tmp[m];      /* 0 = this handler, 1 = the signal return trampoline */
         s->n = j;
@@ -86,7 +87,7 @@ static DWORD WINAPI lp_thread(LPVOID arg) {
         for (char *q = nb; *q; q++) if (*q == ' ') *q = '_';
         fprintf(f, "S %d %s", g_lp[i].tid, nb);
         for (int j = 0; j < g_lp[i].n; j++) fprintf(f, " %llx", (unsigned long long)(uintptr_t)g_lp[i].pc[j]);
-        fputc('\n', f);
+        fprintf(f, " @%d\n", g_lp[i].frame);
     }
     FILE *m = fopen("/proc/self/maps", "r");
     char line[600];

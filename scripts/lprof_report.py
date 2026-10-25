@@ -11,14 +11,16 @@ import sys
 path = sys.argv[1]
 nthr = int(sys.argv[2]) if len(sys.argv) > 2 else 6
 nfn = int(sys.argv[3]) if len(sys.argv) > 3 else 25
-samples, maps = [], []
+samples, maps, frames = [], [], []
 for line in open(path, errors='replace'):
     if line.startswith('S '):
         p = line.split()
+        frame = int(p.pop()[1:]) if p[-1].startswith('@') else -1       # the presented frame of the sample (newer files)
         k = len(p)
         while k > 3 and all(ch in '0123456789abcdef' for ch in p[k - 1]):
             k -= 1
         samples.append((int(p[1]), '_'.join(p[2:k]), [int(x, 16) for x in p[k:]]))      # older files: names with spaces
+        frames.append(frame)
     elif line.startswith('M '):
         p = line[2:].split()
         if len(p) >= 6 and p[5].startswith('/'):
