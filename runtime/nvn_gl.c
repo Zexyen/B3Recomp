@@ -3723,11 +3723,11 @@ static void pf_frame_mark(LONG64 frame) {
     if (!freq) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); freq = f.QuadPart; }
     if (last) g_pf_ft[frame % 300] = (double)(now - last) * 1000.0 / (double)freq;
     if (last && g_hitch_ms) hitch_frame((long long)frame, (double)(now - last) * 1000.0 / (double)freq, g_frame_dispatch > 0);
-    {   /* [b3recomp] TEST ONLY: SSBU_FRAMETIMES=<file>: a line per frame "<frame> <ms since the previous one> <present interval the game asked for>" */
+    {   /* [b3recomp] TEST ONLY: SSBU_FRAMETIMES=<file>: a line per frame "<frame> <ms since the previous one> <present interval the game asked for> <wall clock s>" */
         static FILE *ftf; static int fto;
         if (!fto) { const char *e = getenv("SSBU_FRAMETIMES"); fto = 1; if (e) ftf = fopen(e, "w"); }
         int display_interval(void);
-        if (ftf && last) fprintf(ftf, "%lld %.3f %d\n", (long long)frame, (double)(now - last) * 1000.0 / (double)freq, display_interval());
+        if (ftf && last) { struct timespec ts; timespec_get(&ts, TIME_UTC); fprintf(ftf, "%lld %.3f %d %.3f\n", (long long)frame, (double)(now - last) * 1000.0 / (double)freq, display_interval(), (double)ts.tv_sec + ts.tv_nsec / 1e9); }
         if (ftf && frame % 300 == 0) fflush(ftf);
     }
     last = now;

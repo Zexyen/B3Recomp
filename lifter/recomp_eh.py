@@ -211,7 +211,9 @@ def lift_function(env, entry):
 # stays (indirect calls, the check SSBU_HOSTFN_CHECK=1). 0x7100b382c0: splits a 32-bit value into its even and odd bits
 # with three bit reversals and a 32-step loop; a tree walk of B3 calls it so often that the main thread spent 115-130 ms a
 # frame in it in trains of frames in Tokyo.
-HOST_OVERRIDES = {0x7100b382c0: 'morton_split32'}
+# 0x7100d02de0: the main loop's frame-rate mode setter (one caller, 0x7100670c4c; 0 = 60 fps, 1 = 30, 2 = 15): with
+# cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame clock, whose fixed step is then halved (real time).
+HOST_OVERRIDES = {0x7100b382c0: 'morton_split32', 0x7100d02de0: 'fps_mode_set', 0x7100c1f600: 'frame_clock'}
 
 _worker_env = None
 

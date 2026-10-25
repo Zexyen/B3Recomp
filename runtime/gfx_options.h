@@ -23,6 +23,8 @@ typedef struct {
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */
     float hdr_paper_white;  /* [Recomps#1] hdr_paper_white: the game's white in nits (80 .. 1000); 0 = auto: Windows' SDR content brightness */
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
+    int cutscene_fps;       /* [b3recomp] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
+                             * env SSBU_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */

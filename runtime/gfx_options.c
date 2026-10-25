@@ -131,6 +131,11 @@ static const char *const k_default_ini =
 ";   auto still show each frame at once above 60 (no tearing: mailbox, else FIFO, which shows at most one frame per refresh).\r\n"
 "frame_rate = 60\r\n"
 "\r\n"
+"; cutscene_fps = 30 | 60\r\n"
+";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
+";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
+"cutscene_fps = 30\r\n"
+"\r\n"
 /* [Recomps#1] finding 147 */
 "; hdr = auto | off | on      (Vulkan, Windows)\r\n"
 ";   auto: while Windows HDR is on for the monitor the game is on, the picture goes out as HDR (the game's colours at\r\n"
@@ -223,10 +228,18 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
+        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [b3recomp] */
         else unknown++;
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
+    {   /* [b3recomp] cutscene_fps: the game library (game_shim_eh.c) reads SSBU_CUTSCENE_FPS; a set variable (test runs) wins */
+        const char *e = getenv("SSBU_CUTSCENE_FPS");
+        if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
+        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("SSBU_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
+        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "SSBU_CUTSCENE_FPS" : "graphics.ini",
+               o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
+    }
     /* [Recomps#1] frame_rate above 60: switch on the lifted code's frame-rate patch (scripts/fps_patch.py), which reads
      * RECOMPS_UNCAP / RECOMPS_UNCAP_FPS with getenv the first time the game's clock runs (after this, at the first frame).
      * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */

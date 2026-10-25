@@ -19,9 +19,7 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 
 #include <stdio.h>
 #include <stdlib.h>
-#ifndef _WIN32
 #include <time.h>
-#endif
 /* [b3recomp] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
@@ -72,4 +70,40 @@ void h_morton_split32(Ctx *c) {
     uint64_t a = c->x[1], b = c->x[2];
     if (a < b + 4 && b < a + 4) { f_7100b382c0(c); return; }
     morton_split32(c);
+}
+
+/* f_7100d02de0(mode w0): the game's main loop (0x7100670b80) asks for its frame-rate mode each frame from its own state
+ * flags (1 = 30 fps on the title, in menus and cutscenes; 0 = 60; 2 = 15); the mode is applied at 0x7100cfd9b8 (present
+ * interval 1 / 2 / 4) and read back by 0x7100670c08 and 0x7100cb4f54 (frames -> seconds at 60 / 30 / 15). With
+ * cutscene_fps = 60 (graphics.ini, SSBU_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
+ * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
+void f_7100d02de0(Ctx *c);
+static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
+void h_fps_mode_set(Ctx *c) {
+    static int sixty = -1, last = -1;
+    if (sixty < 0) { const char *e = getenv("SSBU_CUTSCENE_FPS"); sixty = e && atoi(e) == 60; }
+    int want = (int)(uint32_t)c->x[0];
+    if (want != last) {
+        struct timespec ts; timespec_get(&ts, TIME_UTC);
+        printf("fps mode: the game asks for mode %d (%s) at %.3f s (wall clock; SSBU_FRAMETIMES has it per frame)%s\n", want, want == 0 ? "60 fps" : want == 1 ? "30 fps" : want == 2 ? "15 fps" : "?",
+               (double)ts.tv_sec + ts.tv_nsec / 1e9, sixty && want == 1 ? ": runs at 60 (cutscene_fps = 60)" : "");
+        fflush(stdout);
+        last = want;
+    }
+    g_fps_forced = sixty && want == 1;
+    if (g_fps_forced) c->x[0] = 0;
+    f_7100d02de0(c);
+}
+/* f_7100c1f600(clock x0, step s0, measured w1): the main loop's per-frame clock, called just before the mode is chosen. It
+ * keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a ratio of the measured frame time, with w1 = 0 (the title,
+ * menus and cutscenes: the game's state flags 28 and 30) s0 as it is, 1.0 a frame, in those scenes a 30 Hz frame (a
+ * cutscene advances one step per frame: 2,758 frames whether shown at 30 or 60). While such a scene runs at 60
+ * (g_fps_forced, set by the frame before) that step is halved: a cutscene then lasts 92.4 s at 60 against 92.1 s at 30
+ * (the same one; at 60 with the whole step, 46.6 s). A measured step (w1 = 1) follows the real frame time already. */
+void f_7100c1f600(Ctx *c);
+void h_frame_clock(Ctx *c) {
+    uint64_t obj = c->x[0];
+    int fixed = (uint32_t)c->x[1] == 0;
+    f_7100c1f600(c);
+    if (g_fps_forced && fixed) { float v; memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); v *= 0.5f; memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4); }
 }
