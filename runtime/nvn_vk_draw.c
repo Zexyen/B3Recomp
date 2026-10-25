@@ -352,6 +352,7 @@ static void oq_slot_reset(int si) {               /* cmd_begin, after the slot's
     if (g_oq_pool && g_oq_used[si]) vkCmdResetQueryPool(R.slot[si].cmd, g_oq_pool, (uint32_t)(si * OQ_MAX), OQ_MAX);
     g_oq_used[si] = 0; g_oq_nev[si] = 0;
 }
+static int framelog_on(void);                      /* [b3recomp] TEST ONLY: SSBU_VK_FRAMELOG (below) */
 static int g_dump_on;                            /* [Recomps#1] TEST ONLY: SSBU_VK_DUMPTEX (dump_pass_end, defined above save_bmp_vk) */
 static void dump_pass_end(void);
 static void dump_pass_begin(int w, int h);
@@ -992,6 +993,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         cmd_begin();
         if (!nvn_front_tex_read(t, vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
         R.uploads++;
+        if (framelog_on()) printf("FRU f%lld upload %p fmt 0x%x %dx%d mem %p draw %lld\n", nvn_front_frame_next(), (void *)t, t->b.format, t->b.width, t->b.height, (void *)t->mem, (long long)R.frame_draws);      /* TEST ONLY: SSBU_VK_FRAMELOG */
     }
     if (clear_last) {                              /* TEST ONLY (SSBU_VK_CLEARLAST, above): the creation clear lands after the upload */
         VkImageSubresourceRange sr = {vt->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
@@ -1640,6 +1642,12 @@ const LONG64 *nvn_front_ww_times(void);            /* nvn_gl.c */
 static LONG64 g_ptr[4], g_ptr_n;                   /* its split of resolve_sampler: handle, image, view + layout, sampler; samplers resolved */
 static int shlog_on(void);                         /* [Recomps#1] TEST ONLY: SSBU_VK_SHLOG (above exec) */
 static int drawlog_on(void);                       /* [Recomps#1] TEST ONLY: SSBU_VK_DRAWLOG (below) */
+static int framelog_on(void) {                     /* [b3recomp] TEST ONLY: SSBU_VK_FRAMELOG=<first>,<last>: texture uploads of those frames (FRU lines) */
+    static long long a = -2, b;
+    if (a == -2) { const char *e = getenv("SSBU_VK_FRAMELOG"); a = -1; if (e) { a = atoll(e); b = strchr(e, ',') ? atoll(strchr(e, ',') + 1) : a; } }
+    long long f = nvn_front_frame_next();
+    return a >= 0 && f >= a && f <= b;
+}
 /* The image view and sampler of one declared sampler of stage s. May end the pass (upload, layout change). */
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;

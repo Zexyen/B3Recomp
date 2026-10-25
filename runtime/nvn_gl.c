@@ -5751,9 +5751,25 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
             size_t lin = L.lvl_linear_size[l], need = lin + (decode ? (size_t)L.lvl_w[l] * L.lvl_h[l] * 4 : 0);
             if (!b->packaged && t->limit && p + L.lvl_size[l] > t->limit) return 0;
             if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
+            {   /* TEST ONLY: SSBU_TEX_RAWDUMP=<dir> (with SSBU_ASTC_DUMP_ONLY=<format hex>): level 0 as it is in pool memory, and its layout */
+                static const char *rd = (const char *)1; static int only = -2;
+                if (rd == (const char *)1) { rd = getenv("SSBU_TEX_RAWDUMP"); only = getenv("SSBU_ASTC_DUMP_ONLY") ? (int)strtol(getenv("SSBU_ASTC_DUMP_ONLY"), NULL, 16) : -1; }
+                if (rd && l == 0 && layer == 0 && (only < 0 || only == b->format) && L.lvl_w[0] >= 256) {
+                    char path[600]; FILE *fp;
+                    snprintf(path, sizeof path, "%s/%02x_%dx%d_lv%d_bh%d_lay%02x%02x%02x%02x%02x%02x%02x%02x_%p.raw", rd, b->format, b->width, b->height, L.levels, L.lvl_bh_log2[0],
+                             b->layout[0], b->layout[1], b->layout[2], b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], (void *)t);
+                    size_t n = L.lvl_size[0] * 2;
+                    if (t->limit && p + n > t->limit) n = (size_t)(t->limit - p);
+                    if ((fp = fopen(path, "wb"))) { fwrite(p, 1, n, fp); fclose(fp); }
+                }
+            }
             tex_deswizzle_level(&L, l, p, tmp);
             if (decode) {
+                unsigned bad0 = tex_astc_bad_blocks;
                 tex_decode_rgba8(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
+                if (tex_astc_bad_blocks != bad0 && getenv("SSBU_ASTC_LOG"))      /* TEST ONLY: which texture and level the rejected blocks came from */
+                    printf("tex_decode: TEST: %u rejected in format 0x%x %dx%d level %d of %d layer %d, layout %02x %02x %02x %02x %02x %02x %02x %02x, flags 0x%x\n", tex_astc_bad_blocks - bad0, b->format, b->width, b->height, l, L.levels, layer,
+                           b->layout[0], b->layout[1], b->layout[2], b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], (unsigned)b->flags);
                 put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin, (size_t)L.lvl_w[l] * L.lvl_h[l] * 4, 1, 0);
             } else put(t, l, layer, L.lvl_w[l], L.lvl_h[l], L.lvl_d[l], tmp, lin, 0, 0);
             g_st.tex_bytes += (LONG64)lin;

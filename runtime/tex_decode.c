@@ -1215,6 +1215,27 @@ int tex_decode_rgba8(int nf, const void *src, int w, int h, uint8_t *dst) {
                 for (y = 0; y < ch; y++) memcpy(dst + (size_t)(y0 + y) * pitch + x0 * 4, tmp + y * f->bw * 4, (size_t)cw * 4);
             }
         }
+    {   /* TEST ONLY: SSBU_ASTC_DUMP=<dir>: every ASTC image of 256 texels or more decoded here, once per content: <dir>/<format>_<w>x<h>_<hash>.astc
+         * (the blocks, rows of blocks, 16 bytes each) and .pam (what this decoder made, RGBA 8-bit) for tools/astccmp.cpp --file */
+        static const char *ddir = (const char *)1;
+        if (ddir == (const char *)1) ddir = getenv("SSBU_ASTC_DUMP");
+        static int donly = -2;
+        if (donly == -2) donly = getenv("SSBU_ASTC_DUMP_ONLY") ? (int)strtol(getenv("SSBU_ASTC_DUMP_ONLY"), NULL, 16) : -1;      /* one NVN format (hex) */
+        if (ddir && f->codec == TEX_CODEC_ASTC && (w >= 256 || h >= 256) && (donly < 0 || donly == nf)) {
+            uint64_t hsh = 1469598103934665603ull;
+            size_t nb = (size_t)wb * hb * 16;
+            for (size_t i = 0; i < nb; i++) hsh = (hsh ^ ((const uint8_t *)src)[i]) * 1099511628211ull;
+            char path[600];
+            snprintf(path, sizeof path, "%s/%02x_%dx%d_%016llx.astc", ddir, nf, w, h, (unsigned long long)hsh);
+            FILE *fp = fopen(path, "rb");
+            if (fp) fclose(fp);
+            else if ((fp = fopen(path, "wb"))) {
+                fwrite(src, 1, nb, fp); fclose(fp);
+                snprintf(path, sizeof path, "%s/%02x_%dx%d_%016llx.pam", ddir, nf, w, h, (unsigned long long)hsh);
+                if ((fp = fopen(path, "wb"))) { fprintf(fp, "P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", w, h); fwrite(dst, 1, (size_t)w * h * 4, fp); fclose(fp); }
+            }
+        }
+    }
     if (alog && first_bad && nalog++ < 60) {
         printf("tex_decode: TEST: %s %dx%d (%dx%d blocks): %u rejected, %d of them all zero, block indices %d..%d; the first non-zero one: ", f->name, w, h, wb, hb, tex_astc_bad_blocks - bad0, nzero, first_idx, last_idx);
         for (int i = 0; first_nonzero && i < 16; i++) printf("%02x", first_nonzero[i]);
