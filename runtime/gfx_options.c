@@ -180,7 +180,8 @@ static void opt_path(char *out) {
         return;
     }
     GetModuleFileNameA(NULL, exe, MAX_PATH);
-    char *s = strrchr(exe, '\\');
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [b3recomp] '/' on Linux: build/b3-game/../config was not a folder, the file was never read */
+    if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
