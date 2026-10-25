@@ -288,6 +288,28 @@ the control stages' program headers say 3 output vertices and 6 patch attributes
   exit; `SSBU_VK_TESS_ALT=1` leaves the tessellated draws out on odd frames, `=2` draws them magenta there (with
   `SSBU_SHOT_BURST=<period>,2` for pairs of pictures).
 
+## Magenta textures: invalid ASTC blocks (2026-10-24)
+
+The user's hand run showed bright magenta on clothes (Luka's shirt), Bayonetta's guns, heels and accessories, the purple
+light pillar and the Verse results' ink splashes. The GPU here (RADV, RX 9070 XT) has no ASTC, so `tex_decode.c` decodes B3's
+ASTC textures on the CPU. It gave every **invalid** block the specification's error colour, opaque magenta. B3's chapter 1
+has about 105,000 of them (`SSBU_ASTC_LOG=1`): **all-zero blocks** (a reserved block mode), in ASTC 6x6 textures that
+are bound in many places (the same counts, image after image: 7 % of the 1024x1024 level, whole 32x32 and 2x2 levels).
+Tegra returns transparent black for them (yuzu PR #8910 made its decoders do the same), so nothing shows on the console.
+
+- **Invalid blocks are transparent black now.** Same route and scene, before / after: `/tmp/shots/astc_before_27000.png`
+  (Verse 1 results: magenta ink, shirt, guns), `/tmp/shots/astc_after_25500.png` (results: white / black ink),
+  `/tmp/shots/astc_after_chars.png` (Bayonetta close and in the fight: gold trim, no magenta). Chapter 1, 1,100 s without
+  `SSBU_VK_MISSING=warn`: no stop, 0 skipped draws, fight 59.7 fps (min window 56.5).
+- Found on the way: **HDR colour endpoint modes** (2, 3, 7, 11, 14, 15) also became magenta; Tegra decodes them in these
+  formats (full profile). Now decoded (LNS -> FP16, clamped into the 8-bit images, per partition and channel). B3's
+  chapter 1 has none (the counter says 0), so this did not cause what the user saw.
+- `tools/astccmp.cpp` compares the decoder with ARM's astc-encoder (fetched separately) on random blocks of all 14
+  footprints: 72,524 valid blocks (22,840 with HDR endpoints), none more than 1 apart (the decoder before: 22,828 apart).
+  It skips blocks either side rejects, so it does not test what an invalid block becomes.
+- The exit log has `tex_decode: ASTC blocks decoded on the CPU with HDR endpoints: N; invalid (transparent black): M`;
+  `SSBU_ASTC_LOG=1` (test) names each image with invalid blocks (format, size, count, the first non-zero one).
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.

@@ -5067,5 +5067,6 @@ static void vkd_shutdown(void) {
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
     printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);
+    { extern unsigned tex_astc_hdr_blocks, tex_astc_bad_blocks; printf("tex_decode: ASTC blocks decoded on the CPU with HDR endpoints: %u; invalid (transparent black): %u\n", tex_astc_hdr_blocks, tex_astc_bad_blocks); }
     printf("nvn_vk: drawing part shut down: %lld images, %lld pipelines, %lld shader modules, %d samplers destroyed; %lld bytes of block space lost to fragmentation records\n", (long long)R.images, (long long)R.pipelines, (long long)R.modules, g_nsmp, (long long)g_mem_leak);
 }

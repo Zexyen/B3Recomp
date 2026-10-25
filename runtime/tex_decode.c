@@ -832,10 +832,103 @@ static void bit_transfer_signed(int *a, int *b) {
 }
 static void blue_contract(int *e) { e[0] = (e[0] + e[2]) >> 1; e[1] = (e[1] + e[2]) >> 1; }
 
-/* LDR colour endpoint modes -> e0[4], e1[4] in 0..255. Returns 0, or -1 for HDR modes. */
+/* [b3recomp] HDR colour endpoint modes (Khronos Data Format Specification, "HDR endpoint decoding"): 12-bit values in the
+ * logarithmic (LNS) domain. Tegra's hardware decodes them in the LDR formats too (full profile); this decoder used to give
+ * such blocks the error colour. (B3's chapter 1 has none: its magenta came from invalid blocks, see "bad:" below.) Checked
+ * against ARM's astc-encoder on random blocks: tools/astccmp.cpp. */
+static int clamp12(int v) { return v < 0 ? 0 : v > 0xFFF ? 0xFFF : v; }
+static void hdr_rgbo(const int *v, int *e0, int *e1) {          /* mode 7: base + scale */
+    int modeval = ((v[0] & 0xC0) >> 6) | ((v[1] & 0x80) >> 5) | ((v[2] & 0x80) >> 4), majcomp, mode;
+    if ((modeval & 0xC) != 0xC) { majcomp = modeval >> 2; mode = modeval & 3; }
+    else if (modeval != 0xF) { majcomp = modeval & 3; mode = 4; }
+    else { majcomp = 0; mode = 5; }
+    int red = v[0] & 0x3F, green = v[1] & 0x1F, blue = v[2] & 0x1F, scale = v[3] & 0x1F;
+    int x0 = (v[1] >> 6) & 1, x1 = (v[1] >> 5) & 1, x2 = (v[2] >> 6) & 1, x3 = (v[2] >> 5) & 1, x4 = (v[3] >> 7) & 1, x5 = (v[3] >> 6) & 1, x6 = (v[3] >> 5) & 1, ohm = 1 << mode, t;
+    if (ohm & 0x30) green |= x0 << 6;
+    if (ohm & 0x3A) green |= x1 << 5;
+    if (ohm & 0x30) blue |= x2 << 6;
+    if (ohm & 0x3A) blue |= x3 << 5;
+    if (ohm & 0x3D) scale |= x6 << 5;
+    if (ohm & 0x2D) scale |= x5 << 6;
+    if (ohm & 0x04) scale |= x4 << 7;
+    if (ohm & 0x3B) red |= x4 << 6;
+    if (ohm & 0x04) red |= x3 << 6;
+    if (ohm & 0x10) red |= x5 << 7;
+    if (ohm & 0x0F) red |= x2 << 7;
+    if (ohm & 0x05) red |= x1 << 8;
+    if (ohm & 0x0A) red |= x0 << 8;
+    if (ohm & 0x05) red |= x0 << 9;
+    if (ohm & 0x02) red |= x6 << 9;
+    if (ohm & 0x01) red |= x3 << 10;
+    if (ohm & 0x02) red |= x5 << 10;
+    { static const int sh[6] = {1, 1, 2, 3, 4, 5}; red <<= sh[mode]; green <<= sh[mode]; blue <<= sh[mode]; scale <<= sh[mode]; }
+    if (mode != 5) { green = red - green; blue = red - blue; }
+    if (majcomp == 1) { t = red; red = green; green = t; } else if (majcomp == 2) { t = red; red = blue; blue = t; }
+    e1[0] = clamp12(red); e1[1] = clamp12(green); e1[2] = clamp12(blue);
+    e0[0] = clamp12(red - scale); e0[1] = clamp12(green - scale); e0[2] = clamp12(blue - scale);
+}
+static void hdr_rgb(const int *v, int *e0, int *e1) {           /* mode 11 (and the RGB of 14, 15) */
+    int modeval = ((v[1] & 0x80) >> 7) | ((v[2] & 0x80) >> 6) | ((v[3] & 0x80) >> 5), majcomp = ((v[4] & 0x80) >> 7) | ((v[5] & 0x80) >> 6), t, i;
+    if (majcomp == 3) {
+        e0[0] = v[0] << 4; e0[1] = v[2] << 4; e0[2] = (v[4] & 0x7F) << 5;
+        e1[0] = v[1] << 4; e1[1] = v[3] << 4; e1[2] = (v[5] & 0x7F) << 5;
+        return;
+    }
+    static const int dbits[8] = {7, 6, 7, 6, 5, 6, 5, 6};
+    int a = v[0] | ((v[1] & 0x40) << 2), b0 = v[2] & 0x3F, b1 = v[3] & 0x3F, c = v[1] & 0x3F, d0 = v[4] & 0x1F, d1 = v[5] & 0x1F;
+    int x0 = (v[2] >> 6) & 1, x1 = (v[3] >> 6) & 1, x2 = (v[4] >> 6) & 1, x3 = (v[5] >> 6) & 1, x4 = (v[4] >> 5) & 1, x5 = (v[5] >> 5) & 1, ohm = 1 << modeval;
+    if (ohm & 0xA4) a |= x0 << 9;
+    if (ohm & 0x08) a |= x2 << 9;
+    if (ohm & 0x50) a |= x4 << 9;
+    if (ohm & 0x50) a |= x5 << 10;
+    if (ohm & 0xA0) a |= x1 << 10;
+    if (ohm & 0xC0) a |= x2 << 11;
+    if (ohm & 0x04) c |= x1 << 6;
+    if (ohm & 0xE8) c |= x3 << 6;
+    if (ohm & 0x20) c |= x2 << 7;
+    if (ohm & 0x5B) b0 |= x0 << 6;
+    if (ohm & 0x5B) b1 |= x1 << 6;
+    if (ohm & 0x12) b0 |= x2 << 7;
+    if (ohm & 0x12) b1 |= x3 << 7;
+    if (ohm & 0xAF) { d0 |= x4 << 5; d1 |= x5 << 5; }      /* the deltas' widths per mode: 7 6 7 6 5 6 5 6 bits */
+    if (ohm & 0x05) { d0 |= x2 << 6; d1 |= x3 << 6; }
+    d0 = sext(d0, dbits[modeval]); d1 = sext(d1, dbits[modeval]);
+    int sh = (modeval >> 1) ^ 3;
+    a <<= sh; b0 <<= sh; b1 <<= sh; c <<= sh; d0 <<= sh; d1 <<= sh;
+    int r1 = a, g1 = a - b0, bl1 = a - b1, r0 = a - c, g0 = a - b0 - c - d0, bl0 = a - b1 - c - d1;
+    int q0[3] = {r0, g0, bl0}, q1[3] = {r1, g1, bl1};
+    for (i = 0; i < 3; i++) { q0[i] = clamp12(q0[i]); q1[i] = clamp12(q1[i]); }
+    if (majcomp == 1) { t = q0[0]; q0[0] = q0[1]; q0[1] = t; t = q1[0]; q1[0] = q1[1]; q1[1] = t; }
+    else if (majcomp == 2) { t = q0[0]; q0[0] = q0[2]; q0[2] = t; t = q1[0]; q1[0] = q1[2]; q1[2] = t; }
+    for (i = 0; i < 3; i++) { e0[i] = q0[i]; e1[i] = q1[i]; }
+}
+static void hdr_alpha(int v6, int v7, int *a0, int *a1) {     /* mode 15's alpha */
+    int sel = ((v6 >> 7) & 1) | ((v7 >> 6) & 2);
+    v6 &= 0x7F; v7 &= 0x7F;
+    if (sel == 3) { *a0 = v6 << 5; *a1 = v7 << 5; return; }
+    v6 |= (v7 << (sel + 1)) & 0x780;
+    v7 &= 0x3F >> sel; v7 ^= 32 >> sel; v7 -= 32 >> sel;
+    v6 <<= 4 - sel; v7 <<= 4 - sel; v7 += v6;
+    *a0 = v6; *a1 = clamp12(v7);
+}
+/* Colour endpoint modes -> e0[4], e1[4]: LDR channels in 0..255, HDR channels in 0..0xFFF (LNS). Returns the HDR channels:
+ * bit 0 = R, G, B, bit 1 = A (an HDR mode without alpha gives alpha 0x780 = 1.0). */
 static int astc_endpoints(int cem, const int *v, int *e0, int *e1) {
     int i;
     switch (cem) {
+    case 2: {                                           /* HDR luminance, large range */
+        int y0, y1;
+        if (v[1] >= v[0]) { y0 = v[0] << 4; y1 = v[1] << 4; } else { y0 = (v[1] << 4) + 8; y1 = (v[0] << 4) - 8; }
+        e0[0] = e0[1] = e0[2] = y0; e1[0] = e1[1] = e1[2] = y1; e0[3] = e1[3] = 0x780; return 3; }
+    case 3: {                                           /* HDR luminance, small range */
+        int y0, d;
+        if (v[0] & 0x80) { y0 = ((v[1] & 0xE0) << 4) | ((v[0] & 0x7F) << 2); d = (v[1] & 0x1F) << 2; }
+        else { y0 = ((v[1] & 0xF0) << 4) | ((v[0] & 0x7F) << 1); d = (v[1] & 0x0F) << 1; }
+        e0[0] = e0[1] = e0[2] = y0; e1[0] = e1[1] = e1[2] = clamp12(y0 + d); e0[3] = e1[3] = 0x780; return 3; }
+    case 7: hdr_rgbo(v, e0, e1); e0[3] = e1[3] = 0x780; return 3;
+    case 11: hdr_rgb(v, e0, e1); e0[3] = e1[3] = 0x780; return 3;
+    case 14: hdr_rgb(v, e0, e1); e0[3] = v[6]; e1[3] = v[7]; return 1;      /* LDR alpha */
+    case 15: hdr_rgb(v, e0, e1); hdr_alpha(v[6], v[7], &e0[3], &e1[3]); return 3;
     case 0: e0[0] = e0[1] = e0[2] = v[0]; e1[0] = e1[1] = e1[2] = v[1]; e0[3] = e1[3] = 255; break;
     case 1: { int l0 = (v[0] >> 2) | (v[1] & 0xC0), l1 = l0 + (v[1] & 0x3F); if (l1 > 255) l1 = 255;
               e0[0] = e0[1] = e0[2] = l0; e1[0] = e1[1] = e1[2] = l1; e0[3] = e1[3] = 255; } break;
@@ -864,9 +957,14 @@ static int astc_endpoints(int cem, const int *v, int *e0, int *e1) {
               else { e0[0] = a[0] + a[1]; e0[1] = a[2] + a[3]; e0[2] = a[4] + a[5]; e0[3] = a[6] + a[7]; e1[0] = a[0]; e1[1] = a[2]; e1[2] = a[4]; e1[3] = a[6]; blue_contract(e0); blue_contract(e1); }
               for (i = 0; i < 4; i++) { e0[i] = clamp255(e0[i]); e1[i] = clamp255(e1[i]); }
             } break;
-    default: return -1;    /* 2, 3, 7, 11, 14, 15: HDR */
     }
     return 0;
+}
+static uint8_t lns_to_u8(int c) {                      /* an interpolated 16-bit LNS value -> FP16 -> [0, 1] -> 8 bits */
+    int E = (c & 0xF800) >> 11, m = c & 0x7FF, mt = m < 512 ? 3 * m : m < 1536 ? 4 * m - 512 : 5 * m - 2048, h = (E << 10) + (mt >> 3);
+    if (h > 0x7BFF) h = 0x7BFF;
+    float f = tex_half_to_float((uint16_t)h);
+    return (uint8_t)(f <= 0 ? 0 : f >= 1 ? 255 : (int)(f * 255.0f + 0.5f));
 }
 
 static void astc_fill(uint8_t *out, int pitch, int bw, int bh, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -880,7 +978,7 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
     int gw, gh, dual = 0, high, R, layout, wlevel, nparts, part_index = 0, cem[4], base_cem = 0, nweights, wbits, extra = 0, ccs = 0, color_start, color_bits;
     int nvals = 0, i, p, cidx, clevel = -1;
     uint8_t cm[18], ctq[18], wm[128], wtq[128], cbuf[16], wbuf[16];
-    int cv[18], e0[4][4], e1[4][4], wq[2][144], wt[2][144], is_hdr = 0;
+    int cv[18], e0[4][4], e1[4][4], wq[2][144], wt[2][144], hdr[4] = {0, 0, 0, 0};
     AstcEnc cenc = {0, 0, 0}, wenc;
     AstcRd cr, wr;
     AstcPart parts;
@@ -888,7 +986,7 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
 
     if ((mode & 0x1FF) == 0x1FC) {                       /* void extent */
         int hdr = (mode >> 9) & 1;
-        if (!(mode & 0x400) || !ar_get(&r, 1)) { tex_astc_bad_blocks++; astc_fill(out, pitch, bw, bh, 255, 0, 255, 255); return; }
+        if (!(mode & 0x400) || !ar_get(&r, 1)) { tex_astc_bad_blocks++; astc_fill(out, pitch, bw, bh, 0, 0, 0, 0); return; }
         ar_get(&r, 13); ar_get(&r, 13); ar_get(&r, 13); ar_get(&r, 13);
         {
             uint32_t c[4];
@@ -977,10 +1075,10 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
     astc_bise(&cr, cenc, nvals, cm, ctq);
     for (i = 0; i < nvals; i++) cv[i] = astc_unquant_color(cenc, cm[i], ctq[i]);
     for (i = 0, cidx = 0; i < nparts; i++) {
-        if (astc_endpoints(cem[i], cv + cidx, e0[i], e1[i]) < 0) is_hdr = 1;
+        hdr[i] = astc_endpoints(cem[i], cv + cidx, e0[i], e1[i]);
         cidx += ((cem[i] >> 2) + 1) * 2;
     }
-    if (is_hdr) { tex_astc_hdr_blocks++; astc_fill(out, pitch, bw, bh, 255, 0, 255, 255); return; }
+    if (hdr[0] | hdr[1] | hdr[2] | hdr[3]) tex_astc_hdr_blocks++;
     /* weights: stored bit-reversed from the top of the block */
     for (i = 0; i < 16; i++) {
         uint8_t v = blk[15 - i];
@@ -1005,7 +1103,8 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
             }
     astc_partition_setup(&parts, part_index, nparts, small);
     for (i = 0; i < nparts; i++)
-        for (p = 0; p < 4; p++) {        /* endpoints widened to 16 bits */
+        for (p = 0; p < 4; p++) {        /* endpoints widened to 16 bits (HDR: 12-bit LNS << 4) */
+            if (hdr[i] >> (p == 3) & 1) { e0[i][p] <<= 4; e1[i][p] <<= 4; continue; }
             e0[i][p] = srgb ? (e0[i][p] << 8) | 0x80 : (e0[i][p] << 8) | e0[i][p];
             e1[i][p] = srgb ? (e1[i][p] << 8) | 0x80 : (e1[i][p] << 8) | e1[i][p];
         }
@@ -1015,13 +1114,14 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
             uint8_t *px = out + y * pitch + x * 4;
             for (c = 0; c < 4; c++) {
                 int w = dual && c == ccs ? w1 : w0, v = (e0[part][c] * (64 - w) + e1[part][c] * w + 32) >> 6;
-                px[c] = (uint8_t)(srgb ? v >> 8 : v == 65535 ? 255 : (v * 255 + 32768) >> 16);
+                px[c] = hdr[part] >> (c == 3) & 1 ? lns_to_u8(v) : (uint8_t)(srgb ? v >> 8 : v == 65535 ? 255 : (v * 255 + 32768) >> 16);
             }
         }
     return;
-bad:
+bad:      /* [b3recomp] an invalid block (B3: all-zero blocks in a shared mask texture, 102,942 in chapter 1) is transparent black, as
+          * on Tegra (yuzu PR #8910 made its decoders do the same), not the specification's magenta error colour */
     tex_astc_bad_blocks++;
-    astc_fill(out, pitch, bw, bh, 255, 0, 255, 255);
+    astc_fill(out, pitch, bw, bh, 0, 0, 0, 0);
 }
 
 /* ================================================================ public decoders */
@@ -1077,10 +1177,28 @@ int tex_decode_rgba8(int nf, const void *src, int w, int h, uint8_t *dst) {
     uint8_t tmp[12 * 12 * 4];
     if (!f || !f->codec) return -1;
     wb = (w + f->bw - 1) / f->bw; hb = (h + f->bh - 1) / f->bh;
+    static int alog = -1, nalog;                          /* TEST ONLY: SSBU_ASTC_LOG=1: each image with blocks the decoder rejects (format, size, count, the first block) */
+    if (alog < 0) alog = getenv("SSBU_ASTC_LOG") != NULL;
+    unsigned bad0 = tex_astc_bad_blocks;
+    const uint8_t *first_bad = NULL;
+    const uint8_t *first_nonzero = NULL;
+    int first_idx = -1, last_idx = -1, nzero = 0;
     for (by = 0; by < hb; by++)
         for (bx = 0; bx < wb; bx++) {
             const uint8_t *blk = (const uint8_t *)src + ((size_t)by * wb + bx) * f->bpb;
             int x0 = bx * f->bw, y0 = by * f->bh;
+            if (alog && f->codec == TEX_CODEC_ASTC) {
+                unsigned b0 = tex_astc_bad_blocks;
+                tex_decode_block_rgba8(nf, blk, tmp, f->bw * 4);
+                if (tex_astc_bad_blocks != b0) {
+                    int z = 1, idx = by * wb + bx;
+                    for (int i = 0; i < 16; i++) z &= blk[i] == 0;
+                    if (!first_bad) first_bad = blk;
+                    if (first_idx < 0) first_idx = idx;
+                    last_idx = idx; nzero += z; if (!z && !first_nonzero) first_nonzero = blk;
+                    tex_astc_bad_blocks = b0;
+                }
+            }
             if (x0 + f->bw <= w && y0 + f->bh <= h) tex_decode_block_rgba8(nf, blk, dst + (size_t)y0 * pitch + x0 * 4, pitch);
             else {
                 int cw = w - x0 < f->bw ? w - x0 : f->bw, ch = h - y0 < f->bh ? h - y0 : f->bh, y;
@@ -1088,6 +1206,11 @@ int tex_decode_rgba8(int nf, const void *src, int w, int h, uint8_t *dst) {
                 for (y = 0; y < ch; y++) memcpy(dst + (size_t)(y0 + y) * pitch + x0 * 4, tmp + y * f->bw * 4, (size_t)cw * 4);
             }
         }
+    if (alog && first_bad && nalog++ < 60) {
+        printf("tex_decode: TEST: %s %dx%d (%dx%d blocks): %u rejected, %d of them all zero, block indices %d..%d; the first non-zero one: ", f->name, w, h, wb, hb, tex_astc_bad_blocks - bad0, nzero, first_idx, last_idx);
+        for (int i = 0; first_nonzero && i < 16; i++) printf("%02x", first_nonzero[i]);
+        printf("\n");
+    }
     return 0;
 }
 
