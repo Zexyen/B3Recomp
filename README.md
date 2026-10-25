@@ -9,8 +9,14 @@ get the game.
 game (converted ELFs, translated C, the compiled `game.so`, caches) is generated locally into `targets/`, `build/`,
 `cache/` and `runtime/gen/`, which git ignores. Never share them.
 
-**Status: early, it does not show a picture yet.** It builds, and boots through the static constructors into `nnMain`,
-mounts the RomFS and reads its archives, starts its threads and initialises NVN, then stops at texture setup.
+## Status
+
+| What | Result |
+|---|---|
+| Boot and gameplay | boots and plays, albeit with performance issues |
+| Resolution | native resolution only (720p) |
+| Input | controller only |
+
 Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_NOTES.md).
 
 ## Build (Linux)
