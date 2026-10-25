@@ -417,11 +417,14 @@ cutscenes in the game's 60 fps mode.
   1.0, one 30 Hz frame: a cutscene advances one step per game frame (2,758 frames at 30 or at 60). Forcing only the mode
   played the same cutscene in 46.6 s instead of 92.1 s.
 - **What is done**: two host overrides (`lifter/recomp_eh.py` `HOST_OVERRIDES`, `runtime/game_shim_eh.c`):
-  `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` halves the fixed step while such a scene runs at 60 (a measured
-  step is left alone). The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
+  `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` replaces the fixed step while such a scene runs at 60 by the last
+  frame's measured length (the clock's own, +0xf0) in 30 Hz frames, at most 1.0: 0.5 on time, more for a late frame, so the
+  scene keeps real time when frames are late; a frame longer than 33 ms slows it as on the console (a measured gameplay
+  step is left alone). (A fixed 0.5, the first version: 97.9 s for the cutscene at 56 fps in 4K.) The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
   mode the game asks for is logged with the wall-clock time ("fps mode:" lines).
 - **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `SSBU_FRAMETIMES` has the wall clock
-  per frame): 30: 2,758 frames in 92.07 s; 60: 5,496 frames in 92.33 s, 59.5 fps, p99 22.0 ms. Screenshots at equal
+  per frame): 30: 2,758 frames in 92.07 s; 60: 5,496 frames in 92.33 s, 59.5 fps, p99 22.0 ms (fixed half step); with the
+  measured step 91.94 s at 59.7 fps, and 92.03 s at 56.4 fps in 4K (resolution scale 2.4). Screenshots at equal
   wall-clock times after the start (+1 .. +20 s, `/tmp/shots/cutscene_30_vs_60.png`): the same shots, poses and subtitle
   lines. Consecutive frames at 60 all differ (no repeated 30 Hz poses). Title screen and the main menu's entry at equal
   times: the same (`/tmp/shots/title_30_vs_60.png`). The pause menu is mode 0 anyway (not changed). The prologue movie
@@ -429,6 +432,40 @@ cutscenes in the game's 60 fps mode.
   frames: movies keep their rate (the game's player times them by the system clock).
 - Not checked by ear: audio is muted in the test runs; the cutscene's timeline keeps wall-clock time, which is what
   the voice and lip sync follow.
+
+## Resolution scale (2026-10-25)
+
+`resolution_scale` (graphics.ini; `SSBU_VK_SCALE` wins; 0.25 .. 3.0, Vulkan) now scales B3's picture. The scale is relative
+to B3's window texture, 1600x900: 1.2 = 1920x1080, 1.6 = 2560x1440, 2.4 = 3840x2160 (3.0 = 4800x2700). The picture goes to
+the window at the window's size (graphics.ini `width` / `height`, `SSBU_WINDOW=<w>x<h>`; above twice the window it is
+halved in 2:1 steps first).
+- **What was missing**: the screen class (the images made at the scale) took only 1600x900 and its halves. B3 draws its
+  scene into 1600x896 targets (1440x816 when its dynamic resolution steps down; depth-stencil, R11G11B10F, R32F, RG8) with
+  chains of halves to 45x25 and some other 16:9 targets (1280x720, 1120x628, 960x540 ...): only 13 images were scaled.
+  Now any target of the window's shape (within 1.5 %), 40 x 22 or larger, that is not an uploaded texture: 86-117 a run.
+  Shadow maps (1024 / 2048 square, a 2048 depth array) and other odd sizes stay as they are.
+- **Storage images**: fragment programs #1693 and #5548 write 800x448 / 720x408 / 512x288 targets with SUST at
+  gl_FragCoord in the game's pixels; such an image is made again at the game's size the first time it is bound as a storage
+  image and kept there (`g_rs_keep`, 4-6 a run; the shaders that sample it use normalised coordinates).
+- **Compute**: B3's compute dispatches touch no scaled image (one 64x64 storage image; `SSBU_VK_RTLOG=1` lists the render
+  targets, every stage's storage images and any scaled image a compute stage samples), so their sizes need no change.
+  Viewports, scissors, clears, copies, uploads, read-backs, `gl_FragCoord` and integer texel fetches in fragment stages
+  were converted already (track O).
+- **Measured** (Shibuya benchmark, 330 s, frames at 60 from 1500, window at the output size; screenshots of the scaled
+  image itself with `SSBU_VK_SHOT_NATIVE=1`, `/tmp/shots/res<scale>/`, `/tmp/shots/hud_1x_vs_4k.png`):
+
+  | scale | output | avg fps | 1 %-low | p99 | frames at 60 | scaled images |
+  |---|---|---|---|---|---|---|
+  | 1.0 | 1600x900 | 59.9 | 51.7 | 19.3 ms | 98.0 % | - |
+  | 1.2 | 1920x1080 | 59.9 | 49.3 | 20.3 ms | 97.6 % | 259 MB |
+  | 1.6 | 2560x1440 | 59.8 | 47.9 | 20.9 ms | 97.2 % | 385 MB |
+  | 2.4 | 3840x2160 | 59.6 | 47.5 | 21.1 ms | 96.0 % | 976 MB |
+
+  The pictures: the scene, fog, effects, the HUD, subtitles, the title, the main menu, loading screens, a cutscene and the
+  game-over screen drawn at the scale, nothing misplaced or cut. In 4K the 60 fps cutscene runs at 56.4 fps (p90 21 ms).
+- **First run at a scale other than 1.0**: the fragment stages are another translation (one for every scale, keyed
+  `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
+  behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
 
 ## Next blockers (most urgent first)
 
