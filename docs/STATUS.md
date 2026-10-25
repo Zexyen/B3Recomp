@@ -407,6 +407,29 @@ erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
 - Tools added on the way: `SSBU_FRAMETIMES`, `SSBU_HITCH` with a 19 ms threshold for late frames, `SSBU_LPROF` with 4M
   samples and the presented frame of each sample (`@<frame>`; `scripts/lprof_report.py` reads both forms).
 
+## 60 fps menus and cutscenes (2026-10-25)
+
+`cutscene_fps = 60` (graphics.ini; `SSBU_CUTSCENE_FPS=60` wins; default 30, as on the console) runs the title, menus and
+cutscenes in the game's 60 fps mode.
+- **How the game times them**: the main loop (`7100670b80`) asks each frame for a frame-rate mode from its state flags
+  (0 = 60, 1 = 30, 2 = 15; set by `7100d02de0`, applied at `7100cfd9b8`). Its per-frame clock `7100c1f600` keeps the
+  frame's step at clock+0xe0: in gameplay a ratio of the measured frame time, in mode-1 scenes (flags 28 and 30) a fixed
+  1.0, one 30 Hz frame: a cutscene advances one step per game frame (2,758 frames at 30 or at 60). Forcing only the mode
+  played the same cutscene in 46.6 s instead of 92.1 s.
+- **What is done**: two host overrides (`lifter/recomp_eh.py` `HOST_OVERRIDES`, `runtime/game_shim_eh.c`):
+  `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` halves the fixed step while such a scene runs at 60 (a measured
+  step is left alone). The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
+  mode the game asks for is logged with the wall-clock time ("fps mode:" lines).
+- **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `SSBU_FRAMETIMES` has the wall clock
+  per frame): 30: 2,758 frames in 92.07 s; 60: 5,496 frames in 92.33 s, 59.5 fps, p99 22.0 ms. Screenshots at equal
+  wall-clock times after the start (+1 .. +20 s, `/tmp/shots/cutscene_30_vs_60.png`): the same shots, poses and subtitle
+  lines. Consecutive frames at 60 all differ (no repeated 30 Hz poses). Title screen and the main menu's entry at equal
+  times: the same (`/tmp/shots/title_30_vs_60.png`). The pause menu is mode 0 anyway (not changed). The prologue movie
+  (`ev0000.webm`, VP9, 30 fps): movie time against wall clock, 160.0 s -> 160.11 s at 30 and 160.09 s at 60, all 4,900
+  frames: movies keep their rate (the game's player times them by the system clock).
+- Not checked by ear: audio is muted in the test runs; the cutscene's timeline keeps wall-clock time, which is what
+  the voice and lip sync follow.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.

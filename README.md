@@ -14,7 +14,7 @@ game (converted ELFs, translated C, the compiled `game.so`, caches) is generated
 | What | Result |
 |---|---|
 | Boot and gameplay | boots and plays; 60 fps in play (Tokyo and Shibuya tested), occasional short hitches |
-| Menus and cutscenes | 30 fps, as on the console |
+| Menus and cutscenes | 30 fps as on the console by default; 60 fps with `cutscene_fps = 60` in `config/graphics.ini` (timing stays real time; movies keep their 30 fps) |
 | Resolution | native resolution only (720p) |
 | Input | controller only |
 
