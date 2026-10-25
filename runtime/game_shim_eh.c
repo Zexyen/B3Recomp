@@ -95,15 +95,23 @@ void h_fps_mode_set(Ctx *c) {
     f_7100d02de0(c);
 }
 /* f_7100c1f600(clock x0, step s0, measured w1): the main loop's per-frame clock, called just before the mode is chosen. It
- * keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a ratio of the measured frame time, with w1 = 0 (the title,
- * menus and cutscenes: the game's state flags 28 and 30) s0 as it is, 1.0 a frame, in those scenes a 30 Hz frame (a
- * cutscene advances one step per frame: 2,758 frames whether shown at 30 or 60). While such a scene runs at 60
- * (g_fps_forced, set by the frame before) that step is halved: a cutscene then lasts 92.4 s at 60 against 92.1 s at 30
- * (the same one; at 60 with the whole step, 46.6 s). A measured step (w1 = 1) follows the real frame time already. */
+ * stores the last frame's length in ms at clock+0xf0 and keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a
+ * ratio of the measured frame time, with w1 = 0 (the title, menus and cutscenes: the game's state flags 28 and 30) s0 as it
+ * is, 1.0 a frame, in those scenes a 30 Hz frame (a cutscene advances one step per frame: 2,758 frames whether shown at 30
+ * or at 60). While such a scene runs at 60 (g_fps_forced, set by the frame before) the step is the frame's measured length
+ * in 30 Hz frames, at most 1.0 (the console's step at 30): 0.5 on time, more for a late frame, so the scene keeps real
+ * time while frames are late too; one longer than 33 ms slows it as on the console. (A fixed 0.5: 92.3 s for the 92.1 s
+ * cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1) follows the real frame time already. */
 void f_7100c1f600(Ctx *c);
 void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     int fixed = (uint32_t)c->x[1] == 0;
     f_7100c1f600(c);
-    if (g_fps_forced && fixed) { float v; memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); v *= 0.5f; memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4); }
+    if (g_fps_forced && fixed) {
+        float v, ms;
+        memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
+        float k = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : 0.5f;
+        v *= k < 1.0f ? k : 1.0f;
+        memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
+    }
 }
