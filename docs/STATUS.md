@@ -347,7 +347,65 @@ GOBs) and `tex_layout` ignored it. B3's ASTC 6x6 effect atlases and Bayonetta's 
 
 The user's later save (Tokyo chapter) stopped with "more than 256 storage buffers written by compute in one batch".
 A full table now lands its least recently used kept buffer and reuses the slot (72 times in 700 s there), and the table
-holds 1,024. The heavy Tokyo scenes run at about 35 fps (not looked into yet).
+holds 1,024. The heavy Tokyo scenes ran at 35-44 fps then; see the next section.
+
+## Performance in Tokyo: Shibuya and the heavy Tokyo scenes (2026-10-25)
+
+**Benchmarks** (`SSBU_AUDIO_MUTE=1`, each run on a copy of a save; per-frame times from `SSBU_FRAMETIMES`, the
+statistics over the frames the game paces at 60 = present interval 1):
+- *Shibuya*: the user's save (Continue → Tokyo: Shibuya street fight), the stage-5 fight pattern from 40 s to 330 s,
+  frames 1500 to the end.
+- *Tokyo (old route)*: a copy of the earlier save (`bench_bw`'s), the stage-5 script from 560 s, 700 s, frames 19800 to
+  the end: the heavy scenes measured at 35-44 fps before.
+
+| | avg fps | 1 %-low | p50 / p90 / p99 ms | frames over 20 / 50 / 100 ms | frames at 60 |
+|---|---|---|---|---|---|
+| Shibuya, before | 57.4 | 38.8 | 16.8 / 20.6 / 25.8 | 1814 / 12 / 1 | 82.5 % |
+| Shibuya, after | **59.9** | **51.7** | 16.7 / 17.6 / 19.3 | 146 / 4 / 0 | **98.0 %** |
+| Tokyo, the changes switched off | 51.8 | 40.2 | 18.5 / 21.5 / 24.8 | 3667 / 64 / 59 | 49.8 % |
+| Tokyo, after (without the bit split) | 59.7 | 53.9 | 16.7 / 17.6 / 18.6 | 29 / 13 / 8 | 98.8 % |
+| Tokyo, after (all) | **59.5** | **52.9** | 16.7 / 17.6 / 18.9 | 98 / 15 / **0** | **98.4 %** |
+
+("Switched off": `SSBU_VK_VRC=0`, `SSBU_TEXDEC_THREADS=0` and an always-sync test switch that was not committed; the live
+list stays. Runs of the same build differ by about ±1 % at 60 and in where the trains of long frames come; another
+Tokyo run of the last build: 59.8 fps, 98.5 % at 60, one frame over 100 ms (104, below).)
+
+What it was, in order of the commits:
+- **The game's 30 fps is the game's.** Its main loop picks a frame-rate mode each frame (`7100670b80` → `7100d02de0`,
+  applied at `7100cfd9b8` from the table 1 / 2 / 4) from its own state flags: interval 2 on the title, in menus and in
+  cutscenes (flags `50000208`, `50000008`). The user's 30.0 fps stretch (frames 5100-11500 of their log) is such a span.
+  Not changed; letting those run at 60 would change the game (its logic steps by the mode).
+- **Kept vertex buffers while compute is live** (`vrc_cb_touch`): every vertex stream went through the stream ring because
+  B3 dispatches compute every frame: 64 MB copied a frame, the render thread's largest cost. Now 5.6 MB. (The
+  Performance section above dropped the same idea in chapter 1, where the write-watch questions cost what the copies
+  saved; in Tokyo the copies are three times larger and it pays.)
+- **ASTC decode on worker threads** (`decode_par`): the 45-170 ms stalls of Shibuya were new 1024x1024 ASTC textures
+  decoded on the render thread (15-20 ms each, several at once when the game streams an area in). A 1024x1024 texture now
+  takes 5.3 ms. `SSBU_TEXDEC_CHECK=1` compared 1,301 parallel jobs with one thread's decode: no difference.
+- **Live compute buffers in a list** for `buf_ref`'s searches (the walk over the table was 17 % of the render thread).
+- **Buffer copy / update / clear wait for compute only when they overlap it** (`cb_sync_needed`): each of these CPU-side
+  commands waited for the GPU and landed every live compute buffer; B3 issues a clear and four 32-byte copies a frame, so
+  every frame paid a GPU wait and 4-24 MB of copies. The render thread in Shibuya: 10.4 → 3.9 ms a frame.
+- **The 150-170 ms trains in Tokyo** (the "160 ms stalls"; 59 frames over 100 ms in a 700 s run, about every 6 frames
+  while a train lasts): the main thread in the game's `f_7100b382c0`, called from a deep recursion of `f_71007e1fe4` (a
+  tree walk): it splits a 32-bit value into its even and odd bits with three bit reversals and a 32-step loop, 171.6 ns a
+  call lifted. New: `lifter/recomp_eh.py` `HOST_OVERRIDES` sends every direct call of a chosen game function to a host
+  function (`runtime/game_shim_eh.c`); `h_morton_split32` takes 1.7 ns. `SSBU_HOSTFN_CHECK=1` (test): 200,000 values
+  through both, 0 differ.
+Screenshots of every run (`/tmp/shots/<run>/`) compared: no visual difference (the band of purple glyphs at the clouds of
+erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
+
+**Left** (Tokyo, 700 s runs of the last build):
+- Trains of 45-50 ms frames (7-25 frames a run): the same tree walk, `f_71007e1fe4` itself now (about 35 ms a frame), a
+  large lifted function with float math. Not changed: the register cache (`RECOMPS_REGCACHE`, off since finding 91) or a
+  host version of the walk would be the next step.
+- One frame of 80-105 ms every 37.3 s (2,236 frames), each the first frame of a run of tessellated draws (the
+  tessellated scene coming back into view); not the pipelines (three, made early). The game's main and job threads do
+  more work in that frame (buffers made, `nvnBufferInitialize` under a game mutex, lifted code); not attributed further:
+  the sampler gets about 25 samples a thread over three such frames. A table lock split 64 ways (`nvn_stub.c nobj`) was
+  tried: no measurable change, not kept.
+- Tools added on the way: `SSBU_FRAMETIMES`, `SSBU_HITCH` with a 19 ms threshold for late frames, `SSBU_LPROF` with 4M
+  samples and the presented frame of each sample (`@<frame>`; `scripts/lprof_report.py` reads both forms).
 
 ## Next blockers (most urgent first)
 
@@ -355,7 +413,8 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 
 1. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
    Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
-2. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
+2. **Long frames left in Tokyo** (section "Performance in Tokyo"): trains of 45-50 ms in a tree walk of lifted code, one
+   80-105 ms frame every 37 s where the tessellated scene comes back. Fights and Tokyo otherwise hold 60 (98 % of frames).
 3. **Picture correctness**: no reference images to compare with.
 4. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
 5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
