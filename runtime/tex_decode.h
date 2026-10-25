@@ -30,7 +30,7 @@
  * Typical use at upload time (block-linear texture, one level of one layer):
  *
  *     TexLayout L;
- *     tex_layout(&L, target, format, w, h, d, levels, flags, stride, packaged_bh_log2_or_minus1);
+ *     tex_layout(&L, target, format, w, h, d, levels, flags, stride, packaged_bh_log2_or_minus1, packaged_bw_log2_or_0);
  *     const TexFormat *f = tex_format(format);
  *     const uint8_t *src = base + layer * L.layer_stride + L.lvl_offset[level];
  *     tex_deswizzle_level(&L, level, src, tmp);               // tmp: L.lvl_linear_size[level] bytes
@@ -127,6 +127,7 @@ typedef struct TexLayout {
     int lvl_w[TEX_MAX_LEVELS], lvl_h[TEX_MAX_LEVELS], lvl_d[TEX_MAX_LEVELS];          /* texels / slices */
     int lvl_wb[TEX_MAX_LEVELS], lvl_hb[TEX_MAX_LEVELS];                               /* blocks (compressed footprint) */
     int lvl_bh_log2[TEX_MAX_LEVELS], lvl_bd_log2[TEX_MAX_LEVELS];                     /* block height / depth of the level */
+    int lvl_gobs_x[TEX_MAX_LEVELS];                 /* [b3recomp] GOBs in a row of the level (its width padded to the block width), 0 = the width in GOBs */
     size_t lvl_offset[TEX_MAX_LEVELS], lvl_size[TEX_MAX_LEVELS];                       /* swizzled bytes */
     size_t lvl_linear_size[TEX_MAX_LEVELS];                                           /* wb * bpb * hb * d: output of tex_deswizzle_level */
     size_t layer_size;             /* sum of the level sizes of one layer (no padding) */
@@ -140,9 +141,10 @@ typedef struct TexLayout {
 
 /* Fill L. flags are NVN texture flags (TEX_FLAG_LINEAR selects the pitch layout; `stride` is the
  * pitch in bytes, 0 = width * bpb). packaged_bh_log2: byte 0 of the packaged-texture layout
- * (nvnTextureBuilderSetPackagedTextureLayout) when known, else -1 to use the rule. Returns 0, or -1
+ * (nvnTextureBuilderSetPackagedTextureLayout) when known, else -1 to use the rule. packaged_bw_log2: byte 1
+ * of that layout (block width, log2 GOBs; rows of a level at least one block wide are padded to it), else 0. Returns 0, or -1
  * for an unknown format (L is then filled as if RGBA8). */
-int tex_layout(TexLayout *L, int target, int nvn_format, int width, int height, int depth, int levels, int flags, size_t stride, int packaged_bh_log2);
+int tex_layout(TexLayout *L, int target, int nvn_format, int width, int height, int depth, int levels, int flags, size_t stride, int packaged_bh_log2, int packaged_bw_log2);
 
 /* Pointer to (level, layer) of a block-linear texture whose storage starts at base. */
 static inline const uint8_t *tex_level_ptr(const TexLayout *L, const uint8_t *base, int level, int layer) {

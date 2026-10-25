@@ -191,12 +191,14 @@ int tex_rule_mip_block_depth_log2(int depth, int bd0) {
     return bd0;
 }
 
-size_t tex_bl_size(int wbytes, int hrows, int depth, int bh_log2, int bd_log2) {
-    size_t pitch = ((size_t)wbytes + 63) / 64 * 64, rows = 8 << bh_log2, slices = (size_t)1 << bd_log2;
+/* [b3recomp] gobs_x: GOBs in a row (a texture with a block width wider than one GOB pads its rows: layout byte 1); 0 = the width's */
+static size_t bl_size(int wbytes, int gobs_x, int hrows, int depth, int bh_log2, int bd_log2) {
+    size_t pitch = gobs_x ? (size_t)gobs_x * 64 : ((size_t)wbytes + 63) / 64 * 64, rows = 8 << bh_log2, slices = (size_t)1 << bd_log2;
     rows = ((size_t)hrows + rows - 1) / rows * rows;
     slices = ((size_t)depth + slices - 1) / slices * slices;
     return pitch * rows * slices;
 }
+size_t tex_bl_size(int wbytes, int hrows, int depth, int bh_log2, int bd_log2) { return bl_size(wbytes, 0, hrows, depth, bh_log2, bd_log2); }
 
 size_t tex_bl_offset(int x, int y, int z, int wbytes, int hrows, int bh_log2, int bd_log2) {
     size_t gobs_x = ((size_t)wbytes + 63) / 64, block = (size_t)512 << (bh_log2 + bd_log2), rob = block * gobs_x;
@@ -218,8 +220,8 @@ static void bl_row(uint8_t *lin, uint8_t *bl, int wbytes, int y, size_t block, i
     }
 }
 
-static void bl_copy(void *linear, void *bl, int wbytes, int hrows, int depth, int bh_log2, int bd_log2, int to_linear) {
-    size_t gobs_x = ((size_t)wbytes + 63) / 64, block = (size_t)512 << (bh_log2 + bd_log2), rob = block * gobs_x;
+static void bl_copy(void *linear, void *bl, int wbytes, int gobs_x_in, int hrows, int depth, int bh_log2, int bd_log2, int to_linear) {
+    size_t gobs_x = gobs_x_in ? (size_t)gobs_x_in : ((size_t)wbytes + 63) / 64, block = (size_t)512 << (bh_log2 + bd_log2), rob = block * gobs_x;
     size_t slice = rob * (((size_t)hrows + (8 << bh_log2) - 1) >> (3 + bh_log2));
     int z, y;
     for (z = 0; z < depth; z++)
@@ -232,15 +234,15 @@ static void bl_copy(void *linear, void *bl, int wbytes, int hrows, int depth, in
 }
 
 void tex_bl_to_linear(void *dst, const void *src, int wbytes, int hrows, int depth, int bh_log2, int bd_log2) {
-    bl_copy(dst, (void *)src, wbytes, hrows, depth, bh_log2, bd_log2, 1);
+    bl_copy(dst, (void *)src, wbytes, 0, hrows, depth, bh_log2, bd_log2, 1);
 }
 void tex_linear_to_bl(void *dst, const void *src, int wbytes, int hrows, int depth, int bh_log2, int bd_log2) {
-    bl_copy((void *)src, dst, wbytes, hrows, depth, bh_log2, bd_log2, 0);
+    bl_copy((void *)src, dst, wbytes, 0, hrows, depth, bh_log2, bd_log2, 0);
 }
 
 static int mipdim(int v, int l) { v >>= l; return v > 0 ? v : 1; }
 
-int tex_layout(TexLayout *L, int target, int nf, int width, int height, int depth, int levels, int flags, size_t stride, int packaged_bh_log2) {
+int tex_layout(TexLayout *L, int target, int nf, int width, int height, int depth, int levels, int flags, size_t stride, int packaged_bh_log2, int packaged_bw_log2) {
     const TexFormat *f = tex_format(nf);
     int ok = f != NULL, l, maxdim, maxl;
     if (!f) f = tex_format(TEX_FMT_RGBA8);
@@ -290,12 +292,19 @@ int tex_layout(TexLayout *L, int target, int nf, int width, int height, int dept
             L->lvl_w[l] = w; L->lvl_h[l] = h; L->lvl_d[l] = d; L->lvl_wb[l] = wb; L->lvl_hb[l] = hb;
             if (L->levels == 1) { L->lvl_bh_log2[l] = L->bh_log2; L->lvl_bd_log2[l] = L->bd_log2; }      /* a single level keeps the block as given */
             else { L->lvl_bh_log2[l] = tex_rule_mip_block_height_log2(hb, L->bh_log2); L->lvl_bd_log2[l] = tex_rule_mip_block_depth_log2(d, L->bd_log2); }
+            {   /* [b3recomp] block width (packaged layout byte 1, log2 GOBs): rows padded to a multiple of it; a mip level narrower
+                 * than one block is not padded at all (B3's ASTC 6x6 effect atlases, byte 1 = 4: 43 -> 48, 22 -> 32, then 11, 6, ...
+                 * as the game's own mip chains lie in memory) */
+                int gobs = (wb * f->bpb + 63) / 64, bwl = packaged_bw_log2 > 0 && packaged_bw_log2 <= 5 ? packaged_bw_log2 : 0;
+                L->lvl_gobs_x[l] = bwl && gobs >= 1 << bwl ? (gobs + (1 << bwl) - 1) >> bwl << bwl : 0;
+            }
             L->lvl_offset[l] = off;
-            L->lvl_size[l] = tex_bl_size(wb * f->bpb, hb, d, L->lvl_bh_log2[l], L->lvl_bd_log2[l]);
+            L->lvl_size[l] = bl_size(wb * f->bpb, L->lvl_gobs_x[l], hb, d, L->lvl_bh_log2[l], L->lvl_bd_log2[l]);
             L->lvl_linear_size[l] = (size_t)wb * f->bpb * (size_t)hb * (size_t)d;
             off += L->lvl_size[l];
         }
         block = (size_t)512 << (tex_rule_mip_block_height_log2(L->lvl_hb[0], L->bh_log2) + tex_rule_mip_block_depth_log2(L->lvl_d[0], L->bd_log2));
+        if (L->lvl_gobs_x[0]) block <<= packaged_bw_log2;      /* [b3recomp] the block width too */
         L->layer_size = off;
         L->layer_stride = (off + block - 1) / block * block;
         L->alignment = block;
@@ -311,7 +320,7 @@ void tex_deswizzle_level(const TexLayout *L, int level, const void *src, void *d
         for (y = 0; y < L->lvl_hb[level]; y++) memcpy((uint8_t *)dst + (size_t)y * wbytes, (const uint8_t *)src + (size_t)y * L->stride, (size_t)wbytes);
         return;
     }
-    tex_bl_to_linear(dst, src, wbytes, L->lvl_hb[level], L->lvl_d[level], L->lvl_bh_log2[level], L->lvl_bd_log2[level]);
+    bl_copy(dst, (void *)src, wbytes, L->lvl_gobs_x[level], L->lvl_hb[level], L->lvl_d[level], L->lvl_bh_log2[level], L->lvl_bd_log2[level], 1);
 }
 
 void tex_swizzle_level(const TexLayout *L, int level, const void *src, void *dst) {
@@ -320,7 +329,7 @@ void tex_swizzle_level(const TexLayout *L, int level, const void *src, void *dst
         for (y = 0; y < L->lvl_hb[level]; y++) memcpy((uint8_t *)dst + (size_t)y * L->stride, (const uint8_t *)src + (size_t)y * wbytes, (size_t)wbytes);
         return;
     }
-    tex_linear_to_bl(dst, src, wbytes, L->lvl_hb[level], L->lvl_d[level], L->lvl_bh_log2[level], L->lvl_bd_log2[level]);
+    bl_copy((void *)src, dst, wbytes, L->lvl_gobs_x[level], L->lvl_hb[level], L->lvl_d[level], L->lvl_bh_log2[level], L->lvl_bd_log2[level], 0);
 }
 
 /* ================================================================ half floats */
