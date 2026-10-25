@@ -260,22 +260,18 @@ from frame 22,800 to the end: taken as outside CPU load and left out.)
 
 ## Next blockers (most urgent first)
 
-1. **Camera (right stick) on a real pad**: the user's chapter-1 play by hand: the right stick does not turn the camera.
-   Found so far: B3 reads `GetNpadState(NpadFullKeyState)` and converts all four stick axes [game 0x7100cc53d0]; the SDL
-   mapping of the user's "Steam Controller" (28de:1304) has `rightx:a2, righty:a3`; the pad self-test passes (49/49). Not yet
-   confirmed in a game run (the work is paused: `git stash` "camera right-stick WIP (paused)": script keys 4/8/6/2 for the
-   right stick, `SSBU_HIDLOG` callers of the state reads, and the Linux path of `config/controllers.ini`, which is never
-   written on Linux now (the path is cut at `\`, so it points into `build/b3-game/..`)).
-2. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
+Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
+
+1. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
    Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
-3. **Tessellation** (29 programs): reached in chapter 1 (NVN primitive type 14 = patches; the run stops there without
+2. **Tessellation** (29 programs): reached in chapter 1 (NVN primitive type 14 = patches; the run stops there without
    `SSBU_VK_MISSING=warn`). Translator stages and pipeline support are missing.
-4. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
-5. **Picture correctness**: no reference images to compare with.
-6. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
-7. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
+3. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
+4. **Picture correctness**: no reference images to compare with.
+5. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
+6. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
-8. **First-run warm-up**: minutes of held loading screens after a translator change.
+7. **First-run warm-up**: minutes of held loading screens after a translator change.
 9. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
    `nn::audio` Resampler imports (not reached), about 170 other imports without a handler (none reached).
 
