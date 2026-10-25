@@ -13,7 +13,8 @@ game (converted ELFs, translated C, the compiled `game.so`, caches) is generated
 
 | What | Result |
 |---|---|
-| Boot and gameplay | boots and plays, albeit with performance issues |
+| Boot and gameplay | boots and plays; 60 fps in play (Tokyo and Shibuya tested), occasional short hitches |
+| Menus and cutscenes | 30 fps, as on the console |
 | Resolution | native resolution only (720p) |
 | Input | controller only |
 
