@@ -2,7 +2,7 @@
 
 Stage 5 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg), the prologue and **the first fights** run, with
 sound and scripted pad input (punch, kick, dodge, jump, movement: Verse 1 cleared, Verse 2 reached), without a "not
-implemented" stop in 1,500 s of the prologue (chapter 1 reaches tessellation). 30 fps movies; **chapter-1 fights about 59 fps**
+implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellation now drawn, no SSBU_VK_MISSING=warn). 30 fps movies; **chapter-1 fights about 59 fps**
 (were 44-52: a texture walk on every NVN flush, see Performance). Vulkan validation (core, sync, GPU-assisted): clean apart from benign / known items, listed below.
 
 ## What builds
@@ -93,8 +93,8 @@ On the 7,838 vertex / fragment / compute stages of a run: **5,627 compiled at th
 `SHFL` (warp shuffle on `subgroupShuffle`, 32-lane warps inside 32/64-wide subgroups), `VOTE` / lane id / lane masks on KHR
 subgroups, `FSWZADD` (with `.NDV`), `BAR.SYNC`, `ATOM` / `RED` / `ATOMS` (global through per-op helpers on the storage
 blocks, CAS loops where GLSL has no atomic), image accesses whose handle register was loaded from an image slot (all 799 of
-them), texel offsets from registers (lowered), `VMNMX`, `SAM` / `RAM`. Not covered: the 29 programs with **tessellation**
-stages (the translator has no tessellation or geometry stage; their draws are reported as missing).
+them), texel offsets from registers (lowered), `VMNMX`, `SAM` / `RAM`. The 29 programs with **tessellation** stages followed
+later (see "Tessellation", 2026-10-24); geometry stages are still not covered (none in the dump).
 
 Vulkan back end, built but not run: **storage images** (417 fragment and 4 compute stages store to images; the back end
 ignored `nvnCommandBufferBindImage`): handles per stage, STORAGE usage on colour images whose format allows it, views, the
@@ -258,21 +258,49 @@ from frame 22,800 to the end: taken as outside CPU load and left out.)
   threads (innermost frame not waiting in libc) with their self / inclusive functions (nm of b3-game, game.so: `f_<guest
   address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
 
+## Tessellation (2026-10-24)
+
+B3 has 29 tessellation programs, each a separate NVN program per stage (bound by stage mask): 29 control and 29
+evaluation stages. All are the same kind: the GLSLC tessellation info of the control section (+0x738 primitive mode,
++0x73c spacing, +0x740 point mode, +0x744 vertex order, OpenGL enums) says GL_TRIANGLES, GL_EQUAL, no points, GL_CCW;
+the control stages' program headers say 3 output vertices and 6 patch attributes (the levels).
+
+- **Translator** (`mx_translate.c`, after suyu's recompiler): ALD / AST with the vertex register (bits 39..46) on input
+  arrays, the control stage's outputs at `[gl_InvocationID]` (ALD.O reads them back; in the evaluation stage .O reads its
+  inputs), patch attributes 0..3 / 4..5 = outer / inner levels, `gl_TessCoord` (0x2f0 / 0x2f4), invocation info =
+  `gl_PatchVerticesIn << 16`, `ISBERD` (a move), `VMAD`, `VSETP`; `layout(vertices = N)` and `layout(triangles,
+  equal_spacing, ccw)`; the built-in blocks redeclared to match the neighbours. Generic patch attributes fail (none used).
+  `tools/mxcheck`: **7,896 / 7,896 stages** translate and compile (the 58 tessellation stages included); the other 7,838 give
+  byte-identical text (no `MX_VK_VERSION` change; the tessellation stages have a hash salt of their own).
+- **Vulkan**: NVN primitive 14 with both stages: a whole pipeline (no libraries) per key + stages + patch size, made at
+  the first draw (`tess_pipe_get`, not in pipes.bin or the workers), `PATCH_LIST`, `patchControlPoints` = the NVN patch
+  size (`OP_PATCHSIZE`, ignored before), domain origin `LOWER_LEFT` (the viewport is flipped the OpenGL way);
+  `draw_prepare` binds samplers, images, buffers and descriptors for the stages {0, 1, 3, 4}; forced outputs chain
+  fragment <- evaluation <- control <- vertex. The glslang shim takes stages 3 and 4.
+- **Runs** (chapter 1 by Chapter Select, the fight script, muted, **without `SSBU_VK_MISSING=warn`**): 1,100 s, 46,666
+  frames, **0 skipped draws** (the earlier runs with `warn` skipped 4,552-5,585), no stop. One tessellated pipeline (programs
+  #3945 / #3950 / #3951 / #3946, patch size 3), about 2,700 tessellated draws, one a frame in runs from frame ~17,600.
+  The fight: 59.3 fps (min window 55.5, 1 %-low 48.7), as before.
+- **Validation** (core, and core + sync, over the same route): only the known
+  `Undefined-Value-ShaderOutputNotConsumed-DynamicRendering` warning; the first run found
+  `VUID-RuntimeSpirv-OpVariable-08746` (built-in block mismatch vertex -> control), fixed.
+- Test aids: `nvn_vk: tessellated pipeline <n> at frame ...` and `tessellated draws in frames a..b: n` lines, the totals at
+  exit; `SSBU_VK_TESS_ALT=1` leaves the tessellated draws out on odd frames, `=2` draws them magenta there (with
+  `SSBU_SHOT_BURST=<period>,2` for pairs of pictures).
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
 
 1. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
    Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
-2. **Tessellation** (29 programs): reached in chapter 1 (NVN primitive type 14 = patches; the run stops there without
-   `SSBU_VK_MISSING=warn`). Translator stages and pipeline support are missing.
-3. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
-4. **Picture correctness**: no reference images to compare with.
-5. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
-6. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
+2. **Fight dips**: 50-52 fps windows and 1 %-lows of 47-49 fps remain (render thread memcpy and compute-buffer handling).
+3. **Picture correctness**: no reference images to compare with.
+4. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
+5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
-7. **First-run warm-up**: minutes of held loading screens after a translator change.
-9. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
+6. **First-run warm-up**: minutes of held loading screens after a translator change.
+7. The static scene after `SSBU_SKIP_MOVIES` (stage 5), `nn::account::PopOpenUsers` (called once, harmless), the
    `nn::audio` Resampler imports (not reached), about 170 other imports without a handler (none reached).
 
 ## Known shortcuts (marked `shortcut:` in the code)
@@ -297,4 +325,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
   buffer of the batch cost a submit and a wait.
 - Storage writes of a vertex / fragment stage are made visible at the end of the pass (a barrier), not between draws of the
   same pass (as on NVN without an explicit barrier).
+- Tessellation: a tessellated pipeline is made on the render thread at its first draw (one hitch; the driver's pipeline
+  cache keeps it); generic patch attributes and a vertex stage with clip distances in a tessellated program are not
+  handled (none in B3); the picture of the tessellated object was not compared with a reference.
 - Not tested: Windows builds of these changes (only `TOOLCHAIN=linux` was built and run).

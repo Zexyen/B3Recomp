@@ -2765,6 +2765,12 @@ static int draw_prepare(unsigned prim) {
     if (tess ? prim != 14 || !R.prog[3] || !R.prog[4] || !R.patch || R.patch > V.props.limits.maxTessellationPatchSize : prim > 6 || topo[prim] < 0) {
         static char msg[96]; snprintf(msg, sizeof msg, "a draw with NVN primitive type %u%s", prim, tess ? " and a tessellation stage (without the other one, or not patches)" : ""); nvn_vk_missing(msg); return 0; }
     VkPrimitiveTopology vtopo = tess ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : (VkPrimitiveTopology)topo[prim];
+    /* TEST ONLY: SSBU_VK_TESS_ALT=1 leaves the tessellated draws out on odd frames, =2 draws them there with a magenta fragment
+     * stage (with SSBU_SHOT_BURST=<period>,2: pictures with and without / marked) */
+    static int g_tess_alt = -1;
+    if (g_tess_alt < 0) g_tess_alt = getenv("SSBU_VK_TESS_ALT") ? atoi(getenv("SSBU_VK_TESS_ALT")) : 0;
+    int tess_mark = tess && g_tess_alt == 2 && (nvn_front_frame_next() & 1);
+    if (tess && g_tess_alt == 1 && (nvn_front_frame_next() & 1)) return 0;
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [b3recomp] TEST ONLY log */
     if (R.prog[2]) { nvn_vk_missing("a draw with a geometry stage"); return 0; }
     uint32_t ints = 0, sints = 0;
@@ -2782,6 +2788,12 @@ static int draw_prepare(unsigned prim) {
     VStage *cur = R.prog[0]->st[0].vk;
     VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, 0), *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
     VStage *tcs = NULL, *tes = NULL;
+    if (tess_mark && fs) {                         /* TEST ONLY (SSBU_VK_TESS_ALT=2) */
+        static VStage *mag;
+        if (!mag) { mag = calloc(1, sizeof *mag); mag->id = ++g_vstage_ids; mag->ok = 1; mag->stage = -1;
+                    mag->mod = module_from_glsl(1, "#version 460\nlayout(location = 0) out vec4 c;\nvoid main() { c = vec4(1.0, 0.0, 1.0, 1.0); }\n", "test: magenta fragment stage", &g_spv_unused); }
+        if (mag->mod) fs = mag;
+    }
     if (tess) {                                    /* [b3recomp] each stage declares the inputs of the next one that it never writes (forced outputs) */
         uint32_t key3[4] = {0, 0, R.tex_int[3], R.tex_sint[3]}, key4[4] = {0, 0, R.tex_int[4], R.tex_sint[4]};
         VStage *c3 = R.prog[3]->st[3].vk, *c4 = R.prog[4]->st[4].vk;
