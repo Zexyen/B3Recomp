@@ -2407,7 +2407,7 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
  * calm again; memory that is not write-watched stays on the ring. A buffer not drawn for 600 frames is freed.
  * SSBU_VK_VRC=0: every stream from the ring as before; =2 (test): the kept buffers in the ring's own memory type, filled by
  * the CPU, the path taken when the CPU can map video memory (resizable BAR, integrated GPUs); SSBU_VK_VRC_MB: the most memory
- * kept (512). Not used while compute buffers are live (buf_ref decides then) or for a draw tagged by SSBU_DRAWTAG. */
+ * kept (512). A stream that overlaps a compute buffer goes to buf_ref (vrc_cb_touch); not used for a draw tagged by SSBU_DRAWTAG. */
 uint64_t nvn_front_mem_region(const void *p, size_t n, int ask); uint64_t nvn_front_mem_stamp(const void *p, size_t n); uint64_t nvn_front_mem_now(void);      /* nvn_gl.c */
 int nvn_front_draw_tag(void);
 typedef struct { uint64_t addr, size, stamp, busy; LONG64 seen, used; VkBuffer buf; VMem mem; uint32_t gen; uint8_t state; } VRes;
@@ -2544,7 +2544,20 @@ static void vrc_fill(VRes *e) {
 }
 static int vrc_use(void) {
     if (g_vrc_on < 0) vrc_init();
-    return g_vrc_on > 0 && !g_cb_live && !g_cb_nkept && !nvn_front_draw_tag();
+    return g_vrc_on > 0 && !nvn_front_draw_tag();
+}
+/* [b3recomp] 1 = the range overlaps a compute buffer of this batch or a kept one: buf_ref decides (it binds, syncs or lands it).
+ * Any other vertex stream is guest memory only the CPU wrote (a landing writes it like the game does: write-watched), so
+ * the kept vertex buffers serve it also while compute buffers are live (B3 dispatches every frame: before, every stream
+ * went through the ring then, about 64 MB a frame in Tokyo). */
+static int vrc_cb_touch(uint64_t addr, uint64_t size) {
+    if (g_cb_live && addr < g_live_hi && addr + size > g_live_lo && cb_overlap(addr, size)) return 1;
+    if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
+        for (int n = 0; n < g_kept_n; n++) {
+            CB *k = &g_cb[g_kept_idx[n]];
+            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size) return 1;
+        }
+    return 0;
 }
 /* The vertex stream [addr, addr + size) of a draw: its kept buffer, else the ring. Returns the kept entry (NULL: the ring). */
 static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
@@ -2885,7 +2898,7 @@ static int draw_prepare(unsigned prim) {
         BufRef b;
         voff[i] = ~0ull; vbufs[i] = R.ring; vkept[i] = NULL;
         if (!(streams >> i & 1) || !R.vbuf[i].addr || !R.vbuf[i].size) continue;
-        if (vrc) vkept[i] = vrc_ref(R.vbuf[i].addr, R.vbuf[i].size, &b);
+        if (vrc && !vrc_cb_touch(R.vbuf[i].addr, R.vbuf[i].size)) vkept[i] = vrc_ref(R.vbuf[i].addr, R.vbuf[i].size, &b);
         else from_cb |= buf_ref(R.vbuf[i].addr, R.vbuf[i].size, 1, &b);
         voff[i] = b.off; vbufs[i] = b.buf;
     }
