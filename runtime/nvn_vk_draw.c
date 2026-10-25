@@ -991,9 +991,11 @@ static VTex *vt_get2(Tex *t, int sync) {
         if (!tu0) tu0 = tk();
         g_put_vt = vt;
         cmd_begin();
+        LARGE_INTEGER fru0, fru1, fruf; QueryPerformanceCounter(&fru0);
         if (!nvn_front_tex_read(t, vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
         R.uploads++;
-        if (framelog_on()) printf("FRU f%lld upload %p fmt 0x%x %dx%d mem %p draw %lld\n", nvn_front_frame_next(), (void *)t, t->b.format, t->b.width, t->b.height, (void *)t->mem, (long long)R.frame_draws);      /* TEST ONLY: SSBU_VK_FRAMELOG */
+        if (framelog_on()) printf("FRU f%lld upload %p fmt 0x%x %dx%d levels %d decode %d mem %p draw %lld %.2f ms\n", nvn_front_frame_next(), (void *)t, t->b.format, t->b.width, t->b.height, t->b.levels, vt->decode, (void *)t->mem, (long long)R.frame_draws,
+                                  (QueryPerformanceCounter(&fru1), QueryPerformanceFrequency(&fruf), (double)(fru1.QuadPart - fru0.QuadPart) * 1000.0 / (double)fruf.QuadPart));      /* TEST ONLY: SSBU_VK_FRAMELOG */
     }
     if (clear_last) {                              /* TEST ONLY (SSBU_VK_CLEARLAST, above): the creation clear lands after the upload */
         VkImageSubresourceRange sr = {vt->aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
