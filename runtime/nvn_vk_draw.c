@@ -1953,6 +1953,7 @@ typedef struct { uint64_t wm_off; uint32_t written; int16_t cb[16]; } CDisp;
 static CB g_cb[CB_N];
 static CDisp g_cdisp[2048];
 static int g_ncdisp, g_cb_live, g_cb_pending, g_cb_cached = -1;
+static int g_live_idx[CB_N], g_live_n;                /* [b3recomp] the entries made live in this batch (cb_live_add) */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
 /* SSBU_VK_CBKEEP: the buffer's bytes go to guest memory. With the snapshot of the fill (SSBU_VK_CBMERGE, the default) only
  * the words compute changed since the fill are written, and a word the game changed since then stays the game's. */
@@ -2042,7 +2043,7 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
         c->state = c->dirty = 0;
         c->busy = midbatch ? R.serial + 1 : 0;
     }
-    g_cb_live = g_cb_pending = 0; g_live_lo = ~0ull; g_live_hi = 0;
+    g_cb_live = g_cb_pending = 0; g_live_n = 0; g_live_lo = ~0ull; g_live_hi = 0;      /* no entry is live (state 1) any more */
     nvn_front_ccmp_landed();                       /* SSBU_COMPUTE_CMP: what the dispatches wrote is in guest memory now */
     g_cb_epoch++;
     g_tm[1] += tk() - t0;
@@ -2219,7 +2220,6 @@ static void cb_sync(void) {                        /* guest memory must hold wha
  * is read. buf_ref asks cb_inside / cb_overlap for about 15,000 ranges a frame in Tokyo, and the walk up to g_cb_hi (several
  * hundred entries once the table holds kept buffers) was the largest part of buf_ref; live entries are a few dozen. Live
  * entries do not overlap (cb_new lands an overlapping one first), so the order does not change what is found. */
-static int g_live_idx[CB_N], g_live_n;
 static void cb_live_add(CB *c) {
     if (g_live_n == CB_N) {                        /* full of entries that left state 1: keep the live ones */
         int n = 0;
@@ -2244,6 +2244,14 @@ static CB *cb_inside(uint64_t addr, uint64_t size) {
 }
 static int cb_overlap(uint64_t addr, uint64_t size) {
     for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) return 1; }
+    return 0;
+}
+/* [b3recomp] 1 = the range overlaps a compute buffer of this batch (state 1) or one the GPU may still write from the batch
+ * before (state 2): guest memory there is not what compute made yet (cb_sync). Kept buffers (state 3, 4): cb_kept_range. */
+static int cb_sync_needed(uint64_t addr, uint64_t size) {
+    if (g_cb_live && cb_overlap(addr, size)) return 1;
+    if (g_cb_pending)
+        for (int i = 0; i < g_cb_hi; i++) if (g_cb[i].state == 2 && addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size) return 1;
     return 0;
 }
 /* [b3recomp] guest memory the CPU is about to read (indirect draw / dispatch records) holds what compute wrote into it */
@@ -3622,11 +3630,14 @@ static void exec(const Cmd *m, int depth) {
         break;
     }
     case OP_COPY_BUF_BUF: if (drawlog_on()) printf("DLW f%lld copy %llx -> %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned long long)a[2]);      /* [b3recomp] TEST ONLY */
-        cb_sync(); if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;      /* guest memory is read / written: what compute wrote must be there (as OpenGL's compute_flush) */
+        if (cb_sync_needed(a[0], a[2]) || cb_sync_needed(a[1], a[2])) cb_sync();      /* guest memory is read / written: what compute wrote there must be there (as OpenGL's compute_flush) */
+        if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;
     case OP_UPDATE_UBO: if (drawlog_on()) printf("DLW f%lld update %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)(a[0] + a[2]), (unsigned long long)a[3]);      /* [b3recomp] TEST ONLY */
-        cb_sync(); if (g_cb_nkept) cb_kept_range(a[0] + a[2], a[3], 3); if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
+        if (cb_sync_needed(a[0] + a[2], a[3])) cb_sync();
+        if (g_cb_nkept) cb_kept_range(a[0] + a[2], a[3], 3); if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
     case OP_CLEAR_BUF: if (drawlog_on()) printf("DLW f%lld clear %llx +%llx = %08x\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned)a[2]);      /* [b3recomp] TEST ONLY */
-        cb_sync(); if (g_cb_nkept) cb_kept_range(a[0], a[1], 3); if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
+        if (cb_sync_needed(a[0], a[1])) cb_sync();
+        if (g_cb_nkept) cb_kept_range(a[0], a[1], 3); if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
     case OP_CLEARCOLOR: {
         unsigned i = (unsigned)a[0] & 7, mask = (unsigned)a[2] & 15;
         if (!R.have_targets || R.render_off || (int)i >= R.ncol || !R.col[i].tex) break;
