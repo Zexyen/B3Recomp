@@ -1,6 +1,6 @@
 /* [b3recomp] Offline check of the Maxwell -> Vulkan GLSL translator (runtime/mx_translate.c) on the stages a run dumped
  * (SSBU_SHADERDUMP_ALL=<dir>: one s<program>_<index>.mxd per stage, the game's own code: keep the folder out of the repo).
- * Every stage is translated as nvn_vk_draw.c does (target 1, its bindings) and compiled by glslang to SPIR-V; the failures
+ * Every stage (vertex, fragment, tessellation control / evaluation, compute) is translated as nvn_vk_draw.c does (target 1, its bindings) and compiled by glslang to SPIR-V; the failures
  * are counted by instruction / glslang message.
  *
  *   clang -O1 -I runtime tools/mxcheck.c runtime/mx_translate.c -lglslang -lglslang-default-resource-limits -o build/mxcheck
@@ -21,7 +21,7 @@ static int compile(int stage, const char *src, char *log, size_t n) {
     glslang_input_t in;
     memset(&in, 0, sizeof in);
     in.language = GLSLANG_SOURCE_GLSL;
-    in.stage = stage == 0 ? GLSLANG_STAGE_VERTEX : stage == 1 ? GLSLANG_STAGE_FRAGMENT : GLSLANG_STAGE_COMPUTE;
+    in.stage = stage == 0 ? GLSLANG_STAGE_VERTEX : stage == 1 ? GLSLANG_STAGE_FRAGMENT : stage == 3 ? GLSLANG_STAGE_TESSCONTROL : stage == 4 ? GLSLANG_STAGE_TESSEVALUATION : GLSLANG_STAGE_COMPUTE;
     in.client = GLSLANG_CLIENT_VULKAN; in.client_version = GLSLANG_TARGET_VULKAN_1_3;
     in.target_language = GLSLANG_TARGET_SPV; in.target_language_version = GLSLANG_TARGET_SPV_1_6;
     in.code = src; in.default_version = 460; in.default_profile = GLSLANG_NO_PROFILE;
@@ -78,9 +78,10 @@ int main(int argc, char **argv) {
         int s;
         if (rd32(ctl + 0x714) == 5) { s = 5; in.code = data + off; }
         else { s = rd32(data) == 0x12345678u ? stage_of_type[(rd32(data + 0x30) >> 10) & 15] : -1; in.code = data + 0x30; }
-        if (s < 0 || (s != 0 && s != 1 && s != 5) || off + len > data_len) { skipped++; free(b); continue; }
+        if (s < 0 || s == 2 || off + len > data_len) { skipped++; free(b); continue; }
         in.stage = s; in.code_len = (int)len;
         if (csize && coff && coff + csize <= data_len) { in.cdata = data + coff; in.cdata_size = csize; }
+        if (s == 4) { in.tess_prim = rd32(ctl + 0x738); in.tess_spacing = rd32(ctl + 0x73c); in.tess_point = rd32(ctl + 0x740); in.tess_order = rd32(ctl + 0x744); }
         in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s;
         in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
         if (s == 5) {

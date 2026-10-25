@@ -196,15 +196,22 @@ static const char *fmz_mul(Mx *e, const char *a, const char *b, int fmz) {
 }
 
 /* ---------------------------------------------------------------- attributes */
-static const char *attr_in(Mx *e, unsigned a, int vertex_reg_ok) {
+static int tess_stage(const Mx *e) { return e->in->stage == MX_TESS_CONTROL || e->in->stage == MX_TESS_EVAL; }
+/* vx: the vertex of a tessellation stage's input arrays (ALD's vertex register), NULL elsewhere */
+static const char *attr_in(Mx *e, unsigned a, const char *vx) {
     unsigned c = (a >> 2) & 3, st = (unsigned)e->in->stage;
-    (void)vertex_reg_ok;
+    const char *ix = tess_stage(e) ? S(e, "[%s]", vx ? vx : "0u") : "";
     if (a >= 0x80 && a < 0x280) {
         unsigned n = (a - 0x80) >> 4;
         e->in_attr |= 1u << n;
         e->in_comp[n] |= (uint8_t)(1u << c);
         if (st == MX_VERTEX && (e->in->int_attrs >> n & 1)) return S(e, "uint(in_attr%u[%u])", n, c);
-        return S(e, "U(in_attr%u[%u])", n, c);
+        return S(e, "U(in_attr%u%s[%u])", n, ix, c);
+    }
+    if (tess_stage(e)) {
+        if (a >= 0x70 && a < 0x80) return S(e, "U(gl_in%s.gl_Position[%u])", ix, c);
+        if (a == 0x60) return "uint(gl_PrimitiveID)";
+        if (st == MX_TESS_EVAL && (a == 0x2f0 || a == 0x2f4)) return S(e, "U(gl_TessCoord[%u])", (a - 0x2f0) >> 2);
     }
     if (st == MX_FRAGMENT) {
         if (a >= 0x70 && a < 0x80 && c < 2 && e->in->screen_scale && e->in->target == 1) { e->uses_fcs = 1; return S(e, "U(gl_FragCoord[%u] * mx_fcs)", c); }      /* track O: the game's pixel position */
@@ -239,16 +246,39 @@ static int mx_vk_clip(const MxIn *in) {
     return in->target == 1 ? m : 0;
 }
 static void attr_out(Mx *e, unsigned a, const char *v) {
-    unsigned c = (a >> 2) & 3;
-    if (e->in->stage != MX_VERTEX) { fail(e, "attribute store", "attribute store in stage %d", e->in->stage); return; }
+    unsigned c = (a >> 2) & 3, st = (unsigned)e->in->stage;
+    if (st == MX_TESS_CONTROL) {                    /* [b3recomp] the invocation's own output vertex (suyu: [gl_InvocationID]) */
+        if (a >= 0x70 && a < 0x80) emit(e, " gl_out[gl_InvocationID].gl_Position[%u] = F(%s);", c, v);
+        else if (a >= 0x80 && a < 0x280) { e->out_attr |= 1u << ((a - 0x80) >> 4); emit(e, " out_attr%u[gl_InvocationID][%u] = F(%s);", (a - 0x80) >> 4, c, v); }
+        else fail(e, "attribute store", "tessellation control store to attribute 0x%x", a);
+        return;
+    }
+    if (st != MX_VERTEX && st != MX_TESS_EVAL) { fail(e, "attribute store", "attribute store in stage %d", e->in->stage); return; }
     if (a >= 0x70 && a < 0x80) emit(e, " gl_Position[%u] = F(%s);", c, v);
     else if (a >= 0x80 && a < 0x280) { e->out_attr |= 1u << ((a - 0x80) >> 4); emit(e, " out_attr%u[%u] = F(%s);", (a - 0x80) >> 4, c, v); }
+    else if (a == 0x6c && st == MX_TESS_EVAL) emit(e, " /* point size 0x6c ignored (no point mode) */");
     else if (a == 0x6c) { e->uses_psize = 1; emit(e, e->in->target == 1 ? " mx_psize = F(%s);" : " gl_PointSize = F(%s);", v); }
     else if (a >= 0x2c0 && a < 0x2e0) { e->clip_out |= 1u << ((a - 0x2c0) >> 2); emit(e, mx_vk_clip(e->in) == 2 ? " mx_clip[%u] = F(%s);" : " gl_ClipDistance[%u] = F(%s);", (a - 0x2c0) >> 2, v); }
     else if (a == 0x64) { e->uses_layer_out = 1; emit(e, " gl_Layer = int(%s);", v); }
     else if (a == 0x68) { e->uses_vp_out = 1; emit(e, " gl_ViewportIndex = int(%s);", v); }
     else if ((a >= 0x280 && a < 0x2c0) || (a >= 0x300 && a < 0x3a0) || a == 0x2e8) emit(e, " /* legacy output 0x%x ignored */", a);
     else fail(e, "attribute store", "store to attribute 0x%x", a);
+}
+
+/* [b3recomp] a video instruction's operand (suyu ExtractVideoOperandValue): width 0 / 1 = byte sel, 2 = short sel, 3 = the word */
+static const char *vid_operand(Mx *e, const char *v, unsigned w, unsigned sel, int sg) {
+    if (w == 3) return v;
+    unsigned bits = w == 2 ? 16 : 8;
+    return sg ? S(e, "uint(bitfieldExtract(int(%s), %u, %u))", v, sel * bits, bits) : S(e, "bitfieldExtract(%s, %u, %u)", v, sel * bits, bits);
+}
+/* [b3recomp] patch attribute p (address / 4; suyu's IR::Patch): 0..3 the outer tessellation levels, 4 / 5 the inner ones, 6 + 4k + c
+ * component c of generic patch vector k (not supported). write: the lvalue (float) of the control stage, else the value as uint. */
+static const char *patch_attr(Mx *e, unsigned p, int write) {
+    const char *lv;
+    if (p < 4) lv = S(e, "gl_TessLevelOuter[%u]", p);
+    else if (p < 6) lv = S(e, "gl_TessLevelInner[%u]", p - 4);
+    else { fail(e, "patch attribute", "generic patch attribute %u (shortcut: not declared; B3's 29 control stages have only the 6 levels)", p); return "0u"; }
+    return write ? lv : S(e, "U(%s)", lv);
 }
 
 /* ---------------------------------------------------------------- textures */
@@ -736,7 +766,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         case 0x12: v = "0x3f800000u"; break;                     /* y direction: +1 (the window origin is applied by glClipControl) */
         case 0x13: v = e->in->stage == MX_FRAGMENT ? "(gl_HelperInvocation ? 0xffffffffu : 0u)" : "0u"; break;
         case 0x1c: v = "0u"; break;                              /* affinity */
-        case 0x1d: v = "0x00ff0000u"; break;                     /* invocation info (suyu: patch vertices << 16 in tessellation; 0x00ff0000 otherwise) */
+        case 0x1d: v = tess_stage(e) ? "(uint(gl_PatchVerticesIn) << 16)" : "0x00ff0000u"; break;      /* invocation info (suyu: patch vertices << 16 in tessellation; 0x00ff0000 otherwise) */
         case 0x1e: case 0x1f: v = "0x3f800000u"; break;          /* viewport w scale factors: 1.0 */
         case 0x20: v = "(gl_LocalInvocationID.x | (gl_LocalInvocationID.y << 16) | (gl_LocalInvocationID.z << 26))"; break;
         case 0x21: v = "gl_LocalInvocationID.x"; break;
@@ -824,6 +854,34 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         default: res = dsg ? S(e, "uint(%s(int(%s), int(%s)))", vop == 5 ? "min" : "max", lhs, rc) : S(e, "%s(%s, %s)", vop == 5 ? "min" : "max", lhs, rc); break;
         }
         emit(e, "uint vl = %s; %s = vl;", res, DST);
+        break;
+    }
+    case MXOP_ISBERD:                           /* [b3recomp] as suyu: the default form only, a move (the vertex index of ALD / AST) */
+        if (MXB(i, 31, 1) || MXB(i, 32, 1) || MXB(i, 33, 2) || MXB(i, 47, 2)) { fail(e, "ISBERD", "ISBERD form %016llx", (unsigned long long)i); break; }
+        emit(e, "%s = %s;", DST, A8);
+        break;
+    case MXOP_VMAD: case MXOP_VSETP: {          /* [b3recomp] as suyu: video operands (width 0/1 byte, 2 short, 3 word; immediates 16-bit, no selector
+                                                 * for VMAD). VMAD: d = a * b + c (no CC / SAT / scale / negation). VSETP: compare (its sign = b's), with
+                                                 * the boolean op on Pa / !compare on Pb */
+        unsigned asel = MXB(i, 36, 2), aw = MXB(i, 37, 2), bsel = MXB(i, 28, 2), bw = MXB(i, 29, 2);
+        int asg = (int)MXB(i, 48, 1), bsg = (int)MXB(i, 49, 1), breg = (int)MXB(i, 50, 1);
+        if (op == MXOP_VMAD && (MXB(i, 47, 1) || MXB(i, 51, 2) || MXB(i, 53, 3))) { fail(e, "VMAD", "VMAD form %016llx", (unsigned long long)i); break; }
+        if (!breg) { bw = 2; if (op == MXOP_VMAD) bsel = 0; }
+        const char *va = vid_operand(e, A8, aw, asel, asg), *vb = vid_operand(e, breg ? R20 : S(e, "%uu", (unsigned)MXB(i, 20, 16)), bw, bsel, bsg);
+        if (op == MXOP_VMAD) { emit(e, "%s = %s * %s + %s;", DST, va, vb, R39); break; }
+        unsigned cop = MXB(i, 43, 5);
+        const char *ca = bsg ? S(e, "int(%s)", va) : va, *cb = bsg ? S(e, "int(%s)", vb) : vb, *cmp;
+        switch (cop) {
+        case 0: cmp = "false"; break; case 1: cmp = S(e, "%s < %s", ca, cb); break; case 2: cmp = S(e, "%s == %s", ca, cb); break;
+        case 3: cmp = S(e, "%s <= %s", ca, cb); break; case 16: cmp = S(e, "%s > %s", ca, cb); break; case 17: cmp = S(e, "%s != %s", ca, cb); break;
+        case 18: cmp = S(e, "%s >= %s", ca, cb); break; case 19: cmp = "true"; break;
+        default: fail(e, "VSETP", "compare op %u", cop); cmp = "false"; break;
+        }
+        if (e->fail) break;
+        const char *bp = PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1));
+        emit(e, "bool cmp = %s;", cmp);
+        if (PD(e, MXB(i, 3, 3))) emit(e, " %s = %s;", PD(e, MXB(i, 3, 3)), BOP(e, "cmp", bp, MXB(i, 45, 2)));
+        if (PD(e, MXB(i, 0, 3))) emit(e, " %s = %s;", PD(e, MXB(i, 0, 3)), BOP(e, "!cmp", bp, MXB(i, 45, 2)));
         break;
     }
     case MXOP_NOP: case MXOP_DEPBAR: case MXOP_MEMBAR: case MXOP_VOTE_vtg: case MXOP_CCTL: case MXOP_CCTLL: case MXOP_SSY: case MXOP_PBK: case MXOP_PCNT:
@@ -1180,11 +1238,26 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_ALD: {
         unsigned a = MXB(i, 20, 10), n = MXB(i, 47, 2) + 1, rd = MXB(i, 0, 8);
         if (MXB(i, 8, 8) != 255) { fail(e, "ALD.indexed", "indexed attribute load"); break; }
-        if (MXB(i, 31, 1)) { fail(e, "ALD.P", "patch attribute load"); break; }
-        if (e->in->stage == MX_GEOMETRY || e->in->stage == MX_TESS_CONTROL || e->in->stage == MX_TESS_EVAL) { fail(e, "ALD (vertex array)", "attribute load in stage %d", e->in->stage); break; }
+        if (e->in->stage == MX_GEOMETRY) { fail(e, "ALD (vertex array)", "attribute load in stage %d", e->in->stage); break; }
+        if (tess_stage(e)) {                     /* [b3recomp] as suyu: vertex register bits 39..46; .P (31) a patch attribute, .O (32) the
+                                                  * control stage's own outputs */
+            const char *vx = X(e, MXB(i, 39, 8));
+            for (unsigned k = 0; k < n && !e->fail; k++) {
+                unsigned ad = a + k * 4, c = (ad >> 2) & 3;
+                const char *v;
+                if (MXB(i, 31, 1)) v = patch_attr(e, ad >> 2, 0);
+                else if (MXB(i, 32, 1) && e->in->stage == MX_TESS_CONTROL) {      /* evaluation stage: .O names the control stage's outputs = its inputs (suyu ignores .O) */
+                    if (ad >= 0x70 && ad < 0x80) v = S(e, "U(gl_out[%s].gl_Position[%u])", vx, c);
+                    else if (ad >= 0x80 && ad < 0x280) { e->out_attr |= 1u << ((ad - 0x80) >> 4); v = S(e, "U(out_attr%u[%s][%u])", (ad - 0x80) >> 4, vx, c); }
+                    else { fail(e, "ALD.O", "read of output 0x%x", ad); break; }
+                } else v = attr_in(e, ad, vx);
+                if (rd != 255 && !e->fail) emit(e, " %s = %s;", D(e, rd + k), v);
+            }
+            break;
+        }
         for (unsigned k = 0; k < n; k++) {
             unsigned ad = a + k * 4;
-            const char *v = MXB(i, 32, 1) && e->in->stage == MX_VERTEX && ad >= 0x80 && ad < 0x280 ? S(e, "U(out_attr%u[%u])", (ad - 0x80) >> 4, (ad >> 2) & 3) : attr_in(e, ad, 0);
+            const char *v = MXB(i, 32, 1) && e->in->stage == MX_VERTEX && ad >= 0x80 && ad < 0x280 ? S(e, "U(out_attr%u[%u])", (ad - 0x80) >> 4, (ad >> 2) & 3) : attr_in(e, ad, NULL);
             if (rd != 255) emit(e, " %s = %s;", D(e, rd + k), v);
         }
         break;
@@ -1192,7 +1265,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_AST: {
         unsigned a = MXB(i, 20, 10), n = MXB(i, 47, 2) + 1, rs = MXB(i, 0, 8);
         if (MXB(i, 8, 8) != 255) { fail(e, "AST.indexed", "indexed attribute store"); break; }
-        if (MXB(i, 31, 1)) { fail(e, "AST.P", "patch attribute store"); break; }
+        if (MXB(i, 31, 1)) {                     /* [b3recomp] patch attribute (tessellation control) */
+            if (e->in->stage != MX_TESS_CONTROL) { fail(e, "AST.P", "patch attribute store in stage %d", e->in->stage); break; }
+            for (unsigned k = 0; k < n && !e->fail; k++) { const char *dst = patch_attr(e, (a >> 2) + k, 1); if (!e->fail) emit(e, " %s = F(%s);", dst, X(e, rs == 255 ? 255 : rs + k)); }
+            break;
+        }
         for (unsigned k = 0; k < n; k++) attr_out(e, a + k * 4, X(e, rs == 255 ? 255 : rs + k));
         break;
     }
@@ -1650,7 +1727,8 @@ int mx_translate(const MxIn *in, MxOut *out) {
         static const unsigned hw[6] = {0, 4, 3, 1, 2, 0};          /* hardware stage order: vertex, tess control, tess eval, geometry, fragment */
         e->ssbo_word0 = in->stage == MX_COMPUTE ? 0x310 / 4 : (0x110 + 0x100 * hw[in->stage]) / 4;
     }
-    if (in->stage != MX_VERTEX && in->stage != MX_FRAGMENT && in->stage != MX_COMPUTE) fail(e, in->stage == MX_GEOMETRY ? "geometry stage" : "tessellation stage", "stage %d is not supported", in->stage);
+    if (in->stage == MX_GEOMETRY) fail(e, "geometry stage", "stage %d is not supported", in->stage);
+    if (in->stage == MX_TESS_EVAL && !(in->tess_prim == 4 || in->tess_prim == 7 || in->tess_prim == 0x8e7a)) fail(e, "tessellation mode", "primitive mode 0x%x", in->tess_prim);
 
     /* the code that ends the shader (EXIT): fragment outputs from the registers, alpha test, depth */
     if (in->stage == MX_FRAGMENT) {
@@ -1690,7 +1768,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         Mx h;
         memset(&h, 0, sizeof h);
         h.in = in;
-        if (in->stage == MX_VERTEX) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
+        if (in->stage == MX_VERTEX || tess_stage(e)) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
         const int vk = in->target == 1;
         const char *set0 = vk ? "set = 0, " : "", *set1 = vk ? "set = 1, " : "";
         if (vk) emit(&h, "#version 460\n#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
@@ -1707,7 +1785,15 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (vk && in->stage == MX_VERTEX) emit(&h, "float mx_psize;\n");
         for (int k = 0; vk && k < e->nsmp; k++) emit(&h, "layout(set = 1, binding = %u) uniform %s mx_t%u_%s;\n", (unsigned)e->smp[k].binding, e->smp[k].type, (unsigned)e->smp[k].unit, e->smp[k].type);
         for (unsigned n = 0; n < 18; n++) if (e->cbufs >> n & 1) emit(&h, "layout(std430, %sbinding = %u) readonly buffer CB%u { uint c%u[]; };\n", set0, in->binding_base + n, n, n);
-        if (in->stage == MX_VERTEX) {
+        if (tess_stage(e)) {                    /* [b3recomp] input arrays; the control stage's outputs are arrays too */
+            if (in->stage == MX_TESS_CONTROL) emit(&h, "layout(vertices = %u) out;\n", in->code[0x0b] ? in->code[0x0b] : 1u);      /* program header: threads per input primitive */
+            else emit(&h, "layout(%s, %s, %s%s) in;\n", in->tess_prim == 7 ? "quads" : in->tess_prim == 4 ? "triangles" : "isolines",
+                      in->tess_spacing == 0x8e7b ? "fractional_odd_spacing" : in->tess_spacing == 0x8e7c ? "fractional_even_spacing" : "equal_spacing",
+                      in->tess_order == 0x900 ? "cw" : "ccw", in->tess_point ? ", point_mode" : "");
+            for (unsigned n = 0; n < 32; n++) if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in vec4 in_attr%u[];\n", n, n);
+            if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u[];\n", n, n);
+        }
+        if (in->stage == MX_VERTEX || in->stage == MX_TESS_EVAL) {
             int nclip = 0;
             for (int k = 0; k < 8; k++) if (e->clip_out >> k & 1) nclip = k + 1;
             emit(&h, "out gl_PerVertex { vec4 gl_Position; float gl_PointSize;");
@@ -1723,7 +1809,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
                 if (vk && inv) emit(&h, "invariant gl_Position;\n");
                 if (vk && inv >= 2) emit(&h, "precise gl_Position;\n");
             }
-            for (unsigned n = 0; n < 32; n++)
+            for (unsigned n = 0; n < 32 && in->stage == MX_VERTEX; n++)
                 if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in %s in_attr%u;\n", n, in->int_attrs >> n & 1 ? (in->sint_attrs >> n & 1 ? "ivec4" : "uvec4") : "vec4", n);
             for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u;\n", n, n);
         } else if (in->stage == MX_FRAGMENT) {
@@ -1784,9 +1870,10 @@ int mx_translate(const MxIn *in, MxOut *out) {
             emit(&h, " } return 0u; }\n");
         }
         emit(&h, "void main() {\n");
-        if (in->stage == MX_VERTEX) {
+        if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, " out_attr%u[gl_InvocationID] = vec4(0.0, 0.0, 0.0, 1.0);\n", n);
+        if (in->stage == MX_VERTEX || in->stage == MX_TESS_EVAL) {
             emit(&h, " gl_Position = vec4(0.0, 0.0, 0.0, 1.0);\n");
-            if (vk) emit(&h, " gl_PointSize = mx_point_size;\n");
+            if (vk && in->stage == MX_VERTEX) emit(&h, " gl_PointSize = mx_point_size;\n");
             if (vk && mx_vk_clip(in) == 1) for (int k = 0; k < 8; k++) if (e->clip_out >> k & 1 || (e->clip_out >> k) > 1) emit(&h, " gl_ClipDistance[%d] = 0.0;\n", k);      /* round 17: every declared element */
             for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, " out_attr%u = vec4(0.0, 0.0, 0.0, 1.0);\n", n);
         }

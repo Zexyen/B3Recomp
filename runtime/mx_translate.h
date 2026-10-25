@@ -66,6 +66,10 @@ typedef struct {
      * per real pixel of the pass, 1.0 on a target that is not scaled), and the coordinates of a texelFetch from a 2D sampler
      * are mapped from the game's texel grid (the size table in c2) to the image's real one (textureSize). */
     int screen_scale;
+    /* [b3recomp] tessellation evaluation stage: the GLSLC tessellation info of the NVN control section (+0x738 primitive mode,
+     * +0x73c spacing, +0x740 point mode, +0x744 vertex order; OpenGL enums: GL_TRIANGLES / GL_QUADS / GL_ISOLINES, GL_EQUAL /
+     * GL_FRACTIONAL_ODD / GL_FRACTIONAL_EVEN, GL_CW / GL_CCW). The control stage's output vertices come from its program header. */
+    uint32_t tess_prim, tess_spacing, tess_point, tess_order;
 } MxIn;
 
 typedef struct {
