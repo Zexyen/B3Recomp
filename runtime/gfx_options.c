@@ -81,12 +81,12 @@ static const char *const k_default_ini =
 "\r\n"
 "; resolution_scale = 1.0\r\n"
 /* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
-/* [Recomps#1] Bayonetta 2's sizes (1280x720) and the measurements of finding 83; up to 3.0 = 4K (finding 105) */
-";   Internal resolution scale, 0.25 to 3.0 (Vulkan only; OpenGL ignores it). 1.0 = the game's own size: Bayonetta 2\r\n"
-";   renders at 1280x720. 1.5 = 1920x1080, 2.0 = 2560x1440, 3.0 = 3840x2160 (4K) (drawn larger, reduced to the window:\r\n"
-";   sharper edges). Measured in the first tutorial fight on an RTX 5070 (2026-10-16/17): GPU time per frame 1.68 ms at\r\n"
-";   1.0, 1.96 ms at 1.5, 2.32 ms at 2.0; 59.3-59.5 fps up to 3.0; 2.0 takes about 300 MB more video memory, 3.0 about\r\n"
-";   640 MB (strong GPUs only). Below 1.0 not tested.\r\n"
+/* [b3recomp] Bayonetta 3's sizes (1600x900) and the measurements of 2026-10-25 (docs/STATUS.md, "Resolution scale") */
+";   Internal resolution scale, 0.25 to 3.0 (Vulkan only; OpenGL ignores it). 1.0 = the game's own size: Bayonetta 3\r\n"
+";   renders at 1600x900. 1.2 = 1920x1080, 1.6 = 2560x1440, 2.4 = 3840x2160 (4K): drawn larger, shown at the window's\r\n"
+";   size (width / height above). Measured on an RX 9070 XT (2026-10-25): 59.6-59.9 fps in a fight at every one of\r\n"
+";   them; 2.4 takes about 1 GB of video memory more. The first run at a scale other than 1.0 holds the loading screens\r\n"
+";   for about two minutes once, while the shaders are translated for it.\r\n"
 "resolution_scale = 1.0\r\n"
 "\r\n"
 "; anisotropic_filtering = game | 2 | 4 | 8 | 16      (Vulkan)\r\n"
