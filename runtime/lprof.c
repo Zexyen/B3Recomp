@@ -15,7 +15,7 @@
 
 #define LP_SIG (SIGRTMIN + 2)                    /* not SIGPROF: SDL3 threads (and the threads they start) block SIGPROF / SIGALRM */
 #define LP_DEPTH 12
-#define LP_MAX (1 << 20)
+#define LP_MAX (1 << 22)                        /* 4M samples (about 420 MB): 150 s of 50 threads */
 typedef struct { int tid, n; void *pc[LP_DEPTH]; } LpSample;
 static LpSample *g_lp;
 static volatile long g_lp_n;
