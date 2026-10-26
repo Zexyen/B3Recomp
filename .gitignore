@@ -1,7 +1,7 @@
 # Nothing derived from the game is ever committed: the dump, converted ELFs, lifted C, objects, the game library,
 # caches and saves are all made on the player's PC from their own dump.
-/dump/
-/targets/
+/dump
+/targets
 /build/
 /cache/
 /deps/

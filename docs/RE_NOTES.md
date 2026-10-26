@@ -113,9 +113,20 @@ entry (0x20 bytes)
 ```
 
 - Codec names are strings in the name table: `"OodleKraken"` (11,760 entries) and `"None"` (6,972: the Wwise banks,
-  text). A Kraken entry is one Oodle stream (header bytes `8c 06`). **Not zstd.** Oodle is closed source; main contains
-  its own Kraken decoder, so the recompiled game decompresses its files itself. `pkz.py` extracts Kraken entries only
-  with an Oodle library the user already has (`--oodle`).
+  text). A Kraken entry is one Oodle stream (header bytes `8c 06`: no CRC flag). **Not zstd.** Oodle is closed source; main
+  contains its own Kraken decoder, so the recompiled game decompresses its files itself, and `b3-game --pkz-dump` runs it
+  for the tools (STATUS.md, "RomFS archives"; `pkz.py --dump`).
+- **Codec in the loader**: `f_7100cbdf80` reads each entry and maps the codec name to an id: `"None"` 0, `"ZStandard"`
+  0x65, `"OodleKraken"` 0xc9 (any other name: the entry is skipped). The id is kept per entry, so a stored entry can
+  replace a Kraken one (checked in a run).
+- **The decoder**: the game's codec object (vtable behind GOT 0x71024ac388; constructor at 0x7100cbc48c sets
+  compressor = 8, Kraken) uses Oodle's streaming API (names from the public API, matched by arguments and error strings). Init (0x7100cbc698): `OodleLZDecoder_MemorySizeNeeded(8, -1)`
+  (0x71012fefd0), that much memory from the game's heap, a 10 MB window buffer, `OodleLZDecoder_Create(8, rawLen, mem,
+  size)` (0x71012ff110), a 0x40002-byte input buffer. Read (0x7100cbc7f8): `OodleLZDecoder_DecodeSome(dec, out, decBuf,
+  decPos, decSize, decAvail, comp, compAvail, fuzzSafe 0, checkCRC 0, verbosity 0, threadPhase 3)` (0x71012ff2f0; out =
+  `{s32 decoded, compUsed, quantumRaw, quantumComp}`; at most one 256 KB quantum a call; "1000 calls without progress" is
+  its stall check). `OodleLZDecoder_Destroy` (0x71012ff2d0) frees only memory it allocated itself. Kraken needs none of
+  the run-time-installed parts (legacy LZ vtable, plug-ins): called on a bare image (relocated, imports bound) it decodes.
 - Entry names are paths (`core/core.dat`, `Text/BATTLE/bayo_EUde.bin`, `sound/bgm/BGM.bnk`); `root_000.pkz` holds the
   shader archives (`shader.dat`, `shadereff*.dat`, ...). The inner `.dat`/`.dtt` files are PlatinumGames DAT
   (`DAT\0`, as in B2), with `.bxm` XML; sound is Wwise `.bnk`.

@@ -340,6 +340,8 @@ int main(int argc, char **argv) {
     { void register_b3_imports(void); register_b3_imports(); }   /* [b3recomp] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / SSBU_STRICT (plan\FAKE_AUDIT.md) */
+    /* [b3recomp] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
+    if (argc > 3 && !strcmp(argv[2], "--pkz-dump")) { int pkz_dump(const char *, char **, int); return pkz_dump(argv[3], argv + 4, argc - 4); }
     display_init();
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
     /* the lifted code uses the host stack for every guest call: give it plenty */
