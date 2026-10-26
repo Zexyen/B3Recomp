@@ -27,6 +27,8 @@ AI helped in reverse engineering the game, with Ghidra and the open-source proje
 | `runtime/mx_ops.h` (via ssbu-recomp) | Generated from suyu `src/video_core/.../maxwell.inc` (Maxwell opcode table) | GPL-3.0-or-later (suyu) | None by us |
 | `runtime/mx_translate.c`, `runtime/nnalbum.c`, `runtime/nnapplet.c`, `runtime/nnnet_c4a.inc`, ... (via ssbu-recomp) | Behaviour described after suyu sources, cited in comments as `[suyu] <file>` | GPL-3.0-or-later (suyu) | — |
 | `runtime/tex_decode.c` (via ssbu-recomp) | Tables from the Khronos Data Format Specification (BCn / ASTC) | Specification | — |
+| `runtime/third_party/stb_truetype.h` | [stb](https://github.com/nothings/stb) `stb_truetype.h` v1.26, by Sean Barrett | Public domain or MIT (the file's own text) | None |
+| `runtime/third_party/NotoSerif-pcmenu.ttf` | Noto Serif Regular 2.015 (The Noto Project Authors), the PC menu's font | SIL Open Font License 1.1 (`runtime/third_party/OFL-NotoSerif.txt`) | Subset to Latin-1 and a few punctuation marks (`pyftsubset`, kerning kept, hinting removed) |
 
 Our own files (everything else: `scripts/`, `launcher/`, `tests/`, `lifter/regcache.py`, `lifter/sdklift.py`,
 `runtime/gen/make_gen.py`, new runtime files) are under the same licence. `scripts/setup.py` follows the structure of

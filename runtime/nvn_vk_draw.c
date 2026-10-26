@@ -1174,6 +1174,8 @@ static VkImageView vt_view(VTex *vt, const EView *e, int dim, int attach) {
 /* ---------------------------------------------------------------- samplers (shared by value, never deleted before shutdown) */
 static struct { SamplerParams p; VkSampler s; } g_smp[2048];
 static int g_nsmp;
+static VkSampler g_smp_old[4096];                 /* [b3recomp] samplers of an earlier anisotropic filtering (the PC menu flushed the table), kept to shutdown */
+static int g_nsmp_old;
 static VkSampler g_smp_default;
 static VkSampler sampler_get(const SamplerParams *p) {
     static const VkSamplerAddressMode wrap[8] = {VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE,
@@ -4488,6 +4490,7 @@ static void hdr_pass(uint32_t index, VkImage pic) {
     image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 static void vk_present2(void *arg, int progress);
+static PresentJob g_pcm_last; static void pcm_vk_draw(VkImage tgt); static void pcm_vk_free(void);      /* [b3recomp] the PC menu (nvn_vk_pcmenu.c) */
 /* Session 14: THE KEPT PRESENT. vk_present2 has blitted and submitted the frame; when display.c says the frame is to be shown
  * at the next tick, vkQueuePresentKHR is not called there: what it needs is kept here and the vsync thread posts
  * nvn_vk_present_flush_job at the tick (render thread, between two other jobs). An out-of-date swapchain found here is
@@ -4589,6 +4592,7 @@ static void vk_present2(void *arg, int progress) {
     if (g_tl_t0 && g_tl_first) { LONG64 now = tk(); g_tl_sum[0] += g_tl_first - g_tl_t0; g_tl_sum[1] += g_tl_last - g_tl_t0; g_tl_sum[2] += now - g_tl_t0; g_tl_n++; g_tl_first = 0; }
     if (g_pt_on > 0 && g_in_fight) g_pt_frames++;
     if (j->win) for (int i = 0; i < j->win->count && i < 8; i++) wintex_note(j->win->tex[i]);
+    g_pcm_last = *j;                               /* [b3recomp] shown again under the PC menu while it holds the game */
     g_ovl.bar_arg = arg;
     g_wd_where = 1;
     m4_barrier(frame, R.frame_draws);
@@ -4744,6 +4748,7 @@ swap: ;
         } else { VkClearColorValue z; memset(&z, 0, sizeof z); z.float32[3] = 1.0f; vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr); }
         fl_capture(vt, fl_s4, frame, fl_layout);      /* session 13: 16x9 copy of what is presented, for the flash detector */
         overlay_draw(tgt);
+        pcm_vk_draw(tgt);                             /* [b3recomp] the PC menu's panel (nvn_vk_pcmenu.c); nothing while it is closed */
         if (V.hdr) hdr_pass(index, tgt);              /* [Recomps#1] finding 147: leaves the swapchain image in PRESENT_SRC */
         else image_barrier(V.images[index], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         tp[3] = tk();
@@ -5202,6 +5207,8 @@ static void vkd_shutdown(void) {
         free(v);
     }
     for (int i = 0; i < g_nsmp; i++) vkDestroySampler(V.device, g_smp[i].s, NULL);
+    for (int i = 0; i < g_nsmp_old; i++) vkDestroySampler(V.device, g_smp_old[i], NULL);
+    pcm_vk_free();
     vkDestroySampler(V.device, g_smp_default, NULL);
     for (int i = 0; i < UT_N; i++) if (g_ut[i].t) { vkDestroyDescriptorUpdateTemplate(V.device, g_ut[i].t, NULL); g_ut[i].t = VK_NULL_HANDLE; }      /* finding 145 */
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }

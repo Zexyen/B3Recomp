@@ -4996,6 +4996,9 @@ unsigned long nvn_front_present_tid(void) { return g_pf_main_tid; }      /* the 
  * render thread (in order with the other jobs; nobody waits for it). */
 void nvn_vk_present_flush_job(void *arg);              /* nvn_vk_draw.c */
 void nvn_front_post_present_flush(void) { if (g_vk) gl_post(nvn_vk_present_flush_job, NULL, 0); }
+/* [b3recomp] the PC settings menu (pcmenu.c, its own thread): its picture once more, as a job of the render thread */
+void nvn_vk_pcmenu_job(void *arg);                    /* nvn_vk_pcmenu.c */
+int nvn_front_post_pcmenu(void) { if (g_vk) gl_post(nvn_vk_pcmenu_job, NULL, 0); return g_vk; }
 /* ---- Track L1 (input latency), early present. The game submits the commands of a frame's picture BEFORE it waits for the
  * window texture (nvnSyncWait on the acquire sync = display_wait_refresh), then reads the pad, runs that frame's logic and
  * only then calls nvnQueuePresentTexture for the picture it had finished before the wait (measured: tests\logs\vk13_l1t_*,
