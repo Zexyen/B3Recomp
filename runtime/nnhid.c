@@ -659,6 +659,14 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
     if (rx > STICK_MAX / 2) buttons |= 1ull << (BTN_SL_RIGHT + 4);
     if (ry < -STICK_MAX / 2) buttons |= 1ull << (BTN_SL_DOWN + 4);
     wr64(out + 8, buttons);
+    {   /* [b3recomp] test aid: with SSBU_KBM_SCRIPT the keyboard player's state is logged at every change */
+        static int on = -1; static uint64_t lb = ~0ull; static int ls[4];
+        if (on < 0) on = getenv("SSBU_KBM_SCRIPT") != NULL;
+        if (on && (int)id == g_keyboard_player && (buttons != lb || lx != ls[0] || ly != ls[1] || rx != ls[2] || ry != ls[3])) {
+            lb = buttons; ls[0] = lx; ls[1] = ly; ls[2] = rx; ls[3] = ry;
+            printf("kbm: player %u buttons %llx left %d %d right %d %d\n", id + 1, (unsigned long long)buttons, lx, ly, rx, ry);
+        }
+    }
     if (id == 0) { void display_l1_poll(uint64_t buttons, long long fight_ticks, long long poll); int r1_ra_phase(void); if (r1_ra_phase() != 1) display_l1_poll(buttons, l1_ticks, (long long)g_seq_polls); }      /* (R1 run-ahead: the speculative pass's poll is not a poll of the real timeline) */      /* L1 (input latency): the time of player 1's poll, the press it saw */
     wr32(out + 0x10, (uint32_t)lx);
     wr32(out + 0x14, (uint32_t)ly);

@@ -439,9 +439,13 @@ static DWORD WINAPI window_thread(LPVOID arg) {
 
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
- * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. The mouse
- * camera and the keyboard come later (milestone 4). */
+ * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
+ * mouse buttons are kept as the window's events leave them (GetAsyncKeyState below); SSBU_KBM_SCRIPT feeds synthetic
+ * events into the same queue (test aid, kbm_script_thread). */
 #include <SDL3/SDL.h>
+#include "nnpad.h"
+static int g_kbm_test;                       /* SSBU_KBM_SCRIPT set: the window counts as focused (a hidden test window never gets the focus) */
+static int has_focus(SDL_Window *w) { return g_kbm_test || (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS); }
 BOOL GetClientRect(HWND h, RECT *r) {
     int w = 0, hh = 0;
     memset(r, 0, sizeof *r);
@@ -453,9 +457,12 @@ BOOL IsIconic(HWND h) { return h && (SDL_GetWindowFlags((SDL_Window *)h) & SDL_W
 int GetWindowTextA(HWND h, LPSTR out, int n) { const char *t = h ? SDL_GetWindowTitle((SDL_Window *)h) : ""; snprintf(out, (size_t)n, "%s", t ? t : ""); return (int)strlen(out); }
 BOOL SetWindowTextA(HWND h, LPCSTR t) { return h && SDL_SetWindowTitle((SDL_Window *)h, t); }
 /* focus: the game window is "the foreground window" while it has the keyboard focus (nnhid.c, nnmisc.c focus rules) */
-HWND GetForegroundWindow(void) { return g_hwnd && (SDL_GetWindowFlags((SDL_Window *)g_hwnd) & SDL_WINDOW_INPUT_FOCUS) ? g_hwnd : NULL; }
+HWND GetForegroundWindow(void) { return g_hwnd && has_focus((SDL_Window *)g_hwnd) ? g_hwnd : NULL; }
 DWORD GetWindowThreadProcessId(HWND h, DWORD *pid) { if (!h || h != g_hwnd) return 0; if (pid) *pid = GetCurrentProcessId(); return 1; }
-/* GetAsyncKeyState on SDL's keyboard and mouse state: the Windows key codes nnhid.c and controllers.ini use */
+/* GetAsyncKeyState on the keys and mouse buttons the window's events left down (window thread; cleared when the focus goes):
+ * the Windows key codes nnhid.c and controllers.ini use. Not SDL_GetKeyboardState: synthetic events do not reach it. */
+static volatile unsigned char g_keys[SDL_SCANCODE_COUNT];
+static volatile Uint32 g_mbtn;
 static SDL_Scancode vk_scancode(int vk) {
     if (vk >= 'A' && vk <= 'Z') return (SDL_Scancode)(SDL_SCANCODE_A + (vk - 'A'));
     if (vk >= '1' && vk <= '9') return (SDL_Scancode)(SDL_SCANCODE_1 + (vk - '1'));
@@ -480,8 +487,8 @@ static SDL_Scancode vk_scancode(int vk) {
     }
 }
 SHORT GetAsyncKeyState(int vk) {
-    SDL_MouseButtonFlags mb = SDL_GetMouseState(NULL, NULL);
-    const bool *k = SDL_GetKeyboardState(NULL);
+    Uint32 mb = g_mbtn;
+    const volatile unsigned char *k = g_keys;
     int down;
     switch (vk) {
     case VK_LBUTTON: down = (mb & SDL_BUTTON_LMASK) != 0; break;
@@ -499,11 +506,66 @@ SHORT GetAsyncKeyState(int vk) {
 /* the mouse camera's capture rule (see g_mouse_want above): SDL's relative mode hides the cursor and gives raw motion */
 static void sdl_mouse_update(SDL_Window *w) {
     SDL_WindowFlags f = SDL_GetWindowFlags(w);
-    int front = g_mouse_want && (f & SDL_WINDOW_INPUT_FOCUS) && !(f & SDL_WINDOW_MINIMIZED);
+    int front = g_mouse_want && has_focus(w) && !(f & SDL_WINDOW_MINIMIZED);
     if (!front) g_mouse_grab = 0;
     else if (f & SDL_WINDOW_FULLSCREEN) g_mouse_grab = 1;
     if (!g_mouse_grab) { InterlockedExchange(&g_mdx, 0); InterlockedExchange(&g_mdy, 0); }
-    if (g_mouse_clipped != g_mouse_grab) { SDL_SetWindowRelativeMouseMode(w, g_mouse_grab != 0); g_mouse_clipped = g_mouse_grab; }
+    if (g_mouse_clipped != g_mouse_grab) {
+        if (!(f & SDL_WINDOW_HIDDEN)) SDL_SetWindowRelativeMouseMode(w, g_mouse_grab != 0);     /* a hidden test window has no pointer to take */
+        g_mouse_clipped = g_mouse_grab;
+        printf("display: mouse %s%c", g_mouse_grab ? "captured for the camera" : "released", 10);
+    }
+}
+/* Test aid (Linux): SSBU_KBM_SCRIPT="<second>[+<duration>]:<input> ..." pushes synthetic SDL events into the window's queue,
+ * so they take the path of real ones (key state, mouse capture, the mouse camera). <input> is a key name of controllers.ini
+ * (W, SPACE, LSHIFT, ENTER, MOUSE1..MOUSE5: down at <second>, up after <duration>, default 0.15 s) or M<dx>,<dy> (mouse
+ * movement of dx, dy counts every 10 ms for <duration>). Seconds count from the window's creation; while it is set the
+ * window counts as focused. Example: "60:MOUSE1 62+2:W 62+2:D 70+1:M20,0 75:ESC". */
+static void kbm_push(int vk, int down, int dx, int dy) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    SDL_WindowID wid = SDL_GetWindowID((SDL_Window *)g_hwnd);
+    static const int mvk[5] = {VK_LBUTTON, VK_MBUTTON, VK_RBUTTON, VK_XBUTTON1, VK_XBUTTON2};     /* SDL_BUTTON_LEFT .. X2 = 1 .. 5 */
+    int b = 0;
+    for (int i = 0; i < 5; i++) if (vk == mvk[i]) b = i + 1;
+    if (dx || dy) { e.type = SDL_EVENT_MOUSE_MOTION; e.motion.windowID = wid; e.motion.xrel = (float)dx; e.motion.yrel = (float)dy; }
+    else if (b) { e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP; e.button.windowID = wid; e.button.button = (Uint8)b; e.button.down = down != 0; e.button.clicks = 1; }
+    else { e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP; e.key.windowID = wid; e.key.scancode = vk_scancode(vk); e.key.down = down != 0; }
+    SDL_PushEvent(&e);
+}
+static DWORD WINAPI kbm_script_thread(LPVOID arg) {
+    static struct { double at, len; int vk, dx, dy, state; char name[16]; } st[512];
+    const char *s = arg;
+    int n = 0, used;
+    while (n < 512) {
+        char tok[40];
+        if (sscanf(s, " %39s%n", tok, &used) < 1) break;
+        s += used;
+        double at = 0, len = 0.15;
+        char what[16] = "";
+        if (sscanf(tok, "%lf+%lf:%15s", &at, &len, what) < 3 && (len = 0.15, sscanf(tok, "%lf:%15s", &at, what) < 2)) { printf("kbm script: bad step %s%c", tok, 10); continue; }
+        memset(&st[n], 0, sizeof st[n]);
+        st[n].at = at; st[n].len = len; snprintf(st[n].name, sizeof st[n].name, "%s", what);
+        if ((what[0] == 'M' || what[0] == 'm') && sscanf(what + 1, "%d,%d", &st[n].dx, &st[n].dy) == 2) { if (!st[n].dx && !st[n].dy) continue; }
+        else if (!(st[n].vk = nnpad_key_vk(what)) || (st[n].vk > 6 && vk_scancode(st[n].vk) == SDL_SCANCODE_UNKNOWN)) { printf("kbm script: unknown input %s%c", what, 10); continue; }
+        n++;
+    }
+    printf("kbm script: %d steps%c", n, 10);
+    ULONGLONG t0 = GetTickCount64();
+    for (int left = n; left; ) {
+        double t = (double)(GetTickCount64() - t0) / 1000.0;
+        left = 0;
+        for (int i = 0; i < n; i++) {
+            if (st[i].state == 2) continue;
+            left++;
+            if (!st[i].state && t >= st[i].at) { st[i].state = 1; printf("kbm script: t=%.2f s %s%c", t, st[i].name, 10); if (st[i].vk) kbm_push(st[i].vk, 1, 0, 0); }
+            if (st[i].state == 1 && !st[i].vk) kbm_push(0, 0, st[i].dx, st[i].dy);
+            if (st[i].state == 1 && t >= st[i].at + st[i].len) { st[i].state = 2; if (st[i].vk) kbm_push(st[i].vk, 0, 0, 0); }
+        }
+        fflush(stdout);
+        Sleep(10);
+    }
+    return 0;
 }
 static DWORD WINAPI window_thread(LPVOID arg) {
     (void)arg;
@@ -521,19 +583,24 @@ static DWORD WINAPI window_thread(LPVOID arg) {
            SDL_GetCurrentVideoDriver(), visible ? "" : ", hidden (SSBU_SHOW=0)", 10);
     g_hwnd = (HWND)w;
     InterlockedExchange(&g_ready, 1);
+    { const char *ks = getenv("SSBU_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }
     float fx = 0, fy = 0;
     for (;;) {
         SDL_Event e;
         int got = SDL_WaitEventTimeout(&e, 20);
         sdl_mouse_update(w);                         /* also when display_mouse_want changed (nnhid.c, any thread) */
         if (!got) continue;
+        if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) && e.key.scancode < SDL_SCANCODE_COUNT) g_keys[e.key.scancode] = e.key.down;
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) __atomic_fetch_or(&g_mbtn, SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) __atomic_fetch_and(&g_mbtn, ~SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
+        if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) { memset((void *)g_keys, 0, sizeof g_keys); g_mbtn = 0; }      /* nothing stays held */
         if (e.type == SDL_EVENT_MOUSE_MOTION && g_mouse_grab) {
             fx += e.motion.xrel; fy += e.motion.yrel;         /* whole pixels to the camera, the rest kept */
             int dx = (int)fx, dy = (int)fy;
             fx -= (float)dx; fy -= (float)dy;
             InterlockedAdd(&g_mdx, dx); InterlockedAdd(&g_mdy, dy);
         }
-        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && g_mouse_want && !g_mouse_grab && (SDL_GetWindowFlags(w) & SDL_WINDOW_INPUT_FOCUS)) {
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && g_mouse_want && !g_mouse_grab && has_focus(w)) {
             g_mouse_grab = 1;                        /* the capturing click is not the game's (display_mouse_hold) */
             InterlockedExchange(&g_mouse_hold, 1);
             sdl_mouse_update(w);

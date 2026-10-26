@@ -397,6 +397,10 @@ static void cfg_load(int first) {                 /* lock held */
     if (text) { cfg_parse(&n, text); free(text); }
     strcpy(n.path, g_cfg.path);
     n.mtime = mt;
+    for (int i = 0; i < KB_N; i++) for (int j = i + 1; j < KB_N; j++) for (int k = 0; k < 4; k++) {     /* [b3recomp] a key that does two things */
+        int x = n.kb_vk[i] >> (k & 1) * 8 & 0xff;
+        if (x && x == (n.kb_vk[j] >> (k >> 1) * 8 & 0xff)) say("nn::pad: [keyboard] key 0x%02x is bound to both %s and %s\n", x, g_kbn[i], g_kbn[j]);
+    }
     {   const char *l = getenv("SSBU_PAD_LAYOUT");
         if (l && l[0]) n.def.layout = !_stricmp(l, "label") || !_stricmp(l, "labels") ? 1 : 0; }
     g_cfg = n;
