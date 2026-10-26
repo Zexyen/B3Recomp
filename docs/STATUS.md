@@ -687,14 +687,69 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - Found on the way: `SSBU_LPROF` crashed the run once (glibc's `backtrace()` in the sampler's signal handler, interrupting
   a RADV driver frame without unwind information); not changed here.
 
+## Performance report (2026-10-26)
+
+**Method**: `scripts/perf_bench.py run <scene> <scale>` then `report <run dirs>`. Each run: a copy of the save, audio
+muted, the committed `config/graphics.ini` (`SSBU_GRAPHICS_CONFIG`), output 1600x900 / 2560x1440 / 3840x2160 for scale
+1.0 / 1.6 / 2.4. Frame times from `SSBU_FRAMETIMES`, GPU ms per frame from Vulkan timestamps (`SSBU_VK_GPUTIME=1` +
+`SSBU_GPUTIMES`: the spans of the frame's command buffers), CPU ms a frame per thread from `/proc/self/task/*/stat` (the
+`nvn_perf` lines, now on Linux too). The run records the load average and GPU busy % before and after and the other
+processes with the GPU open (`meta.json`). It holds `/tmp/b3_bench.lock` while it runs and waits while someone
+else's lock or any "B3 Recomp" process is there. Scenes: *shibuya* (the street fight, fight pattern from 40 s, 330 s),
+*tokyo* (the earlier save, the heavy scenes, 700 s), *cutscene* (the Shibuya cutscene at `cutscene_fps = 60`, the frames
+between the game's two frame-rate mode changes around it).
+
+**Baseline** (build of c6b7bec + the tooling; load 2.5-6.6 from other programs, outside GPU busy 15-20 % at idle):
+
+| run | frames | avg fps | 1 %-low | p50 / p90 / p99 ms | over 50 / 100 ms | at 60 | GPU ms p50 / p90 / p99 | CPU ms/frame: main, render, MainJob1, MainDraw | load before→after |
+|---|---|---|---|---|---|---|---|---|---|
+| shibuya 1.0 | 16801 | 59.5 | 43.8 | 16.7 / 18.2 / 22.8 | 0 / 0 | 92.6 % | 2.3 / 2.8 / 3.2 | 5.1, 5.8, 4.3, 1.9 | 4.5→4.3 |
+| shibuya 1.6 | 16772 | 59.5 | 42.5 | 16.7 / 17.7 / 23.5 | 0 / 0 | 94.7 % | 3.8 / 4.4 / 4.8 | 4.2, 5.3, 3.7, 1.6 | 6.6→3.9 |
+| shibuya 2.4 | 16912 | 59.7 | 48.7 | 16.7 / 17.3 / 20.5 | 0 / 0 | 96.9 % | 6.3 / 7.4 / 8.0 | 3.5, 4.8, 3.1, 1.3 | 3.4→3.5 |
+| tokyo 1.0 | 17330 | 58.5 | 20.6 | 16.7 / 18.5 / 48.5 | 103 / 2 | 90.5 % | 1.8 / 2.6 / 2.8 | 6.3, 6.5, 5.1, 2.3 | 5.4→6.6 |
+| tokyo 1.6 | 17840 | 59.5 | 53.0 | 16.7 / 17.6 / 18.9 | 8 / 0 | 98.6 % | 3.2 / 4.1 / 4.5 | 4.0, 5.0, 3.6, 1.4 | 2.7→3.4 |
+| tokyo 2.4 | 17939 | 59.9 | 54.5 | 16.7 / 17.4 / 18.3 | 7 / 0 | 99.3 % | 5.9 / 7.1 / 8.0 | 3.4, 4.6, 3.3, 1.2 | 2.5→3.2 |
+| cutscene 1.0 | 5415 | 58.9 | 38.0 | 16.7 / 18.8 / 26.3 | 1 / 1 | 87.3 % | 2.6 / 3.6 / 5.2 | 6.5, 5.3, 4.0, 1.9 | 4.3→5.4 |
+| cutscene 1.6 | 5471 | 59.5 | 47.9 | 16.7 / 17.4 / 20.9 | 1 / 1 | 97.2 % | 4.9 / 7.0 / 9.0 | 4.1, 4.3, 2.8, 1.2 | 3.9→2.7 |
+| cutscene 2.4 | 5248 | 57.1 | 40.3 | 16.8 / 20.5 / 24.8 | 2 / 1 | 82.6 % | 9.0 / 12.9 / 16.3 | 4.1, 4.3, 2.8, 1.2 | 3.5→2.5 |
+
+**Read it with the load**: these ran one after another, not interleaved; CPU ms per thread changes about 2x between load
+2.5 and 6 (the same scene), so the scale columns are not comparable with each other (the 1.0 runs had the most load).
+Only interleaved A/B runs below are used for before/after.
+
+**Bound**: every scene is CPU-side: no thread is near 16.7 ms a frame, and the late frames come from the chain main →
+jobs → render → present (waits, not one busy thread). The GPU is under 8 ms at p99 everywhere except the 4K cutscene,
+where 35 % of the late frames have over 14 ms of GPU: that one is partly GPU-bound.
+
+**The items**:
+- **4K cutscene at 57 fps**: GPU 7.45 ms a frame on average (`SSBU_VK_PASSTIME=1`): the depth prepass at 2458x1382 31 %,
+  the 3456x1958 scene 29 %, a 2458x1382 R11G11B10 pass 12 % (cutscenes render from a 1024x576 base). New test aid
+  `SSBU_VK_PASSWHY=1`: render passes are ended by `OP_TARGETS` in the replay (919k) and by `resolve_sampler` (391k).
+  Keeping the pass open when the same targets are set again was tried and measured interleaved (2 + 2 runs): GPU p50 9.0
+  ms either way, 84.5 / 84.2 % at 60 without against 83.5 / 83.7 % with (only 34k such repeats); not kept. Not fixed:
+  with 15-20 % of the GPU busy from other programs, GPU p99 is about 16 ms. Scale 1.6 holds 97 % at 60.
+- **The 80-105 ms frame** is the first frame after the game-over screen ("The Witch Hunts Are Over": the scripted fight
+  dies about every 37 s, the checkpoint retry reloads the area, and the tessellated scenery comes back with it). GPU time
+  of that frame is a normal 2.4 ms. The sampler (`SSBU_LPROF`) showed threads waiting on the `nobj` table lock (the main
+  and job threads querying buffers and pools from `7100d0b7d0`), the jobs join and sync waits. **Lock-free `nobj`
+  lookups** (`nvn_stub.c`): those frames 80-86 ms against 88-92 before (Tokyo 1.0; the lockfree run 59.8 fps, 99.5 % at
+  60 at load 3). The rest is the game's own reload work in lifted code.
+- **Trains of 45-50 ms** in `f_71007e1fe4` (a quadtree walk: four recursive calls, `h_morton_split32`, three other game
+  functions, about 400 instructions of float code). A temporary timing wrapper: 60.6 ms per outer call with the register
+  cache for that function (67 calls), 43.3 ms without (23 calls); the inputs differ, no clear gain, not kept. A host
+  version was not written (large, much float state; hours and a correctness risk). The trains come at random (6, 15 and
+  49 frames over 50 ms in three Tokyo 1.0 runs of the same build). Not fixed.
+- No other hot spot stood out: render(host) is the top thread at 4.3-6.5 ms a frame.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
 
 1. **Which route a run takes** depends on the save and on when the A presses land on the title (movie route, Chapter
    Select → Prologue, Chapter Select → chapter 1). An `SSBU_SEQ` with `@draws` anchors would make it reproducible.
-2. **Long frames left in Tokyo** (section "Performance in Tokyo"): trains of 45-50 ms in a tree walk of lifted code, one
-   80-105 ms frame every 37 s where the tessellated scene comes back. Fights and Tokyo otherwise hold 60 (98 % of frames).
+2. **Long frames left in Tokyo** (section "Performance report"): trains of 45-50 ms in a tree walk of lifted code, one
+   80-86 ms frame at the game-over retry reload. Fights and Tokyo otherwise hold 60 (98 % of frames); the 4K cutscene at
+   60 is partly GPU-bound (57 fps).
 3. **Picture correctness**: no reference images to compare with.
 4. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
 5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
