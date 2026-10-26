@@ -225,3 +225,57 @@ What stopped boot, in order, and what fixed it:
 14. `nvnCommandBufferDispatchComputeIndirect` missing in the Vulkan back end -> added. Title screen reached.
 15. Story: `movie::Extractor(ContainerType, CacheSize)` (SDK 13 form) had no handler -> the failing placeholder; the
     opening movie is skipped and the prologue starts (3D world black, see STATUS.md).
+
+## 8. The Options screen, its layouts and its text (2026-10-26)
+
+Found from the decompressed RomFS (`b3-game --pkz-dump`) and main's code; checked by the "PC Settings" row built on it
+(STATUS.md, "PC settings menu").
+
+**Layouts (`ui/ui_option.dat`)**: 13 `option00xx.uid` plus `option.wta` / `.uvd` (the texture is in `ui_option.dtt`). A
+UID starts `u32 count1, count2, count3, offset1 (0x30), offset2, offset3, f32 1/60, u32 0x11`; section 1 holds elements
+of 0x258 bytes (positions, colours as floats, animation keys), the others key frames and links. A UID holds no row list:
+each text element names one message by hash as a placeholder (`option0014.uid`, the list row: MENU_OPTION_LIST_005;
+`option0012.uid`, the tab: MENU_OPTION_CATEGORY_001), and the code fills in the rows. Not needed further for a new row.
+
+**Text of the menus: MCD** (`messmenu.mcd` in `ui/ui_menu[_<lang>].dat`, one per language: `` (Japanese), cn, de, es, fr,
+gb, it, kr, nl, pt, ru, tw, us; nl and pt hold the English text). PlatinumGames' message format (as in NieR:Automata):
+```
+header  {u32 offset, u32 count} x 5: messages, symbols, glyphs, fonts, events
+message (16)  u32 paragraphs offset, u32 paragraph count, u32 sequence (index + 1), u32 event hash
+paragraph (20) u32 lines offset, u32 line count, u32 v, u32 h, u32 font id
+line (24)     u32 text offset, u32 0, u32 units, u32 units, f32 below, f32 horizontal
+text          u16 pairs (symbol index, kerning after it); 0x8001 <width> = a space; 0x8000 = the end
+symbol (8)    u16 font id, u16 character (UTF-16), u32 glyph index
+glyph (40)    texture rectangle and metrics; font (20) u32 id, 4 floats
+event (40)    u32 hash, u32 message index, char name[32]; sorted by hash
+```
+File order: header, texts, messages, paragraphs, lines, symbols, glyphs, fonts, events; the texts padded by 1-4 zero bytes
+to a multiple of 4, every other section but the last followed by 4 zero bytes (all 13 files are rebuilt byte for byte
+that way). The event hash is `crc32(lower-case name) & 0x7fffffff` (MENU_OPTION_LIST_001 = 0x585cc9e6). A file only has
+the glyphs its own text uses; the list labels use font 7 (Latin, Cyrillic, Japanese) or 19 / 21 / 23 (Chinese / Korean,
+whose files also have the Latin font 7). The Options labels: MENU_OPTION_TITLE_001 (OPTIONS), MENU_OPTION_CATEGORY_001-004
+(Controller, Camera, Sound, Screen Display), MENU_OPTION_LIST_001-022, no help line per row.
+
+**Text tables: PTD** (`Text/UI/core_pln_<lang>.bin` and the other `Text/` tables; not the menus): `'PTD\0'`, version 2,
+u32 38, u32 label count, u32 label table offset (0x1c), u32 1, u32 end of the label names; label records `{u32 hash,
+u32 name offset (from the record), u32 characters, u32 bytes}` sorted by hash, the names as UTF-16 with each unit +0x2626,
+hash = `crc32(lower-case name) & 0x7fffffff`. The translated strings follow (not mapped further).
+
+**The code** (main; no names, found through the label hashes as immediates):
+- 25 row objects (8 bytes each, a method table only) behind a pointer table at 0x7101c2b1a8 (row 25 = 0). Rows by
+  number: 0 Vibration, 1 / 2 Controls (Bayonetta / Viola), 3 / 12 / 17 / 24 Restore Defaults (one per page), 4-11 the
+  camera rows, 13-15 volumes, 16 Voice Language, 18 Brightness, 19-23 Display Language, Subtitle Language, Subtitles,
+  Control Hints, Naive Angel Mode.
+- Pages (category at screen + 0x40c8, 0..3): Controller from a table the screen builds (+0x40cc, up to 4; count at
+  +0x40dc: Viola's row only some of the time; when is not checked), Camera 9 rows (0x7101851184), Sound 5 (0x71018511a8), Screen
+  Display 7 (0x71018511bc); the counts are immediates in the code (cursor wrap 0x7100a31fe8, list build 0x7100a32430),
+  the tables are read by 13 adrp + add pairs each, all in 0x7100a30a44-0x7100a32650.
+- Row methods (offset into the table; row, screen, row state, widget): +0x00 fill the row state (u32 label hash, u32 kind:
+  3 = action row, ...), +0x08 "decide" (every frame for the row under the cursor: tests the confirm press, 0x7100983930
+  -> mask, 0x7100983660 -> pressed; refused with sound 8 when the row state's +0x28 says greyed, else sound 2,
+  0x710095a110; returns 1 when it used the input), +0x18 after a reset (calls +0x40, then rebuilds the list), +0x20 the
+  button guide (Confirm / Select / Back, by message hash), +0x38 the label hash, +0x40 the reset of the page (Restore
+  Defaults; the Brightness row's is an empty function). Brightness (0x7101c2bb38) is an action row that opens its own
+  screen in +0x08.
+- List build 0x7100a32390: for each number of the page's table calls +0x00 with the row state at screen + 0x2e18 + 0x2c *
+  position; rows 16, 19, 20, 23 can be greyed (by a flag of the screen; which state sets it is not checked).
