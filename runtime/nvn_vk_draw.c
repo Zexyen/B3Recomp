@@ -373,7 +373,32 @@ static void storage_barrier(void) {                /* [b3recomp] shader writes t
     mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
-static void pass_end(void) { if (R.in_pass) { oq_end(); vkCmdEndRendering(R.cmd); R.in_pass = 0; if (g_dump_on) dump_pass_end(); if (R.pass_stores) { R.pass_stores = 0; storage_barrier(); } } }
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
+/* [b3recomp] TEST ONLY: SSBU_VK_PASSWHY=1: the passes ended, counted by the return address of pass_end's caller (exit: the top 16;
+ * addr2line -f -e build/b3-game <address> names the site) */
+static struct { void *ra; LONG64 n; } g_pw[64];
+static int g_pw_on = -1;
+static void passwhy_note(void *ra) {
+    if (g_pw_on < 0) g_pw_on = getenv("SSBU_VK_PASSWHY") != NULL;
+    if (!g_pw_on) return;
+    for (int i = 0; i < 64; i++) { if (g_pw[i].ra == ra) { g_pw[i].n++; return; } if (!g_pw[i].ra) { g_pw[i].ra = ra; g_pw[i].n = 1; return; } }
+}
+static void passwhy_report(void) {
+    if (g_pw_on <= 0) return;
+    for (int k = 0; k < 16; k++) {
+        int best = -1;
+        for (int i = 0; i < 64; i++) if (g_pw[i].ra && (best < 0 || g_pw[i].n > g_pw[best].n)) best = i;
+        if (best < 0 || !g_pw[best].n) break;
+        uintptr_t off = (uintptr_t)g_pw[best].ra;
+#ifndef _WIN32
+        { Dl_info di; if (dladdr(g_pw[best].ra, &di) && di.dli_fbase) off -= (uintptr_t)di.dli_fbase; }
+#endif
+        printf("nvn_vk_passwhy: TEST: %lld passes ended from +0x%llx\n", (long long)g_pw[best].n, (unsigned long long)off); g_pw[best].n = 0;
+    }
+}
+__attribute__((noinline)) static void pass_end(void) { if (R.in_pass) { passwhy_note(__builtin_return_address(0)); oq_end(); vkCmdEndRendering(R.cmd); R.in_pass = 0; if (g_dump_on) dump_pass_end(); if (R.pass_stores) { R.pass_stores = 0; storage_barrier(); } } }
 static LONG64 g_tm[12];                          /* ticks: 0 wait for a submission, 1 copy-back, 2 dispatch, 3 batch replay, 4 present, 5 pipelines, 6 modules, 7 copy-back wait at batch start, 8 draw preparation */
 static LONG64 tk(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 /* Session 5, SSBU_VK_GPUTIME=1: two timestamp queries per command buffer (written at its first and after its last command),
@@ -5127,7 +5152,18 @@ static void vkd_init(void) {
 static int frstat_cmp(const void *a, const void *b) { float x = *(const float *)a, y = *(const float *)b; return x < y ? -1 : x > y; }
 /* Session 9: battle frames only (dispatches and more than 120 draws: the fight and the result screen's fighters); the first 30 are left out (their buffers were recorded
  * while the stage was still being set up). GPU ms = sum of the spans of the frame's command buffers (SSBU_VK_GPUTIME=1). */
+/* [b3recomp] TEST ONLY: SSBU_GPUTIMES=<file> (with SSBU_VK_GPUTIME=1): at exit a line per frame "<frame> <GPU ms>" (the spans of the
+ * frame's command buffers), for scripts/perf_bench.py */
+static void gputimes_dump(void) {
+    const char *e = getenv("SSBU_GPUTIMES");
+    if (!e || g_ts_on <= 0) return;
+    FILE *f = fopen(e, "w");
+    if (!f) return;
+    for (int i = 0; i < FRSTAT_N && i <= g_cur_frame; i++) if (g_fr_gpu[i] > 0) fprintf(f, "%d %.3f\n", i, (double)g_fr_gpu[i]);
+    fclose(f);
+}
 static void frstat_report(void) {
+    gputimes_dump(); passwhy_report();
     static float g[FRSTAT_N], w[FRSTAT_N];
     int n = 0, seen = 0, slow = 0;
     double wsum = 0, gsum = 0;

@@ -3671,6 +3671,10 @@ static void save_bmp(const char *path, Tex *t) {
 
 /* Frame times (present to present) of the last 300 frames and CPU time per thread, printed with the frame-rate line. */
 #include <tlhelp32.h>
+#ifndef _WIN32
+#include <dirent.h>
+#include <unistd.h>
+#endif
 static double g_pf_ft[300];
 static struct { DWORD tid; ULONGLONG cpu; } g_pf_thr[512];
 static int g_pf_nthr;
@@ -3679,6 +3683,47 @@ const char *guest_thread_name_of(DWORD tid);                             /* os_t
 static int pf_cmp_d(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 #define printf rpt_printf                  /* [Recomps#1] to the #undef below: the reports go out in one write each (hostrt.c rpt_begin) */
 static void pf_threads(double frames) {
+#ifndef _WIN32
+    {   /* [b3recomp] Linux: the threads' CPU time from /proc/self/task/<tid>/stat (user + system, clock ticks) in 100 ns units as on Windows */
+        struct { DWORD tid; double ms; } top[512];
+        int n = 0;
+        double total = 0, tick = 1e7 / (double)sysconf(_SC_CLK_TCK);
+        DIR *d = opendir("/proc/self/task");
+        struct dirent *de;
+        while (d && (de = readdir(d))) {
+            DWORD tid = (DWORD)atol(de->d_name);
+            char path[64], buf[512];
+            if (!tid) continue;
+            snprintf(path, sizeof path, "/proc/self/task/%lu/stat", (unsigned long)tid);
+            FILE *f = fopen(path, "r");
+            if (!f) continue;
+            size_t got = fread(buf, 1, sizeof buf - 1, f); fclose(f); buf[got] = 0;
+            char *r = strrchr(buf, ')');
+            unsigned long long ut = 0, st = 0;
+            if (!r || sscanf(r + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &ut, &st) != 2) continue;
+            ULONGLONG cpu = (ULONGLONG)((double)(ut + st) * tick), prev = 0;
+            int i;
+            for (i = 0; i < g_pf_nthr && g_pf_thr[i].tid != tid; i++) {}
+            if (i < g_pf_nthr) prev = g_pf_thr[i].cpu; else if (g_pf_nthr < 512) { g_pf_thr[g_pf_nthr].tid = tid; i = g_pf_nthr++; }
+            if (i < 512) g_pf_thr[i].cpu = cpu;
+            if (n < 512 && prev) { top[n].tid = tid; top[n].ms = (double)(cpu - prev) / 10000.0 / frames; total += top[n].ms; n++; }
+        }
+        if (d) closedir(d);
+        rpt_begin();
+        printf("nvn_perf: cpu ms/frame by thread (all %.1f):", total);
+        for (int k = 0; k < 12; k++) {
+            int best = -1;
+            for (int i = 0; i < n; i++) if (top[i].ms > 0.05 && (best < 0 || top[i].ms > top[best].ms)) best = i;
+            if (best < 0) break;
+            const char *name = top[best].tid == g_render_tid ? "render(host)" : top[best].tid == g_pf_main_tid ? "main" : guest_thread_name_of(top[best].tid);
+            printf(" %s[%lu] %.1f", name && *name ? name : "host", (unsigned long)top[best].tid, top[best].ms);
+            top[best].ms = 0;
+        }
+        printf("\n");
+        rpt_end();
+        return;
+    }
+#endif
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     THREADENTRY32 te;
     DWORD pid = GetCurrentProcessId();
