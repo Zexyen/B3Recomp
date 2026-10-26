@@ -17,6 +17,7 @@ game (converted ELFs, translated C, the compiled `game.so`, caches) is generated
 | Menus and cutscenes | 30 fps as on the console by default; 60 fps with `cutscene_fps = 60` in `config/graphics.ini` (timing stays real time; movies keep their 30 fps) |
 | Resolution | the game's 1600x900 by default; `resolution_scale` in `config/graphics.ini` renders it larger (1.2 = 1080p, 1.6 = 1440p, 2.4 = 4K, measured at 60 fps on an RX 9070 XT; the first run at a new scale has about two minutes of held loading screens once) |
 | Input | controllers, and keyboard + mouse (rebindable in `config/controllers.ini`; mouse camera; both at once); keyboard tested with synthetic events, not yet by hand |
+| Settings | in-game PC settings panel: F1 or L3 + R3 (the game is held while it is open); vsync, cutscene frame rate, window, anisotropic filtering, texture detail and aspect change at once, the internal resolution at the next start; written to `config/graphics.ini` with its comments kept. A hint appears when the pause menu opens; the game's own Options screen has no entry for it |
 
 Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_NOTES.md).
 

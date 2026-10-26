@@ -693,7 +693,23 @@ static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
     }
     RET(r ? STYLE_FULLKEY : 0);
 }
-static void hid_GetNpadState_FullKey(Ctx *c) { fill_pad(A0, rd32(A1), 1); }
+/* [b3recomp] The PC settings menu (pcmenu.c). pcmenu_gate sees every pad state the game reads (F1 or L3 + R3 open the menu) and
+ * says when the game gets an idle pad: while the menu is open, and after it until the buttons that closed it are let go.
+ * nnhid_menu_read is player 1 for the menu while the game is held (it polls nothing then): the test scripts, the keyboard
+ * player's keys and the first controller, without the side effects of a game poll (input sequence, recording, statistics). */
+int pcmenu_gate(uint32_t id, uint64_t buttons);
+static void pad_gate(uint64_t out, uint32_t id) { if (pcmenu_gate(id, rd64(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18); }
+void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly) {
+    static const struct { int vk, bit; } map[] = {{'Z', BTN_A}, {'X', BTN_B}, {'J', BTN_LEFT}, {'I', BTN_UP}, {'L', BTN_RIGHT}, {'K', BTN_DOWN}};
+    uint64_t b = 0;
+    int x = (key_for(0, VK_RIGHT, 18) - key_for(0, VK_LEFT, 16)) * STICK_MAX, y = (key_for(0, VK_UP, 17) - key_for(0, VK_DOWN, 19)) * STICK_MAX;
+    NnPadState ps;
+    for (size_t i = 0; i < sizeof map / sizeof map[0]; i++) if (key_for(0, map[i].vk, map[i].bit)) b |= 1ull << map[i].bit;
+    if (sdl_on() && devices_live() && nnpad_get(0, &ps)) { b |= ps.buttons; if (ps.lx || ps.ly) { x = ps.lx; y = ps.ly; } }
+    *buttons = b; *lx = x; *ly = y;
+}
+int nnhid_menu_key(int vk) { return key(vk); }
+static void hid_GetNpadState_FullKey(Ctx *c) { fill_pad(A0, rd32(A1), 1); pad_gate(A0, rd32(A1)); }
 static void hid_GetNpadState_Other(Ctx *c) { fill_pad(A0, rd32(A1), 0); }
 static void hid_GetPlayerLedPattern(Ctx *c) {               /* the console's patterns for players 1..8 */
     static const uint8_t led[8] = {1, 3, 7, 15, 9, 5, 13, 6};

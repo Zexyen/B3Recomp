@@ -268,6 +268,7 @@ static void oe_push(uint32_t message) {
  * SSBU_FREEZE_TEST=<start s>,<seconds> minimises and restores the window by itself (test; the log line counts the polls of the
  * game's main loop during the freeze). */
 extern volatile LONG g_guest_frozen;
+int pcmenu_holds(void);
 static volatile LONG g_oe_poll_count;
 static int g_oe_exit_requested;                           /* defined with the exit request code below */
 #define OE_MSG_RESUME 16u
@@ -306,7 +307,7 @@ static DWORD WINAPI oe_watch(LPVOID unused) {
             frozen_at = GetTickCount64(); polls_at = g_oe_poll_count;
             InterlockedExchange(&g_guest_frozen, 1);
             trace_printf("     nn::oe: application suspended (%s, handling mode %d)\n", minimised ? "background" : "obscured", g_oe_focus_mode);
-        } else if (runnable && g_guest_frozen) {
+        } else if (runnable && g_guest_frozen && !pcmenu_holds()) {      /* [b3recomp] the PC menu (pcmenu.c) holds the game too */
             LONG polls = g_oe_poll_count - polls_at;
             InterlockedExchange(&g_guest_frozen, 0);
             printf("nn::oe: application resumed after %llu ms of suspension; main-loop polls during it: %ld\n", (unsigned long long)(GetTickCount64() - frozen_at), (long)polls);

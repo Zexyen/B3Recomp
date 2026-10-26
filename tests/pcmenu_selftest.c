@@ -1,0 +1,89 @@
+/* Self-test of the PC settings menu without the game: graphics.ini rewritten in place (gfx_option_set, gfx_ini_get) and the
+ * panel drawn at two window sizes (pcmenu.c), the pictures written as BMP into the folder given (for a look).
+ *   clang -D_GNU_SOURCE -D'__declspec(x)=' -Iruntime/posix -Iruntime -Iruntime/gen tests/pcmenu_selftest.c runtime/gfx_options.c \
+ *         runtime/plat_posix.c -lcrypto -lm -o /tmp/pcmenu_selftest && /tmp/pcmenu_selftest /tmp/pcmenu_test */
+#include "../runtime/pcmenu.c"
+#include <assert.h>
+#include <sys/stat.h>
+
+volatile LONG g_guest_frozen, g_display_close;
+volatile int game_cutscene_fps;
+static int g_vsync_applied, g_win_applied;
+void nnhid_menu_read(uint64_t *b, int *lx, int *ly) { *b = 0; *lx = *ly = 0; }
+int nnhid_menu_key(int vk) { (void)vk; return 0; }
+int nvn_front_post_pcmenu(void) { return 1; }
+void display_vsync_apply(void) { g_vsync_applied++; }
+int display_window_apply(void) { g_win_applied++; return 1; }
+void display_mouse_want(int on) { (void)on; }
+int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
+int display_mouse_pixels(int *x, int *y) { *x = *y = -1; return 0; }
+SHORT GetAsyncKeyState(int vk) { (void)vk; return 0; }
+
+static char *slurp(const char *path) { FILE *f = fopen(path, "rb"); static char b[4096]; size_t n = fread(b, 1, sizeof b - 1, f); fclose(f); b[n] = 0; return strdup(b); }
+static void spit(const char *path, const char *s) { FILE *f = fopen(path, "wb"); fputs(s, f); fclose(f); }
+static void save_bmp(const char *path, const uint8_t *px, int w, int h) {
+    FILE *f = fopen(path, "wb");
+    uint8_t head[54] = {'B', 'M'};
+    uint32_t row = ((uint32_t)w * 3 + 3) & ~3u, size = 54 + row * (uint32_t)h, v;
+    memcpy(head + 2, &size, 4); v = 54; memcpy(head + 10, &v, 4); v = 40; memcpy(head + 14, &v, 4); memcpy(head + 18, &w, 4); memcpy(head + 22, &h, 4); head[26] = 1; head[28] = 24;
+    fwrite(head, 1, 54, f);
+    uint8_t *r = calloc(1, row);
+    for (int y = h - 1; y >= 0; y--) { for (int x = 0; x < w; x++) memcpy(r + x * 3, px + ((size_t)y * w + x) * 4, 3); fwrite(r, 1, row, f); }
+    free(r); fclose(f);
+}
+static void panel(const char *dir, const char *name, int W, int H) {
+    int r[4]; unsigned gen;
+    assert(pcmenu_panel_size(W, H, r, &gen));
+    assert(r[0] >= 0 && r[1] >= 0 && r[0] + r[2] <= W && r[1] + r[3] <= H && r[2] > 100 && r[3] > 100);
+    uint8_t *px = malloc((size_t)r[2] * r[3] * 4);
+    pcmenu_panel_read(px, r[2], r[3]);
+    char path[300]; snprintf(path, sizeof path, "%s/%s.bmp", dir, name);
+    save_bmp(path, px, r[2], r[3]);
+    printf("panel %dx%d in a %dx%d window: %s\n", r[2], r[3], W, H, path);
+    free(px);
+}
+
+int main(int argc, char **argv) {
+    const char *dir = argc > 1 ? argv[1] : "/tmp";
+    char ini[300], buf[64];
+    snprintf(ini, sizeof ini, "%s/graphics_test.ini", dir);
+    mkdir(dir, 0755);
+    /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
+    spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
+    setenv("SSBU_GRAPHICS_CONFIG", ini, 1);
+    assert(gfx_options()->present == 0);                   /* the last vsync line wins: clock */
+    assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
+    assert(!gfx_ini_get("aspect", buf, sizeof buf));
+    assert(gfx_option_set("vsync", "off") && gfx_options()->present == 2);
+    char *s = slurp(ini);
+    assert(!strcmp(s, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   off   \r\nmystery = 7\r\n[section]\r\nvsync = off\r\nresolution_scale = 1.0"));
+    free(s);
+    assert(gfx_option_set("aspect", "stretch") && gfx_options()->aspect_stretch == 1);
+    s = slurp(ini);
+    assert(strstr(s, "resolution_scale = 1.0\r\naspect = stretch\r\n") && strstr(s, "mystery = 7\r\n"));
+    free(s);
+    assert(gfx_option_set("resolution_scale", "2.4") && gfx_options()->scale == 1.0f);      /* not a live key: the running value stays */
+    spit(ini, "window = windowed\nwidth = 1280\nheight = 720\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n");      /* LF file */
+    assert(gfx_option_set("width", "1920") && gfx_option_set("height", "1080") && gfx_options()->width == 1920 && gfx_options()->height == 1080);
+    s = slurp(ini);
+    assert(!strcmp(s, "window = windowed\nwidth = 1920\nheight = 1080\nvsync = auto\nresolution_scale = 1.6\nanisotropic_filtering = 8\n"));
+    free(s);
+    /* the menu's rows from that file; changes through the menu */
+    menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
+    assert(g_cur[4] == 4 && !strcmp(val_name(4), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
+    assert(g_shown[6] && g_cur[6] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
+    change(6, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(6));
+    change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
+    change(3, 1, 0); assert(game_cutscene_fps == 60);
+    change(4, 1, 0); assert(row_restart(4));                  /* 1.6 -> 2.0: applies at the next start */
+    change(5, -1, 0); assert(gfx_options()->aniso == 4 && (g_work & 1));
+    change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); assert(g_cur[4] == 7);      /* 3.0, the last: right stops there */
+    change(4, 1, 1); assert(g_cur[4] == 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0);      /* A goes round */
+    g_sel = 4; g_ver++;
+    panel(dir, "pcmenu_1280x720", 1280, 720);
+    panel(dir, "pcmenu_3840x2160", 3840, 2160);
+    g_sel = 2; g_ver++;
+    panel(dir, "pcmenu_1920x1080", 1920, 1080);
+    printf("pcmenu self-test: all checks passed\n");
+    return 0;
+}

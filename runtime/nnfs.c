@@ -795,6 +795,43 @@ static void prompt_swap_close(HANDLE h) {
     ReleaseSRWLockExclusive(&g_pswap_lock);
 }
 
+/* [b3recomp] The PC menu's hint (pcmenu.c): B3's pause menu reads ui/ui_photomode.dat from ui_000.pkz each time it opens (the
+ * Options screen itself is loaded once at the start). The entry's offset is read from the archive's table at its first open
+ * (format: scripts/pkz.py); a read at that offset through a handle of that archive shows the hint. */
+void pcmenu_hint(void);
+static HANDLE g_ui_h[4];
+static volatile LONG g_ui_n;
+static int64_t g_ph_off = -2;                          /* -2 not looked up yet, -1 not in the archive */
+static void ui_pkz_open(HANDLE h, const char *game_path, const char *host_path) {
+    size_t n = strlen(game_path);
+    if (n < 11 || _stricmp(game_path + n - 11, "/ui_000.pkz")) return;
+    if (g_ph_off == -2) {
+        FILE *f = fopen(host_path, "rb");
+        uint8_t head[0x20], *t = NULL;
+        uint32_t count = 0, toff = 0, nsize = 0;
+        g_ph_off = -1;
+        if (f && fread(head, 1, 0x20, f) == 0x20 && !memcmp(head, "pkzl", 4)) {
+            memcpy(&count, head + 0x10, 4); memcpy(&toff, head + 0x14, 4); memcpy(&nsize, head + 0x18, 4);
+            size_t tl = (size_t)count * 0x20 + nsize;
+            if (count < 100000 && nsize < (16u << 20) && (t = malloc(tl + 1)) && !fseek(f, toff, SEEK_SET) && fread(t, 1, tl, f) == tl) {
+                t[tl] = 0;
+                for (uint32_t i = 0; i < count; i++) {
+                    uint32_t no; uint64_t off;
+                    memcpy(&no, t + i * 0x20, 4); memcpy(&off, t + i * 0x20 + 0x10, 8);
+                    if (no < nsize && !strcmp((char *)t + (size_t)count * 0x20 + no, "ui/ui_photomode.dat")) { g_ph_off = (int64_t)off; break; }
+                }
+            }
+        }
+        free(t);
+        if (f) fclose(f);
+        printf("pcmenu: the pause menu's ui/ui_photomode.dat %s\n", g_ph_off >= 0 ? "found in ui_000.pkz: the PC menu's hint is shown when the pause menu opens" : "NOT found in ui_000.pkz: no hint");
+    }
+    g_ui_h[InterlockedIncrement(&g_ui_n) & 3] = h;
+}
+static void ui_pkz_read(HANDLE h, int64_t off) {
+    if (off != g_ph_off) return;
+    for (int i = 0; i < 4; i++) if (g_ui_h[i] == h) { pcmenu_hint(); return; }
+}
 static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const char *path, int mode) */
     char rel[MAX_PATH], path[MAX_PATH];
     Mount *m = NULL;
@@ -826,6 +863,7 @@ static void fs_OpenFile(Ctx *c) {                     /* (FileHandle *out, const
         if (on) printf("fslog: open \"%s\" mode %d -> %s\n", STR(1), (int)A2, r ? "NOT FOUND" : "ok"); }
     if (r) { wr64(A0, 0); RET(r); return; }
     open_remember(h, (int)(A2 & 7), m);
+    ui_pkz_open(h, STR(1), path);
     if (modded) prompt_swap_open(h, path);              /* [Recomps#1] finding 148 */
     wr64(A0, (uint64_t)h);
     RET(0);
@@ -855,6 +893,7 @@ static uint64_t read_at(HANDLE h, int64_t offset, void *buf, uint64_t size) {
 static volatile LONG g_read_log;
 static void fs_ReadFile(Ctx *c) {                     /* (handle, offset, buffer, size) */
     uint64_t got = read_at((HANDLE)A0, (int64_t)A1, (void *)(uintptr_t)A2, A3);
+    ui_pkz_read((HANDLE)A0, (int64_t)A1);
     if (InterlockedIncrement(&g_read_log) <= 60)
         trace_printf("     fs read offset %llx size %llx -> %llx bytes  from=%llx\n", (unsigned long long)A1,
                      (unsigned long long)A3, (unsigned long long)got, (unsigned long long)c->x[30] - 4);
@@ -863,6 +902,7 @@ static void fs_ReadFile(Ctx *c) {                     /* (handle, offset, buffer
 }
 static void fs_ReadFileCount(Ctx *c) {                /* (size_t *outRead, handle, offset, buffer, size) */
     uint64_t got = read_at((HANDLE)A1, (int64_t)A2, (void *)(uintptr_t)A3, A4);
+    ui_pkz_read((HANDLE)A1, (int64_t)A2);
     wr64(A0, got);
     if (got != A4 && getenv("SSBU_FSLOG")) printf("fslog: ReadFile(count) SHORT handle %llx offset %llx size %llx got %llx from=%llx\n", (unsigned long long)A1, (unsigned long long)A2, (unsigned long long)A4, (unsigned long long)got, (unsigned long long)c->x[30] - 4);   /* D2 debug */
     RET(0);

@@ -79,9 +79,11 @@ void h_morton_split32(Ctx *c) {
  * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
 void f_7100d02de0(Ctx *c);
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
+__declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
-    static int sixty = -1, last = -1;
-    if (sixty < 0) { const char *e = getenv("SSBU_CUTSCENE_FPS"); sixty = e && atoi(e) == 60; }
+    static int last = -1;
+    if (!game_cutscene_fps) { const char *e = getenv("SSBU_CUTSCENE_FPS"); game_cutscene_fps = e && atoi(e) == 60 ? 60 : 30; }
+    int sixty = game_cutscene_fps == 60;
     int want = (int)(uint32_t)c->x[0];
     if (want != last) {
         struct timespec ts; timespec_get(&ts, TIME_UTC);

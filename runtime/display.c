@@ -232,6 +232,9 @@ static void pace_options(void) {
            g_pace_hz, g_pace_want ? " within 1.1 % (vsync = display / auto), else our own clock" : " (vsync = clock)", g_hold_on ? "at the next tick (steady cadence)" : "as soon as it is ready",
            g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz" : "", 10);
 }
+/* [b3recomp] vsync changed in the PC menu (pcmenu.c): the pacing is chosen again (nvn_vk makes the swapchain again for the present
+ * mode). A display lock is let go when it is no longer wanted; one is taken while the game runs only if none was tried yet. */
+void display_vsync_apply(void) { g_pace_want = -1; pace_options(); if (!g_pace_want) InterlockedExchange(&g_lock_k, 0); }
 /* vsync thread, once the refresh is measured: lock or not */
 static int pace_try_lock(void) {
     double hz = (double)g_freq.QuadPart / g_vb_period, r = (double)g_pace_hz;      /* [Recomps#1] r: 60, or frame_rate above 60 */
@@ -437,6 +440,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     return 0;
 }
 
+int display_window_apply(void) { return 0; }      /* [b3recomp] Windows: the PC menu's window changes apply at the next start (pcmenu.c says so) */
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
  * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
@@ -567,6 +571,33 @@ static DWORD WINAPI kbm_script_thread(LPVOID arg) {
     }
     return 0;
 }
+/* [b3recomp] window / width / height changed in the PC menu (pcmenu.c): SDL's window calls are made on the window's thread, at
+ * the event pushed here (borderless and fullscreen are both SDL's desktop fullscreen, as at the start). 1 = it will be done. */
+static Uint32 g_apply_ev;
+int display_window_apply(void) {
+    SDL_Event e;
+    if (!g_hwnd || (!g_apply_ev && !(g_apply_ev = SDL_RegisterEvents(1)))) return 0;
+    memset(&e, 0, sizeof e); e.type = g_apply_ev;
+    return SDL_PushEvent(&e);
+}
+int display_mouse_pixels(int *x, int *y) {          /* the PC menu: the pointer in the window's pixels; 0 = not over the window */
+    SDL_Window *w = (SDL_Window *)g_hwnd;
+    float fx, fy, d;
+    if (!w || SDL_GetMouseFocus() != w) return 0;
+    SDL_GetMouseState(&fx, &fy);
+    d = SDL_GetWindowPixelDensity(w);
+    *x = (int)(fx * d); *y = (int)(fy * d);
+    return 1;
+}
+static void window_apply(SDL_Window *w) {
+    const GfxOptions *go = gfx_options();
+    SDL_SetWindowFullscreen(w, go->window_mode != 0);
+    if (!go->window_mode) SDL_SetWindowSize(w, go->width, go->height);
+    int pw = 0, ph = 0;
+    SDL_SyncWindow(w);                                   /* (waits for the compositor, at most about a second) */
+    SDL_GetWindowSizeInPixels(w, &pw, &ph);
+    printf("display: window %s, client %dx%d pixels now%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph, 10);
+}
 static DWORD WINAPI window_thread(LPVOID arg) {
     (void)arg;
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) { printf("display: SDL video cannot start: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }
@@ -609,6 +640,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
             g_mouse_grab = 0;
             sdl_mouse_update(w);
         }
+        if (g_apply_ev && e.type == g_apply_ev) { window_apply(w); continue; }
         if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {   /* as WM_CLOSE: nn::oe decides */
             printf("\nwindow closed by the user after %lld frames\n", (long long)g_frames);
             { extern volatile LONG g_display_close; InterlockedExchange(&g_display_close, 1); }

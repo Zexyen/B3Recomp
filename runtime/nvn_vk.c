@@ -221,6 +221,7 @@ static void swapchain_destroy(void) {
     V.swapchain = NULL; V.image_count = 0;
 }
 /* Returns 0 when there is nothing to present to (a minimised window has a zero-sized surface). */
+static int g_sc_src;                                  /* [b3recomp] the swapchain images can be read (TRANSFER_SRC): SSBU_PCMENU_SHOT */
 static int swapchain_create(void) {
     VkSurfaceCapabilitiesKHR caps;
     VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.gpu, V.surface, &caps);
@@ -244,7 +245,8 @@ static int swapchain_create(void) {
     ci.imageFormat = sf.format; ci.imageColorSpace = sf.colorSpace;
     ci.imageExtent = ext;
     ci.imageArrayLayers = 1;
-    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);      /* [b3recomp] SRC: SSBU_PCMENU_SHOT reads the presented picture */
+    g_sc_src = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = caps.currentTransform;
     ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -261,6 +263,41 @@ static int swapchain_create(void) {
     return 1;
 }
 
+/* present mode from graphics.ini vsync (the environment switch wins); [b3recomp] also when the PC menu changes vsync (pcmenu.c,
+ * the swapchain is made again after it) */
+static const char *const k_mode[4] = {"immediate", "mailbox", "fifo", "fifo_relaxed"};
+static void present_mode_pick(void) {
+    /* present mode: the 60 Hz pacing is display.c's, so the swapchain must not wait for the display */
+    VkPresentModeKHR modes[16];
+    uint32_t nmode = 16;
+    int have[4] = {0, 0, 0, 0};
+    VkResult r = vkGetPhysicalDeviceSurfacePresentModesKHR(V.gpu, V.surface, &nmode, modes);
+    if (r != VK_SUCCESS && r != VK_INCOMPLETE) vk_fatal("vkGetPhysicalDeviceSurfacePresentModesKHR", r);
+    for (uint32_t i = 0; i < nmode; i++) if (modes[i] >= 0 && modes[i] < 4) have[modes[i]] = 1;
+    if (getenv("SSBU_VK_NOMAILBOX") && atoi(getenv("SSBU_VK_NOMAILBOX"))) have[VK_PRESENT_MODE_MAILBOX_KHR] = 0;      /* TEST: as a GPU without mailbox (finding 121) */
+    const char *want = getenv("SSBU_VK_PRESENT");
+    /* [Recomps#1] finding 121: without mailbox (AMD's Windows driver has none) FIFO, not immediate: display.c presents at
+     * its tick, half a refresh after the vblank, and immediate put a tear through the middle of every frame there (a
+     * player's RX 560 "texture flicker"). FIFO shows the frame at the next vblank, as mailbox does; every driver has it.
+     * vsync = off still asks for immediate. */
+    V.mode = have[VK_PRESENT_MODE_MAILBOX_KHR] ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+    if (!want && gfx_options()->present && gfx_options()->present < 4) {      /* 4 display, 5 auto: mailbox, the tick comes from display.c (session 14) */       /* track O: vsync = on | off | mailbox in graphics.ini (the environment switch wins) */
+        static const char *const k_opt[4] = {NULL, "fifo", "immediate", "mailbox"};
+        want = k_opt[gfx_options()->present & 3];
+        printf("nvn_vk: graphics.ini vsync = %s: present mode %s asked for\n", gfx_options()->present == 1 ? "on" : gfx_options()->present == 2 ? "off" : "mailbox", want);
+    }
+    if (want) {
+        int m = -1;
+        for (int i = 0; i < 4; i++) if (!strcmp(want, k_mode[i])) m = i;
+        if (m >= 0 && have[m]) V.mode = m;
+        else printf("nvn_vk: SSBU_VK_PRESENT=%s is %s: using %s\n", want, m < 0 ? "not a mode (immediate, mailbox, fifo, fifo_relaxed)" : "not offered by the surface", k_mode[V.mode]);
+    }
+    if (V.mode == VK_PRESENT_MODE_FIFO_KHR && !want)
+        printf("nvn_vk: the GPU offers no mailbox present mode%s: FIFO (a frame waits for the next vblank: no tearing) instead of immediate; vsync = off asks for immediate\n",
+               getenv("SSBU_VK_NOMAILBOX") && atoi(getenv("SSBU_VK_NOMAILBOX")) ? " (SSBU_VK_NOMAILBOX=1, a test)" : "");
+    else if (V.mode == VK_PRESENT_MODE_FIFO_KHR || V.mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
+        printf("nvn_vk: present mode %s: the display's own refresh now also holds the presents (a second clock next to display.c's)\n", k_mode[V.mode]);
+}
 /* ---------------------------------------------------------------- start */
 static void *vk_sym(const char *name) {
     void *p = (void *)GetProcAddress(V.loader, name);
@@ -431,37 +468,7 @@ int nvn_vk_init(void *hwnd) {
         if (fmts[i].format == VK_FORMAT_R16G16B16A16_SFLOAT && fmts[i].colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) V.scrgb = fmts[i];
     }
 
-    /* present mode: the 60 Hz pacing is display.c's, so the swapchain must not wait for the display */
-    VkPresentModeKHR modes[16];
-    uint32_t nmode = 16;
-    int have[4] = {0, 0, 0, 0};
-    r = vkGetPhysicalDeviceSurfacePresentModesKHR(V.gpu, V.surface, &nmode, modes);
-    if (r != VK_SUCCESS && r != VK_INCOMPLETE) vk_fatal("vkGetPhysicalDeviceSurfacePresentModesKHR", r);
-    for (uint32_t i = 0; i < nmode; i++) if (modes[i] >= 0 && modes[i] < 4) have[modes[i]] = 1;
-    if (getenv("SSBU_VK_NOMAILBOX") && atoi(getenv("SSBU_VK_NOMAILBOX"))) have[VK_PRESENT_MODE_MAILBOX_KHR] = 0;      /* TEST: as a GPU without mailbox (finding 121) */
-    static const char *const k_mode[4] = {"immediate", "mailbox", "fifo", "fifo_relaxed"};
-    const char *want = getenv("SSBU_VK_PRESENT");
-    /* [Recomps#1] finding 121: without mailbox (AMD's Windows driver has none) FIFO, not immediate: display.c presents at
-     * its tick, half a refresh after the vblank, and immediate put a tear through the middle of every frame there (a
-     * player's RX 560 "texture flicker"). FIFO shows the frame at the next vblank, as mailbox does; every driver has it.
-     * vsync = off still asks for immediate. */
-    V.mode = have[VK_PRESENT_MODE_MAILBOX_KHR] ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
-    if (!want && gfx_options()->present && gfx_options()->present < 4) {      /* 4 display, 5 auto: mailbox, the tick comes from display.c (session 14) */       /* track O: vsync = on | off | mailbox in graphics.ini (the environment switch wins) */
-        static const char *const k_opt[4] = {NULL, "fifo", "immediate", "mailbox"};
-        want = k_opt[gfx_options()->present & 3];
-        printf("nvn_vk: graphics.ini vsync = %s: present mode %s asked for\n", gfx_options()->present == 1 ? "on" : gfx_options()->present == 2 ? "off" : "mailbox", want);
-    }
-    if (want) {
-        int m = -1;
-        for (int i = 0; i < 4; i++) if (!strcmp(want, k_mode[i])) m = i;
-        if (m >= 0 && have[m]) V.mode = m;
-        else printf("nvn_vk: SSBU_VK_PRESENT=%s is %s: using %s\n", want, m < 0 ? "not a mode (immediate, mailbox, fifo, fifo_relaxed)" : "not offered by the surface", k_mode[V.mode]);
-    }
-    if (V.mode == VK_PRESENT_MODE_FIFO_KHR && !want)
-        printf("nvn_vk: the GPU offers no mailbox present mode%s: FIFO (a frame waits for the next vblank: no tearing) instead of immediate; vsync = off asks for immediate\n",
-               getenv("SSBU_VK_NOMAILBOX") && atoi(getenv("SSBU_VK_NOMAILBOX")) ? " (SSBU_VK_NOMAILBOX=1, a test)" : "");
-    else if (V.mode == VK_PRESENT_MODE_FIFO_KHR || V.mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)
-        printf("nvn_vk: present mode %s: the display's own refresh now also holds the presents (a second clock next to display.c's)\n", k_mode[V.mode]);
+    present_mode_pick();
 
     VkCommandPoolCreateInfo pi;
     memset(&pi, 0, sizeof pi);
@@ -632,3 +639,4 @@ void nvn_vk_selftest_hook(void) {
 }
 
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
+#include "nvn_vk_pcmenu.c"                                 /* [b3recomp] the PC settings menu on the screen */
