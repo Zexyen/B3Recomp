@@ -103,12 +103,27 @@ void print_devinfo_summary(FILE *out) {
 typedef struct NvnObj { uint64_t key, memory, size, pool, offset, flags; struct NvnObj *next; } NvnObj;
 static NvnObj *g_objs[4096];
 static SRWLOCK g_objs_lock = SRWLOCK_INIT;
+static NvnObj *g_objs_free;                                             /* [b3recomp] dropped entries, reused (never freed: see nobj) */
+/* [b3recomp] Lookups take no lock: B3's main thread and three job threads ask for buffers' pools, flags and addresses all the
+ * time (nvnBufferGetMemoryPool / nvnMemoryPoolGetFlags / nvnBufferGetAddress from 7100d0b7d0), thousands at once in the frame a
+ * scene comes back after a pause (85-90 ms in Tokyo, the threads waiting for each other at this lock). An entry is published
+ * with a release store at its chain's head; a dropped one is unlinked and kept for reuse, never freed, so a reader on a chain
+ * never touches freed memory. A reader that misses (a reused entry led it to another chain) takes the locked path, which
+ * looks again before it inserts. */
 static NvnObj *nobj(uint64_t key) {
     unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
+    int steps = 0;
+    for (NvnObj *o = __atomic_load_n(&g_objs[h], __ATOMIC_ACQUIRE); o && steps < 256; o = __atomic_load_n(&o->next, __ATOMIC_ACQUIRE), steps++)      /* the bound: entries reused while this walks */
+        if (__atomic_load_n(&o->key, __ATOMIC_RELAXED) == key) return o;
     AcquireSRWLockExclusive(&g_objs_lock);
     NvnObj *o = g_objs[h];
     while (o && o->key != key) o = o->next;
-    if (!o) { o = calloc(1, sizeof *o); o->key = key; o->next = g_objs[h]; g_objs[h] = o; }
+    if (!o) {
+        if (g_objs_free) { o = g_objs_free; g_objs_free = o->next; } else o = malloc(sizeof *o);
+        o->memory = o->size = o->pool = o->offset = o->flags = 0; o->next = g_objs[h];
+        __atomic_store_n(&o->key, key, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_objs[h], o, __ATOMIC_RELEASE);
+    }
     ReleaseSRWLockExclusive(&g_objs_lock);
     return o;
 }
@@ -116,7 +131,7 @@ static void nobj_drop(uint64_t key) {                                   /* the o
     unsigned h = (unsigned)((key >> 3) * 2654435761u) & 4095;
     AcquireSRWLockExclusive(&g_objs_lock);
     for (NvnObj **pp = &g_objs[h]; *pp; pp = &(*pp)->next)
-        if ((*pp)->key == key) { NvnObj *o = *pp; *pp = o->next; free(o); break; }
+        if ((*pp)->key == key) { NvnObj *o = *pp; __atomic_store_n(pp, o->next, __ATOMIC_RELEASE); o->next = g_objs_free; g_objs_free = o; break; }
     ReleaseSRWLockExclusive(&g_objs_lock);
 }
 void nvn_label_set(uint64_t obj, const char *text);                    /* nvn_gl.c */
