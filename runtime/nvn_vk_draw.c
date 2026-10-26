@@ -705,7 +705,12 @@ void nvn_vk_rs_base(int w, int h) {
 /* [b3recomp] B3 draws its scene into 1600x896 targets (1440x816 when its dynamic resolution steps down) with chains of halves
  * down to 45x25, besides its 1600x900 window: a target of the window's shape (within 1.5 %), 40 x 22 or larger, is of the
  * screen class too (shadow maps and other square or odd targets are not). Uploaded textures (packaged) are never scaled. */
+/* [b3recomp] fixed-size scene buffers of B3 that are not of the window's shape: 520x360 is the volumetric pass of the clouds
+ * of erasure (tessellated patches into two RGBA16F targets + D16, a 3-layer RGBA16F array; sampled by a full-screen pass):
+ * at 4K it stayed 520x360. Arrays of these sizes are scaled too (all the attachments of their passes together). */
+static int rs_extra_class(int w, int h) { return w == 520 && h == 360; }
 static int rs_screen_class(int w, int h) {
+    if (rs_extra_class(w, h)) return 1;
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
     if (w < 40 || h < 22) return 0;
     double a = (double)w / h, b = (double)g_rs_bw / g_rs_bh;
@@ -955,7 +960,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->levels = nvn_front_tex_levels(t); vt->layers = nvn_front_tex_layers(t); vt->samples = b->samples > 1 ? b->samples : 1; vt->is3d = b->target == 2;
         if (b->target == 0 || b->target == 3) { ci.imageType = VK_IMAGE_TYPE_1D; vt->h = 1; if (b->target == 3) vt->layers = b->height > 0 && b->depth <= 1 ? b->height : vt->layers; }
         else ci.imageType = vt->is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-        if (RS_ON && (b->target == 1 || b->target == 5) && vt->layers == 1 && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
+        if (RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(vt->w, vt->h))) && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
             (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
             vt->w = (int)((float)gw * rs_scale() + 0.5f); vt->h = (int)((float)gh * rs_scale() + 0.5f);
