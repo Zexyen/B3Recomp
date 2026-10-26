@@ -18,7 +18,8 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | link | `build/game.so` (154 MB) + `build/b3-game` (4.4 MB) + `libssbu_glslang.so` |
 | check | B2's lifter self-test (382 pair words, 25 SIMD words) and the B3 one (200 words, 4,000 cases) against Unicorn: 0 failures (needs `pip install unicorn`; `build/venv` is fine) |
 
-Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 archives), `scripts/pgdat.py` (DAT),
+Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 archives; Kraken entries from a
+`--pkz-dump` dump, section "RomFS archives"), `scripts/pgdat.py` (DAT),
 `scripts/nvn_procs.py` (NVN entry points of the sdk), `scripts/runtime_coverage.py` (imports vs handlers).
 
 ## How far it boots (stage 2, 2026-10-23)
@@ -471,6 +472,28 @@ halved in 2:1 steps first).
   `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
   behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
 
+## RomFS archives: the game's own Kraken decoder (2026-10-25)
+
+`build/b3-game targets/exefs/main.elf --pkz-dump <folder | -> [filter...]` (cwd `build/<run>`, `SSBU_ROMFS` as for a
+run; `runtime/pkz_dump.c`) writes every `.pkz` entry to `<folder>/<entry name>`: Kraken entries decompressed by main's
+own Oodle decoder (lifted), stored ones copied. No window, no audio, no game code but the decoder (image, relocations and
+import handlers only); 8 threads (`SSBU_PKZ_JOBS`); a filter keeps entries whose archive or entry name contains it; `-`
+decodes without writing. Entry names are unique across the archives, so the folder mirrors the game's paths. Write it
+under a git-ignored folder (`cache/pkz/`): the files are game assets.
+- **All 72 archives**: 18,732 entries (11,760 Kraken, 6,972 stored), **0 failures**: every Kraken stream used exactly its
+  stored size and gave exactly its recorded size (`pkz.py check targets/romfs --dump cache/pkz` agrees for every entry).
+  25.8 GB: 10.7 s decode only, 45.4 s with the writes (8 threads on a 16-thread CPU, NVMe, the archives partly in the page cache).
+- **Content**: every Kraken entry has its type's magic (6,408 `.dtt`, 2,986 `.dat`, 1,305 `.eff`, 262 `.evn` = `DAT`;
+  161 `.bin` = `PTD`; `EPB`, `WME3`, `VAT`, `VFD`, `WTB`, `BXM`; the 327 `.wtp` are headerless texture data); all 15,526
+  DAT containers of the dump parse with 130,976 members inside their files. `ui/ui_option.dat` (the Options screen) holds
+  13 `option00xx.uid` layouts plus `option.wta` / `.uvd` (PlatinumGames UID, as guessed before); `Text/UI/
+  core_pln_USen.bin` gives 4,672 readable strings.
+- **Stored replacements**: a `Text_000.pkz` rebuilt with all 394 entries stored (`None`), in `mods/<name>/romfs/`, is read
+  by the game; its changed copyright line showed on the title screen. So rebuilt archives need no Kraken encoder.
+- **Mods folder on Linux**: it had the `''`-only cut fixed for graphics.ini in 028ea6d (`nnfs.c`: the folder and
+  `mods.ini`), so mods worked only with `SSBU_MODS`; fixed, the default `mods/` beside `build/` is found.
+  `controllers.ini` (nnpad_sdl.c) and `dlc.txt` (nnmisc.c) still have that cut.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.
@@ -491,7 +514,8 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
 
 - `SdkMutexType`, `pthread_once`, `std::__call_once` wait by spinning on `Sleep(0)` (no kernel wait queue).
 - `nn::fs` thread fs-context is a shared dummy object; `nn::oe` notifications / recording and `hid` mouse are no-ops.
-- `scripts/pkz.py` decompresses Kraken entries only with an Oodle library the user supplies.
+- `--pkz-dump` calls main's Oodle functions at fixed addresses (checked against two instruction words at start: other
+  builds of main stop with a message); it holds a whole entry in memory (the largest is 373 MB).
 - The heap size (3,285 MB) is the console's documented application memory, not measured on hardware.
 - NVN 55 additions (`nvn_gl.c`, `nvn55:` in the log): deferred binds are read when recorded; separate samplers are
   dropped and separate textures bound as combined handles; transform feedback, subroutines, checkpoints, subtile size and
