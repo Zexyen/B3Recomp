@@ -1,8 +1,9 @@
 """Read PlatinumGames' .pkz archives (Bayonetta 3 RomFS). Reads YOUR dump only; writes nothing into it.
 
     python scripts/pkz.py list <file.pkz>                      entries: codec, size, stored size, offset, name
-    python scripts/pkz.py check <romfs folder>                  parse every .pkz, check every entry lies inside its file
-    python scripts/pkz.py extract <file.pkz> <out dir> [--oodle <lib>] [names...]
+    python scripts/pkz.py check <romfs folder> [--dump <folder>]  parse every .pkz, check every entry lies inside its file
+                                                                 (--dump: and that the dump holds each entry with its size)
+    python scripts/pkz.py extract <file.pkz> <out dir> [--dump <folder> | --oodle <lib>] [names...]
 
 Layout (little endian; docs/RE_NOTES.md "pkz"):
     0x00 'pkzl'   0x04 u32 version 0x20000   0x08 u64 file size   0x10 u32 entry count   0x14 u32 entry table offset (0x20)
@@ -10,9 +11,10 @@ Layout (little endian; docs/RE_NOTES.md "pkz"):
     entry (0x20 bytes): u32 name offset, u32 codec name offset (both into the name table), u64 size, u64 data offset,
                         u64 stored size
 Codec names seen: "None" (stored) and "OodleKraken" (one Oodle stream per entry). Oodle is not open source: the game has
-its own decoder linked into main, so the recompiled game decompresses its files itself. This tool decompresses Kraken
-entries only with an Oodle library you already have (--oodle <path to liboo2corelinux64.so / oo2core_*_win64.dll>); without
-one it extracts the stored entries and says which ones it skipped.
+its own decoder linked into main. `build/b3-game targets/exefs/main.elf --pkz-dump <folder> [filter...]` runs it (no window;
+runtime/pkz_dump.c) and writes every entry, decompressed, to <folder>/<entry name> (names are unique across the archives);
+--dump <folder> takes the Kraken entries from there. --oodle <liboo2corelinux64.so / oo2core_*_win64.dll> uses an Oodle
+library you have instead. With neither, extract writes the stored entries and says which ones it skipped.
 """
 import ctypes
 import os
@@ -43,8 +45,8 @@ def read_pkz(path):
     return fsize, out
 
 
-def check(root):
-    n_files = n_entries = 0
+def check(root, dump=None):
+    n_files = n_entries = missing = wrong = 0
     codecs = {}
     for fn in sorted(os.listdir(root)):
         if not fn.endswith('.pkz'):
@@ -56,9 +58,20 @@ def check(root):
             assert off + csize <= fsize, '%s: %s runs past the end' % (fn, name)
             assert codec != 'None' or size == csize, '%s: stored entry %s with size %d != %d' % (fn, name, size, csize)
             codecs[codec] = codecs.get(codec, 0) + 1
+            if dump:
+                p2 = os.path.join(dump, name)
+                if not os.path.isfile(p2):
+                    missing += 1
+                elif os.path.getsize(p2) != size:
+                    wrong += 1
+                    print('%s: %s is %d bytes in the dump, %d in the archive' % (fn, name, os.path.getsize(p2), size))
         n_files += 1
         n_entries += len(entries)
     print('%d archives, %d entries, codecs: %s' % (n_files, n_entries, ', '.join('%s %d' % kv for kv in sorted(codecs.items()))))
+    if dump:
+        print('dump %s: %d entries with the recorded size, %d missing, %d of another size'
+              % (dump, n_entries - missing - wrong, missing, wrong))
+    return not (missing or wrong)
 
 
 def oodle(lib):
@@ -77,9 +90,19 @@ def oodle(lib):
     return dec
 
 
-def extract(path, outdir, lib, only):
+def from_dump(dump):
+    def dec(name, size):
+        with open(os.path.join(dump, name), 'rb') as f:
+            data = f.read()
+        if len(data) != size:
+            raise ValueError('%s: %d bytes in the dump, %d in the archive' % (name, len(data), size))
+        return data
+    return dec
+
+
+def extract(path, outdir, lib, only, dump=None):
     _, entries = read_pkz(path)
-    dec = oodle(lib) if lib else None
+    dec = from_dump(dump) if dump else oodle(lib) if lib else None
     skipped = 0
     with open(path, 'rb') as f:
         for name, codec, size, off, csize in entries:
@@ -92,17 +115,25 @@ def extract(path, outdir, lib, only):
             f.seek(off)
             data = f.read(csize)
             if codec == 'OodleKraken':
-                if not dec:                              # shortcut: no Kraken decoder of our own; the game has one (main)
+                if not dec:
                     skipped += 1
                     continue
-                data = dec(data, size)
+                data = dec(name if dump else data, size)
             elif codec != 'None':
                 raise ValueError('%s: unknown codec %r' % (name, codec))
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             with open(dst, 'wb') as o:
                 o.write(data)
     if skipped:
-        print('%d Kraken entries skipped (no --oodle library given)' % skipped)
+        print('%d Kraken entries skipped (neither --dump nor --oodle given)' % skipped)
+
+
+def option(args, flag):
+    """(args without `flag <value>`, value or None)"""
+    if flag not in args:
+        return args, None
+    i = args.index(flag)
+    return args[:i] + args[i + 2:], args[i + 1]
 
 
 def main(argv):
@@ -112,13 +143,12 @@ def main(argv):
             print('%-11s %10d %10d  0x%09x  %s' % (codec, size, csize, off, name))
         print('%d entries, %d bytes' % (len(entries), fsize))
     elif len(argv) >= 2 and argv[0] == 'check':
-        check(argv[1])
+        rest, dump = option(argv[2:], '--dump')
+        sys.exit(0 if check(argv[1], dump) else 1)
     elif len(argv) >= 3 and argv[0] == 'extract':
-        rest, lib = argv[3:], None
-        if '--oodle' in rest:
-            i = rest.index('--oodle')
-            lib, rest = rest[i + 1], rest[:i] + rest[i + 2:]
-        extract(argv[1], argv[2], lib, set(rest))
+        rest, lib = option(argv[3:], '--oodle')
+        rest, dump = option(rest, '--dump')
+        extract(argv[1], argv[2], lib, set(rest), dump)
     else:
         sys.exit(__doc__)
 
