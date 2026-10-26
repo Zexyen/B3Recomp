@@ -338,6 +338,7 @@ int main(int argc, char **argv) {
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
     { void register_r2_imports(void); register_r2_imports(); }   /* [Recomps#1] R2: our SDK 3.6.0 imports (r2_imports.c); register_sdk2 below only fills gaps */
     { void register_b3_imports(void); register_b3_imports(); }   /* [b3recomp] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
+    { void options_row_install(void); options_row_install(); }   /* [b3recomp] the PC Settings row of the game's Options screen */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / SSBU_STRICT (plan\FAKE_AUDIT.md) */
     /* [b3recomp] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
