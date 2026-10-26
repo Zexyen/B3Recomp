@@ -353,6 +353,17 @@ static void oq_slot_reset(int si) {               /* cmd_begin, after the slot's
     g_oq_used[si] = 0; g_oq_nev[si] = 0;
 }
 static int framelog_on(void);                      /* [b3recomp] TEST ONLY: SSBU_VK_FRAMELOG (below) */
+/* [b3recomp] TEST ONLY: SSBU_VK_PRIMLOG=<first>,<last>: per frame in the range, the draws and the vertices / indices submitted
+ * (direct draws; the instances counted): a model's level of detail shows in the index count (lod_bias) */
+long long nvn_front_frame_next(void);
+static void primlog_add(int indexed, uint64_t n) {
+    static long long a = -2, b, fr = -1; static uint64_t cnt[2], draws;
+    if (a == -2) { const char *e = getenv("SSBU_VK_PRIMLOG"); a = -1; if (e) { a = atoll(e); b = strchr(e, ',') ? atoll(strchr(e, ',') + 1) : a; } }
+    if (a < 0) return;
+    long long f = nvn_front_frame_next();
+    if (f != fr) { if (fr >= a && fr <= b) printf("primlog: TEST: frame %lld: %llu draws, %llu vertices, %llu indices\n", fr, (unsigned long long)draws, (unsigned long long)cnt[0], (unsigned long long)cnt[1]); fr = f; cnt[0] = cnt[1] = draws = 0; }
+    cnt[indexed] += n; draws++;
+}
 static int g_dump_on;                            /* [Recomps#1] TEST ONLY: SSBU_VK_DUMPTEX (dump_pass_end, defined above save_bmp_vk) */
 static void dump_pass_end(void);
 static void dump_pass_begin(int w, int h);
@@ -709,6 +720,11 @@ void nvn_vk_rs_base(int w, int h) {
  * of erasure (tessellated patches into two RGBA16F targets + D16, a 3-layer RGBA16F array; sampled by a full-screen pass):
  * at 4K it stayed 520x360. Arrays of these sizes are scaled too (all the attachments of their passes together). */
 static int rs_extra_class(int w, int h) { return w == 520 && h == 360; }
+static float rs_extra_scale(void) {                 /* SSBU_VK_CLOUD_SCALE=<cap>: at most that for these (a weak GPU; the pass is tessellated): 4K A/B at equal load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60 */
+    static float v = -1;
+    if (v < 0) { const char *e = getenv("SSBU_VK_CLOUD_SCALE"); float cap = e ? (float)atof(e) : RS_MAX; v = rs_scale() < cap ? rs_scale() : cap; if (v < 1.0f && rs_scale() >= 1.0f) v = 1.0f; }
+    return v;
+}
 static int rs_screen_class(int w, int h) {
     if (rs_extra_class(w, h)) return 1;
     for (int k = 0; k < 7; k++) if (w == g_rs_bw >> k && h == g_rs_bh >> k) return 1;
@@ -963,7 +979,8 @@ static VTex *vt_get2(Tex *t, int sync) {
         if (RS_ON && (((b->target == 1 || b->target == 5) && vt->layers == 1) || (b->target == 4 && rs_extra_class(vt->w, vt->h))) && !vt->decode && !b->packaged && rs_screen_class(vt->w, vt->h) && !(rs_ui_native() && wintex_is(t)) && !rs_keep_has(t) &&
             (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || (f.kind != 4 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)))) {      /* track O: a screen-class target */
             int gw = vt->w, gh = vt->h, lv = 1;
-            vt->w = (int)((float)gw * rs_scale() + 0.5f); vt->h = (int)((float)gh * rs_scale() + 0.5f);
+            float sc = rs_extra_class(gw, gh) ? rs_extra_scale() : rs_scale();
+            vt->w = (int)((float)gw * sc + 0.5f); vt->h = (int)((float)gh * sc + 0.5f);
             if (vt->w < 1) vt->w = 1; if (vt->h < 1) vt->h = 1;
             vt->rs = 1; vt->sx = (float)vt->w / (float)gw; vt->sy = (float)vt->h / (float)gh;
             while ((vt->w >> lv) || (vt->h >> lv)) lv++;
@@ -3740,6 +3757,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
     case OP_DRAW_ELEMENTS: {
@@ -3752,6 +3770,7 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
     }
