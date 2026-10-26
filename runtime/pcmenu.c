@@ -294,10 +294,10 @@ int pcmenu_take_work(void) { InterlockedExchange(&g_job, 0); return (int)Interlo
 
 /* ---------------------------------------------------------------- changes */
 static void add_work(LONG bit) { LONG o; do o = g_work; while (InterlockedCompareExchange(&g_work, o | bit, o) != o); }
-static void change(int i, int dir) {
+static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
     const Row *r = &k_rows[i];
-    int n = row_count(i), k = g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : (g_cur[i] + dir + n) % n;
-    if (g_lock_why[i]) return;
+    int n = row_count(i), k = g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir;
+    if (g_lock_why[i] || k < 0 || k >= n || k == g_cur[i]) return;
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
     else ok = gfx_option_set(r->key, r->val[k]);
@@ -349,11 +349,11 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         int was_sel = g_sel, was_cur[NROW];
         memcpy(was_cur, g_cur, sizeof g_cur);
         if (step && (dir == 1 || dir == 2)) { do g_sel = (g_sel + (dir == 1 ? NROW - 1 : 1)) % NROW; while (!g_shown[g_sel]); }
-        if (step && (dir == 3 || dir == 4)) change(g_sel, dir == 3 ? -1 : 1);
-        if (ok && !prev_ok) change(g_sel, 1);
+        if (step && (dir == 3 || dir == 4)) change(g_sel, dir == 3 ? -1 : 1, 0);
+        if (ok && !prev_ok) change(g_sel, 1, 1);
         int px = mx - g_rect[0], py = my - g_rect[1], click = md && !prev_click;
         if (mx >= 0 && (mx != mx0 || my != my0 || click) && px >= 0 && px < g_pw && py >= 0 && py < g_ph) {      /* the mouse: hover chooses, a click changes */
-            for (int i = 0; i < NROW; i++) if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h) { g_sel = i; if (click && px >= g_val_x0 - g_row_h) change(i, px < g_val_x0 + g_row_h ? -1 : 1); }
+            for (int i = 0; i < NROW; i++) if (g_row_y[i] >= 0 && py >= g_row_y[i] && py < g_row_y[i] + g_row_h) { g_sel = i; if (click && px >= g_val_x0 - g_row_h) change(i, px < g_val_x0 + g_row_h ? -1 : 1, 1); }
             if (click && px >= g_close_r[0] && px < g_close_r[0] + g_close_r[2] && py >= g_close_r[1] && py < g_close_r[1] + g_close_r[3]) back = 1, prev_back = 0;
         }
         mx0 = mx; my0 = my;

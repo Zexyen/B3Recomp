@@ -72,10 +72,12 @@ int main(int argc, char **argv) {
     menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
     assert(g_cur[4] == 4 && !strcmp(val_name(4), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
     assert(!g_shown[6]);                                   /* texture_lod_bias: not in the file */
-    change(2, 1); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
-    change(3, 1); assert(game_cutscene_fps == 60);
-    change(4, 1); assert(row_restart(4));                  /* 1.6 -> 2.0: applies at the next start */
-    change(5, -1); assert(gfx_options()->aniso == 4 && (g_work & 1));
+    change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
+    change(3, 1, 0); assert(game_cutscene_fps == 60);
+    change(4, 1, 0); assert(row_restart(4));                  /* 1.6 -> 2.0: applies at the next start */
+    change(5, -1, 0); assert(gfx_options()->aniso == 4 && (g_work & 1));
+    change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); assert(g_cur[4] == 7);      /* 3.0, the last: right stops there */
+    change(4, 1, 1); assert(g_cur[4] == 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0); change(4, 1, 0);      /* A goes round */
     g_sel = 4; g_ver++;
     panel(dir, "pcmenu_1280x720", 1280, 720);
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
