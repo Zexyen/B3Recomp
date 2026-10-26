@@ -254,8 +254,8 @@ static int parse_vk1(const char *t) {
     if (b[1] == 0) { char ch = b[0]; if (ch >= 'a' && ch <= 'z') ch -= 32; return ch; }
     if (!_stricmp(b, "LEFT")) return VK_LEFT; if (!_stricmp(b, "UP")) return VK_UP;
     if (!_stricmp(b, "RIGHT")) return VK_RIGHT; if (!_stricmp(b, "DOWN")) return VK_DOWN;
-    if (!_stricmp(b, "ENTER")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;
-    if (!_stricmp(b, "SPACE")) return VK_SPACE; if (!_stricmp(b, "TAB")) return VK_TAB; if (!_stricmp(b, "ESC")) return VK_ESCAPE;
+    if (!_stricmp(b, "ENTER") || !_stricmp(b, "RETURN")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;      /* [b3recomp] RETURN, ESCAPE: SDL's names */
+    if (!_stricmp(b, "SPACE")) return VK_SPACE; if (!_stricmp(b, "TAB")) return VK_TAB; if (!_stricmp(b, "ESC") || !_stricmp(b, "ESCAPE")) return VK_ESCAPE;
     if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
     /* [Recomps#1] the mouse buttons and the left / right modifier keys */
     if (!_strnicmp(b, "MOUSE", 5) && b[5] >= '1' && b[5] <= '5' && !b[6]) { static const int mb[5] = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}; return mb[b[5] - '1']; }

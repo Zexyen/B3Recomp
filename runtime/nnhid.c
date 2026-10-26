@@ -700,7 +700,8 @@ static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
 int pcmenu_gate(uint32_t id, uint64_t buttons);
 static void pad_gate(uint64_t out, uint32_t id) { if (pcmenu_gate(id, rd64(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18); }
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly) {
-    static const struct { int vk, bit; } map[] = {{'Z', BTN_A}, {'X', BTN_B}, {'J', BTN_LEFT}, {'I', BTN_UP}, {'L', BTN_RIGHT}, {'K', BTN_DOWN}};
+    static const struct { int vk, bit; } map[] = {{'Z', BTN_A}, {'X', BTN_B}, {'J', BTN_LEFT}, {'I', BTN_UP}, {'L', BTN_RIGHT}, {'K', BTN_DOWN},
+                                                  {0, BTN_STICK_L}, {0, BTN_STICK_R}};      /* (L3 + R3 close it: the keyboard's bindings for them) */
     uint64_t b = 0;
     int x = (key_for(0, VK_RIGHT, 18) - key_for(0, VK_LEFT, 16)) * STICK_MAX, y = (key_for(0, VK_UP, 17) - key_for(0, VK_DOWN, 19)) * STICK_MAX;
     NnPadState ps;

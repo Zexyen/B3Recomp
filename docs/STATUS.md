@@ -605,8 +605,10 @@ Tests:
   mouse no longer does. The log line of each step and the Npad state the game read match. 60 fps in the free roam of
   that run. Pictures: `/tmp/shots/kbm_*.png`.
 - `SSBU_KBM_SCRIPT="<s>[+<dur>]:<input> ..."` (Linux, test only): pushes SDL key / mouse-button / motion events
-  (`MOUSE1`, `W`, `M<dx>,<dy>` = motion every 10 ms) into the window's queue, seconds from window creation; the window
-  counts as focused, and the keyboard player's Npad state is logged at each change (`kbm: ...`).
+  (`MOUSE1`, `W`, `M<dx>,<dy>` = motion every 10 ms, `P<x>,<y>` = the pointer to x, y of the window, once) into the
+  window's queue, seconds from window creation; the window counts as focused, and the keyboard player's Npad state is
+  logged at each change (`kbm: ...`). Key names as in controllers.ini (`ENTER`, `ESC`; `RETURN` / `ESCAPE` also accepted
+  since the merge); a hold is `<s>+<dur>:<key>` (`62+2:W`), an unknown name is dropped with "kbm script: unknown input".
 
 Not tested: a person at a real keyboard and mouse (camera feel, sensitivity default), Wayland / X11 pointer capture of a
 visible window (the test window is hidden, so SDL's relative mode was not switched there), Windows (not built).
@@ -664,8 +666,21 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - Test aids: `SSBU_PCMENU_SHOT=<folder>` (every panel change: the next presented picture, panel included, as
   `pcmenu_<n>.bmp`; the swapchain gets TRANSFER_SRC when the surface offers it), `SSBU_PCMENU_OPEN=<s>`,
   `SSBU_PCMENU_LOG=1`.
-- **Not tested**: a person with a real pad, keyboard and mouse (the mouse path is untested: hidden test windows have no
-  pointer), L3 + R3 (no script key for the stick presses), a visible window made fullscreen (a size change of the hidden
+- **With the keyboard and mouse branch (after the merge, 2026-10-25)**: the merged run that "did not close on the second
+  F1" had script steps the kbm parser rejected (`RETURN`, `ESCAPE`, `W+2`: "kbm script: unknown input"), so Escape was never
+  sent: F1 at 45 s opened, F1 at 55 s closed, F1 at 58 s opened, and nothing closed it again. Fixed on the way: (1) the
+  idle pad after a close is kept per player until that player has let go (it was cleared by player 1 alone, so a keyboard
+  on another player holding Esc = Plus would have opened the game's pause menu); (2) L3 + R3 did not *close* the panel
+  from the keyboard (C / V): the panel's reader had no stick-press bindings; (3) the pointer position comes from the
+  window's motion events (as the kbm key state), so synthetic events can click panel rows. Runs `k1`, `k2` (muted, copy of
+  the save, synthetic window events only): Enter into Shibuya; a click captures the mouse; F1 opens and the log says
+  "display: mouse released"; arrows move; `P840,298` + `MOUSE1` clicks the cutscene row's value (30 -> 60, written); Esc
+  closes, the game reads Plus (0x400) only as an idle pad until it is let go (no pause menu: the frames after are
+  gameplay), W / D / the mouse reach the game at once (`kbm: player 1 ... left 0 32767`); F1 / F1, F1 / Backspace, C + V /
+  C + V open and close; after a close the mouse is captured again by the next click (windowed; fullscreen at once), as
+  after Escape in play. Pictures: `/tmp/shots/pcmenu_kbm_k1_sheet.png`, `pcmenu_kbm_k2_sheet.png`.
+- **Not tested**: a person with a real pad, keyboard and mouse (the pointer path ran on synthetic events only; a real
+  pad's L3 + R3 and B not tried, only their keyboard bindings), a visible window made fullscreen (a size change of the hidden
   Wayland window was confirmed by its new pixel size; fullscreen was not tried), Windows (not built), HDR output (the panel is
   copied into the 8-bit picture; shots are refused there). Movies keep their clock while the game is held, so a movie
   catches up (drops frames) after the panel closes.

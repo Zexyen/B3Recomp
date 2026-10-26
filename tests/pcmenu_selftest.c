@@ -84,6 +84,14 @@ int main(int argc, char **argv) {
     panel(dir, "pcmenu_3840x2160", 3840, 2160);
     g_sel = 2; g_ver++;
     panel(dir, "pcmenu_1920x1080", 1920, 1080);
+    /* closing: every player reads an idle pad until that player has let go (player 2 = a keyboard holding Esc = Plus) */
+    InterlockedExchange(&g_open, 0); Sleep(200);           /* the menu's thread ends: what it does at a close */
+    assert(g_release == 0xff && !g_guest_frozen);
+    assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 2 still holds Plus: not given */
+    assert(pcmenu_gate(0, 0) == 0);                        /* player 1 let go: its input is back at once */
+    assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 1's release does not free player 2 */
+    assert(pcmenu_gate(1, 0) == 0 && pcmenu_gate(1, 1u << 10) == 0);      /* let go, then a new press reaches the game */
+    assert(pcmenu_gate(0, 1u << 0) == 0);
     printf("pcmenu self-test: all checks passed\n");
     return 0;
 }

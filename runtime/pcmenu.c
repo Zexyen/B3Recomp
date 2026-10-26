@@ -73,7 +73,8 @@ static const Row k_rows[] = {
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
 static SRWLOCK g_lock = SRWLOCK_INIT;
-static volatile LONG g_open, g_release, g_work, g_job;
+static volatile LONG g_open, g_work, g_job;
+static volatile LONG g_release;                            /* a bit per npad id: that player still holds what was pressed in the menu */
 static int g_sel, g_cur[NROW], g_start[NROW], g_shown[NROW], g_lock_why[NROW], g_inited, g_said_restart[NROW], g_nowin;
 static char g_raw[NROW][32];                               /* a value of the file that is none of the row's: shown as it is */
 static unsigned g_ver;
@@ -411,7 +412,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
         if (!InterlockedExchange(&g_job, 1) && !nvn_front_post_pcmenu()) InterlockedExchange(&g_job, 0);
         Sleep(16);
     }
-    InterlockedExchange(&g_release, 1);                    /* the game reads an idle pad until everything is let go */
+    InterlockedExchange(&g_release, 0xff);                 /* each player reads an idle pad until it has let go of everything */
     InterlockedExchange(&g_open, 0);
     InterlockedExchange(&g_guest_frozen, 0);               /* (nnmisc.c's watcher freezes it again within 20 ms if the window is in the background) */
     if (nnpad_mouse_cfg(&sens, &inv)) display_mouse_want(1);
@@ -440,13 +441,19 @@ static void menu_open(const char *why) {
 int pcmenu_gate(uint32_t id, uint64_t buttons) {
     static int prev = 1, test = -1;
     static ULONGLONG t0;
+    LONG bit = id < 8 ? 1L << id : 0, o;
     if (g_open) return 1;
-    if (id != 0) return g_release != 0;
-    int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0x30) == 0x30;      /* L3 + R3 */
-    if (test < 0) { const char *e = getenv("SSBU_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
-    if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN"); return 1; }
-    if ((f1 || combo) && !prev && !g_release) { prev = 1; menu_open(f1 ? "F1" : "L3 + R3"); return 1; }
-    prev = f1 || combo;
-    if (g_release) { if (buttons || prev) return 1; InterlockedExchange(&g_release, 0); }
+    if (id == 0) {
+        int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0x30) == 0x30;      /* L3 + R3 */
+        if (test < 0) { const char *e = getenv("SSBU_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
+        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("SSBU_PCMENU_OPEN"); return 1; }
+        if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "L3 + R3"); return 1; }
+        prev = f1 || combo;
+        if (prev && (g_release & 1)) return 1;             /* the F1 that closed it is still down */
+    }
+    if (!(g_release & bit)) return 0;
+    if (buttons) return 1;
+    do o = g_release; while (InterlockedCompareExchange(&g_release, o & ~bit, o) != o);
+    if (g_log > 0) printf("pcmenu: player %u's input reaches the game again\n", id + 1);
     return 0;
 }

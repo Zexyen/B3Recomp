@@ -523,8 +523,15 @@ static void sdl_mouse_update(SDL_Window *w) {
 /* Test aid (Linux): SSBU_KBM_SCRIPT="<second>[+<duration>]:<input> ..." pushes synthetic SDL events into the window's queue,
  * so they take the path of real ones (key state, mouse capture, the mouse camera). <input> is a key name of controllers.ini
  * (W, SPACE, LSHIFT, ENTER, MOUSE1..MOUSE5: down at <second>, up after <duration>, default 0.15 s) or M<dx>,<dy> (mouse
- * movement of dx, dy counts every 10 ms for <duration>). Seconds count from the window's creation; while it is set the
- * window counts as focused. Example: "60:MOUSE1 62+2:W 62+2:D 70+1:M20,0 75:ESC". */
+ * movement of dx, dy counts every 10 ms for <duration>) or P<x>,<y> (the pointer moved to x, y of the window, in its units,
+ * once). Seconds count from the window's creation; while it is set the window counts as focused.
+ * Example: "60:MOUSE1 62+2:W 62+2:D 70+1:M20,0 75:ESC 80:P640,300". */
+static void kbm_point(int x, int y) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e);
+    e.type = SDL_EVENT_MOUSE_MOTION; e.motion.windowID = SDL_GetWindowID((SDL_Window *)g_hwnd); e.motion.x = (float)x; e.motion.y = (float)y;
+    SDL_PushEvent(&e);
+}
 static void kbm_push(int vk, int down, int dx, int dy) {
     SDL_Event e;
     memset(&e, 0, sizeof e);
@@ -538,7 +545,7 @@ static void kbm_push(int vk, int down, int dx, int dy) {
     SDL_PushEvent(&e);
 }
 static DWORD WINAPI kbm_script_thread(LPVOID arg) {
-    static struct { double at, len; int vk, dx, dy, state; char name[16]; } st[512];
+    static struct { double at, len; int vk, dx, dy, state, point; char name[16]; } st[512];
     const char *s = arg;
     int n = 0, used;
     while (n < 512) {
@@ -550,7 +557,8 @@ static DWORD WINAPI kbm_script_thread(LPVOID arg) {
         if (sscanf(tok, "%lf+%lf:%15s", &at, &len, what) < 3 && (len = 0.15, sscanf(tok, "%lf:%15s", &at, what) < 2)) { printf("kbm script: bad step %s%c", tok, 10); continue; }
         memset(&st[n], 0, sizeof st[n]);
         st[n].at = at; st[n].len = len; snprintf(st[n].name, sizeof st[n].name, "%s", what);
-        if ((what[0] == 'M' || what[0] == 'm') && sscanf(what + 1, "%d,%d", &st[n].dx, &st[n].dy) == 2) { if (!st[n].dx && !st[n].dy) continue; }
+        if ((what[0] == 'P' || what[0] == 'p') && sscanf(what + 1, "%d,%d", &st[n].dx, &st[n].dy) == 2) st[n].point = 1;
+        else if ((what[0] == 'M' || what[0] == 'm') && sscanf(what + 1, "%d,%d", &st[n].dx, &st[n].dy) == 2) { if (!st[n].dx && !st[n].dy) continue; }
         else if (!(st[n].vk = nnpad_key_vk(what)) || (st[n].vk > 6 && vk_scancode(st[n].vk) == SDL_SCANCODE_UNKNOWN)) { printf("kbm script: unknown input %s%c", what, 10); continue; }
         n++;
     }
@@ -563,6 +571,7 @@ static DWORD WINAPI kbm_script_thread(LPVOID arg) {
             if (st[i].state == 2) continue;
             left++;
             if (!st[i].state && t >= st[i].at) { st[i].state = 1; printf("kbm script: t=%.2f s %s%c", t, st[i].name, 10); if (st[i].vk) kbm_push(st[i].vk, 1, 0, 0); }
+            if (st[i].state == 1 && st[i].point) { kbm_point(st[i].dx, st[i].dy); st[i].state = 2; continue; }
             if (st[i].state == 1 && !st[i].vk) kbm_push(0, 0, st[i].dx, st[i].dy);
             if (st[i].state == 1 && t >= st[i].at + st[i].len) { st[i].state = 2; if (st[i].vk) kbm_push(st[i].vk, 0, 0, 0); }
         }
@@ -580,13 +589,14 @@ int display_window_apply(void) {
     memset(&e, 0, sizeof e); e.type = g_apply_ev;
     return SDL_PushEvent(&e);
 }
-int display_mouse_pixels(int *x, int *y) {          /* the PC menu: the pointer in the window's pixels; 0 = not over the window */
+/* the PC menu: the pointer in the window's pixels, as the window's motion events left it (synthetic ones too, as the key
+ * state above); 0 = not known or not over the window */
+static volatile LONG g_ptr_x = -1, g_ptr_y = -1;
+int display_mouse_pixels(int *x, int *y) {
     SDL_Window *w = (SDL_Window *)g_hwnd;
-    float fx, fy, d;
-    if (!w || SDL_GetMouseFocus() != w) return 0;
-    SDL_GetMouseState(&fx, &fy);
-    d = SDL_GetWindowPixelDensity(w);
-    *x = (int)(fx * d); *y = (int)(fy * d);
+    if (!w || !has_focus(w) || g_ptr_x < 0) return 0;
+    float d = SDL_GetWindowPixelDensity(w);
+    *x = (int)(g_ptr_x * d); *y = (int)(g_ptr_y * d);
     return 1;
 }
 static void window_apply(SDL_Window *w) {
@@ -625,6 +635,8 @@ static DWORD WINAPI window_thread(LPVOID arg) {
         if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) __atomic_fetch_or(&g_mbtn, SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
         if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) __atomic_fetch_and(&g_mbtn, ~SDL_BUTTON_MASK(e.button.button), __ATOMIC_SEQ_CST);
         if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) { memset((void *)g_keys, 0, sizeof g_keys); g_mbtn = 0; }      /* nothing stays held */
+        if (e.type == SDL_EVENT_MOUSE_MOTION && !g_mouse_grab) { g_ptr_x = (LONG)e.motion.x; g_ptr_y = (LONG)e.motion.y; }      /* (a captured pointer has no place) */
+        if (e.type == SDL_EVENT_WINDOW_MOUSE_LEAVE) g_ptr_x = g_ptr_y = -1;
         if (e.type == SDL_EVENT_MOUSE_MOTION && g_mouse_grab) {
             fx += e.motion.xrel; fy += e.motion.yrel;         /* whole pixels to the camera, the rest kept */
             int dx = (int)fx, dy = (int)fy;
