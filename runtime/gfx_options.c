@@ -192,8 +192,8 @@ static void opt_path(char *out) {
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
-    (void)once; (void)arg; (void)ctx;
-    GfxOptions *o = &g_opt;
+    (void)once; (void)ctx;
+    GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [b3recomp] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
@@ -305,4 +305,76 @@ int gfx_pace_rate(void) {
         r = o->frame_rate > 60 && !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
     }
     return r;
+}
+
+/* [b3recomp] The PC settings menu (pcmenu.c) changes graphics.ini while the game runs. gfx_ini_get reads one key as the reader
+ * above sees it (the last line with the key wins); gfx_option_set rewrites the value of every line with that key and keeps
+ * everything else of the file byte for byte (comments, unknown keys, line endings), appends the key when it is missing,
+ * writes through a temporary file, then reads the file again into a copy and takes over the keys that apply live. */
+static int ini_line_kv(const char *l, size_t n, const char *key, size_t *vs, size_t *ve) {      /* l[*vs, *ve): the value */
+    size_t i = 0, k0, k1;
+    while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
+    if (i == n || l[i] == ';' || l[i] == '#' || l[i] == '[') return 0;
+    k0 = i;
+    while (i < n && l[i] != '=') i++;
+    if (i == n) return 0;
+    k1 = i++;
+    while (k1 > k0 && (l[k1 - 1] == ' ' || l[k1 - 1] == '\t')) k1--;
+    if (k1 - k0 != strlen(key) || _strnicmp(l + k0, key, k1 - k0)) return 0;
+    while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
+    *vs = i;
+    while (n > i && (l[n - 1] == ' ' || l[n - 1] == '\t' || l[n - 1] == '\r' || l[n - 1] == '\n')) n--;
+    *ve = n;
+    return 1;
+}
+static char *ini_read_all(const char *path, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    char *b = NULL;
+    *len = 0;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    if (n >= 0 && (b = malloc((size_t)n + 1)) != NULL) { *len = fread(b, 1, (size_t)n, f); b[*len] = 0; }
+    fclose(f);
+    return b;
+}
+int gfx_ini_get(const char *key, char *out, size_t on) {
+    size_t len, vs, ve, found = 0;
+    char *b = ini_read_all(gfx_options()->path, &len);
+    for (size_t s = 0; b && s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (ini_line_kv(b + s, e - s, key, &vs, &ve)) { size_t n = ve - vs < on - 1 ? ve - vs : on - 1; memcpy(out, b + s + vs, n); out[n] = 0; found = 1; }
+        s = e + 1;
+    }
+    free(b);
+    return (int)found;
+}
+int gfx_option_set(const char *key, const char *val) {
+    const char *path = gfx_options()->path;
+    size_t len, vs, ve, vl = strlen(val), done = 0;
+    char *b = ini_read_all(path, &len), tmp[MAX_PATH + 8];
+    int crlf = !b || strstr(b, "\r\n") != NULL;
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { free(b); return 0; }
+    for (size_t s = 0; b && s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (e < len) e++;                                   /* the line with its newline */
+        if (ini_line_kv(b + s, e - s, key, &vs, &ve)) { fwrite(b + s, 1, vs, f); fwrite(val, 1, vl, f); fwrite(b + s + ve, 1, e - s - ve, f); done = 1; }
+        else fwrite(b + s, 1, e - s, f);
+        s = e;
+    }
+    if (!done) fprintf(f, "%s%s = %s%s", len && b[len - 1] != '\n' ? (crlf ? "\r\n" : "\n") : "", key, val, crlf ? "\r\n" : "\n");
+    free(b);
+    if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
+    if (!_stricmp(key, "cutscene_fps")) _putenv_s("SSBU_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
+    GfxOptions t;
+    opt_load(NULL, &t, NULL);
+    /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
+    g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
+    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
+    printf("graphics options: %s = %s written to %s\n", key, val, path);
+    fflush(stdout);
+    return 1;
 }
