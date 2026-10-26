@@ -136,6 +136,11 @@ static const char *const k_default_ini =
 ";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
 "cutscene_fps = 30\r\n"
 "\r\n"
+"; texture_lod_bias = 0      (-3 .. 3; Vulkan)\r\n"
+";   0: textures as the game samples them. Below 0: finer mip levels, sharper textures in the distance (-0.5 .. -1;\r\n"
+";   lower can shimmer); added to every sampler that uses mip maps. Above 0: blurrier, a little less GPU time.\r\n"
+"texture_lod_bias = 0\r\n"
+"\r\n"
 /* [Recomps#1] finding 147 */
 "; hdr = auto | off | on      (Vulkan, Windows)\r\n"
 ";   auto: while Windows HDR is on for the monitor the game is on, the picture goes out as HDR (the game's colours at\r\n"
@@ -230,10 +235,18 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [b3recomp] */
+        else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [b3recomp] */
         else unknown++;
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
+    {   /* [b3recomp] texture_lod_bias: SSBU_TEXTURE_LOD_BIAS wins; -3 .. 3 */
+        const char *e = getenv("SSBU_TEXTURE_LOD_BIAS");
+        if (e) o->texture_lod_bias = (float)atof(e);
+        if (o->texture_lod_bias < -3.0f) o->texture_lod_bias = -3.0f;
+        if (o->texture_lod_bias > 3.0f) o->texture_lod_bias = 3.0f;
+        if (o->texture_lod_bias != 0.0f) printf("graphics options: texture_lod_bias=%.2f (%s): added to the mip level of every texture sampler that uses mip maps\n", o->texture_lod_bias, e ? "SSBU_TEXTURE_LOD_BIAS" : "graphics.ini");
+    }
     {   /* [b3recomp] SSBU_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
         const char *e = getenv("SSBU_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }

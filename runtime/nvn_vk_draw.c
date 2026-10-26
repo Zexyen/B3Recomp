@@ -1188,6 +1188,10 @@ static VkSampler sampler_get(const SamplerParams *p) {
     ci.addressModeU = wrap[p->ws & 7]; ci.addressModeV = wrap[p->wt & 7]; ci.addressModeW = wrap[p->wr & 7];
     ci.mipLodBias = p->bias; ci.minLod = p->lodmin < 0 ? 0 : p->lodmin; ci.maxLod = p->lodmax;
     if (minf < 2) { ci.minLod = 0; ci.maxLod = 0.25f; }      /* no mip maps: level 0 only (the Vulkan specification's own mapping of GL_NEAREST / GL_LINEAR) */
+    else if (gfx_options()->texture_lod_bias != 0.0f) {      /* [b3recomp] texture_lod_bias (graphics.ini): finer (below 0) or coarser mip levels */
+        float lim = V.props.limits.maxSamplerLodBias, b = ci.mipLodBias + gfx_options()->texture_lod_bias;
+        ci.mipLodBias = b < -lim ? -lim : b > lim ? lim : b;
+    }
     if (ci.maxLod < ci.minLod) ci.maxLod = ci.minLod;
     float aniso = p->aniso;
     {   /* track O: anisotropic_filtering in graphics.ini = at least that on samplers that filter linearly between mip levels (not shadow-compare samplers) */
