@@ -467,9 +467,80 @@ halved in 2:1 steps first).
   only); now `config/graphics.ini` is (resolution_scale and cutscene_fps from the file checked). The tracked file sets
   `anisotropic_filtering = 8` (from B2recomp), which now applies on Linux too; its `resolution_scale` was 2.0 (B2's
   2560x1440; 3200x1800 for B3) and is back to 1.0. `controllers.ini` (nnpad_sdl.c) has the same cut, not changed.
+- **The clouds of erasure** (the Homunculi's smoke, Shibuya; blurry at 4K in the user's play): tessellated patches drawn
+  into fixed 520x360 targets (two RGBA16F + D16 and a 3-layer RGBA16F array; then a full-screen composite). 520x360 is
+  not of the window's shape: named in `rs_extra_class`, scaled with the others (1248x864 at 2.4). Crops at 4K
+  (`/tmp/shots/smoke_before_after_2700.png`): the blocky, dotted cloud edges against geometry are gone, the composite
+  stays aligned. `SSBU_VK_CLOUD_SCALE=<cap>` limits their scale for a weak GPU (default: the full scale; 4K A/B at equal
+  load, 1.0 against 2.4: 78-81 % against 75-77 % of frames at 60).
+- **Measurements later on 2026-10-25 were taken with other programs loading the machine** (a game in Java at about two
+  cores and the GPU, two long-running emulator processes): 4K runs then gave 75-81 % of frames at 60 whatever the setting
+  (the 96 % above was an idle machine). Only A/B runs interleaved under the same load are compared.
 - **First run at a scale other than 1.0**: the fragment stages are another translation (one for every scale, keyed
   `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
   behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
+
+## Level of detail (2026-10-25)
+
+- **`texture_lod_bias`** (graphics.ini; `SSBU_TEXTURE_LOD_BIAS`; -3 .. 3, default 0 = the game's own): added to the mip
+  level of every sampler that uses mip maps (clamped to the device's limit). At -1 the same view is sharper (high-frequency
+  energy: near street 113 -> 153, far street 273 -> 292, distant buildings 292 -> 340); no measurable cost (4K A/B:
+  77-80 % against 77-79 % of frames at 60).
+- **Model LOD: not found yet.** Candidates read and tested with a host override that scaled their values, measured by
+  the indices a frame draws (`SSBU_VK_PRIMLOG`) on the same idle view:
+  - `LodDistance0..3` / `UseLodDistance0..3` (reader `71007d3a5c`, pairs of float + flag): the values seen are 0, -1, 0.5,
+    0.25, 5 / 15, 10.8 / 26, and every Use flag is 0: an effect system's settings, not models;
+  - `Lod { Lod0..Lod6 }` beside `Deletable { max, extend, vanishTime }` (reader `7100646060`, seven floats at
+    +0xc0c..+0xc24 of one object): read once, 0 10 20 30 50 80 100. Scaled by 0.2 and 3: 1.01 / 1.04 million indices a
+    frame against 1.02-1.07 million at 1 (two runs): no effect on this view (likely the breakable props' table);
+  - `LOD0..LOD7` names (`71007f44ac`): an enum parser of level names (models' LOD groups or settings), reached through a
+    function pointer.
+  Next: find a model whose index count changes with distance (a scripted walk away, `SSBU_VK_PRIMLOG` per draw and
+  vertex buffer), then the code that picks its batch list. The temporary overrides were removed.
+
+## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
+
+**How B3 times a frame** (read off the lifted code; the same engine generation as Bayonetta 2):
+- The per-frame clock `7100c1f600` (called by the main loop `7100670b80` before it picks the frame-rate mode) measures
+  the last frame in ms (+0xf0) and keeps the frame's **step** at +0xe0, in 60 Hz frames:
+  - gameplay (w1 = 1): the mean measured frame time since the last step / the ms of a 60 Hz frame (+0xec), minus a
+    carry (+0xe4), **clamped to 1.0 .. 2.0** (the rest kept as carry); a global override (`7100ba3300`, a float that
+    wins when above 0);
+  - title, menus, cutscenes (w1 = 0, state flags 28 and 30): a fixed 1.0 = one 30 Hz frame (`cutscene_fps = 60`
+    replaces it by the measured length, `h_frame_clock`).
+- `7100c1f72c` multiplies the step into five chained **time channels** (scales at +0x88 .. +0xcc, scaled steps stored at
+  +0x94 ...): the slow motions / Witch Time / pause of the game read these.
+- So gameplay already moves by a measured delta between 30 and 60 fps (a 25 ms frame = a step of 1.5); above 60 the floor
+  of 1.0 makes the game run faster than real time (at 120 fps, twice as fast). This is the clock of Bayonetta 2
+  (B2recomp: `0x7100dd1d60`, the same 1.0 / 2.0 bounds, five channels).
+
+**What B2recomp's 120 fps beta needed** (its `scripts/fps_patch.py`, `lifter/fps_ticks.txt`, `lifter/fps_smooth.txt`;
+v0.2.0 beta on 2026-10-17, v0.3.4 on 2026-10-23, about 26 commits): the clock always measures and its floor goes to
+1/16; the present asks for interval 0 and a limiter paces; about 60 **per-frame counters** (player / enemy countdowns,
+combo windows and the combo display, Witch Time's end, input windows after a press, stick-motion moves, enemy sound
+timers) advance by the 60 Hz frames of game time due ("smart tick", per site and field address); 48 **smoothings**
+x += k (T - x) take their closed form T + (x - T)(1 - k)^step; float timers keep their overshoot; cinematic shot / scene
+holds keep their game time; the slow motion's end lands on the frame grid. The counters were found by a **census**:
+per-site hit counts while the frame rate alternates 60 / 120, then read one by one.
+
+**For B3** (what carries over, what does not):
+- The clock floor, the present interval and the runtime's pacing at 120 (`frame_rate`, display.c `gfx_pace_rate`, from
+  Recomps#1) carry over almost as they are: about a day.
+- Every counter and smoothing address is B3's own (another binary): the census tooling (site counters in the lifted
+  code, the alternating-rate run) has to be rebuilt here, and each site read. B2's patterns (the smoothing form, the
+  overshoot form) can be searched for the same way in B3's lifted C. Expect a list of similar size (B3 has more
+  systems: Demon Slaves, Viola, Jeanne's levels).
+- Known frame-locked parts so far: the 30 fps-mode scenes (cutscenes and menus: their own step, handled); the
+  frames -> seconds conversion by mode (`7100cb4f54`); the pad is read once a frame (input windows count frames:
+  the B2 kind of fix). Physics and animation are not read yet: if they take the scaled step they follow; anything that
+  counts frames does not.
+- Performance: 120 fps needs 8.3 ms on the critical path. Today's late-frame analysis (Shibuya, Tokyo) has frames of
+  16-20 ms of game + render work in heavy scenes (render thread 4-11 ms, the main thread's own work and its jobs, plus
+  long frames in lifted code: the tree walk `71007e1fe4`); 120 would hold in light scenes only, 80-100 in fights.
+- Risks: subtle gameplay timing (combos, dodge offset, Witch Time windows, enemy attack timers) that only shows in
+  play; cutscene sync (handled for the 60 case); effects that count frames.
+- Estimate: the uncapped clock and pacing about a day; a playable beta with the census and the first ~50 sites about a
+  week of sessions (B2's took a week after its research); then fixes as play finds them.
 
 ## Next blockers (most urgent first)
 
