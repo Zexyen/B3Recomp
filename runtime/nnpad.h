@@ -24,7 +24,9 @@ void nnpad_rumble(int player, float low, float high);   /* amplitudes 0..1 of th
 void nnpad_disconnect(int player);               /* DisconnectNpad: hidden until one of its buttons is pressed */
 void nnpad_swap(int a, int b);                   /* SwapNpadAssignment */
 int  nnpad_keyboard_player(void);                /* 0..7, -1 = nobody; fixed once resolved (see controllers.ini) */
-int  nnpad_kb_vk(int idx);                       /* configured virtual key: 0..15 = Pro buttons, 16..19 = left stick left/up/right/down, 20..23 = right stick; 0 = unbound */
+#define KB_N 25
+int  nnpad_kb_vk(int idx);                       /* configured virtual key: 0..15 = Pro buttons, 16..19 = left stick left/up/right/down, 20..23 = right stick, 24 = walk; 0 = unbound */
+int  nnpad_key_vk(const char *name);             /* one key name of controllers.ini (W, SPACE, LSHIFT, MOUSE1, ...) -> virtual key, 0 = unknown */
 int  nnpad_tool(int argc, char **argv);          /* --pad-test / --pad-map <n> / SSBU_PAD_TEST: returns the exit code, or -1 if this is no tool request */
 
 /* self-test hooks implemented by nnhid.c (they call the handlers the game calls) */
@@ -35,6 +37,9 @@ typedef struct {
     int (*six)(uint32_t id, float accel[3], float gyro[3], int *at_rest);
     void (*test_mode)(int on);
     uint32_t (*led)(uint32_t id);
+    void (*kb)(int on);                          /* keyboard + mouse = player 1, driven by key() / mouse() instead of the real devices */
+    void (*key)(int vk, int down);
+    void (*mouse)(int dx, int dy);               /* raw mouse counts, as the window gathers them */
 } NnHidHooks;
 int nnpad_selftest(const NnHidHooks *h);         /* number of failed checks; only virtual devices count while it runs */
 #endif
