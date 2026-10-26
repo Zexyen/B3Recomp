@@ -235,8 +235,11 @@ static int seq_key(int vk) {
  * whole desktop, so without this check anything typed in another program (or another running copy of the game, or a
  * test that injects keys) steered the game. With SSBU_SEQ the keyboard is ignored altogether, unless SSBU_SEQ_KEYBOARD
  * is set, so a scripted run is not disturbed by a person at the machine. */
+static unsigned char g_kb_test[256];                     /* [b3recomp] self-test: keys held (by virtual key), instead of the real keyboard */
+static int g_kb_test_on, g_mouse_test_dx, g_mouse_test_dy;
 static int keyboard_ours(void) {
     static int mode = -1;
+    if (g_kb_test_on) return 1;
     static LONG64 checked_at = -1;
     static int ours;
     if (mode < 0) mode = (getenv("SSBU_SEQ") || getenv("SSBU_PLAY")) && !getenv("SSBU_SEQ_KEYBOARD") ? 0 : 1;
@@ -524,6 +527,7 @@ static int player_connected(uint32_t id) {
 int display_mouse_hold(void);
 static int kb_down(int vk) {
     if (!vk) return 0;
+    if (g_kb_test_on) return g_kb_test[vk & 0xff];
     if ((vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON || vk == VK_XBUTTON1 || vk == VK_XBUTTON2) && display_mouse_hold()) return 0;
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
@@ -570,7 +574,8 @@ static int mouse_stick(int *ox, int *oy) {
     double dt = last.QuadPart ? (double)(now.QuadPart - last.QuadPart) / (double)fq.QuadPart : 0.0;
     if (last.QuadPart && dt < 0.004) { *ox = lx; *oy = ly; return 1; }
     int dx, dy;
-    display_mouse_take(&dx, &dy);
+    if (g_kb_test_on) { dx = g_mouse_test_dx; dy = g_mouse_test_dy; g_mouse_test_dx = g_mouse_test_dy = 0; }
+    else display_mouse_take(&dx, &dy);
     last = now;
     if (dt <= 0.0 || dt > 0.1) dt = 1.0 / 60;
     double kx = dx / dt * sens / 1200.0, ky = -dy / dt * sens / 1200.0;      /* mouse down = stick down */
@@ -605,6 +610,9 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         lx = (key_for(id, VK_RIGHT, 18) - key_for(id, VK_LEFT, 16)) * STICK_MAX;
         ly = (key_for(id, VK_UP, 17) - key_for(id, VK_DOWN, 19)) * STICK_MAX;
         if (sdl_on()) { rx = (key_for(id, 0, 22) - key_for(id, 0, 20)) * STICK_MAX; ry = (key_for(id, 0, 21) - key_for(id, 0, 23)) * STICK_MAX; }
+        if (lx && ly) { lx = lx * 23170 / STICK_MAX; ly = ly * 23170 / STICK_MAX; }       /* [b3recomp] a diagonal is as long as a straight push (round gate) */
+        if (rx && ry) { rx = rx * 23170 / STICK_MAX; ry = ry * 23170 / STICK_MAX; }
+        if ((lx || ly) && key_for(id, 0, 24)) { lx = lx * 2 / 5; ly = ly * 2 / 5; }      /* [b3recomp] WALK held: 0.4 of the travel, below the 0.5 of the stick-as-button bits */
         int mx, my;
         if (sdl_on() && (int)id == g_keyboard_player && mouse_stick(&mx, &my)) {      /* [Recomps#1] the mouse moves the camera */
             rx += mx; ry += my;
@@ -620,7 +628,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             if (devices_live()) {
                 buttons |= ps.buttons;
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
-                if (ps.rx || ps.ry || !rx) { rx = ps.rx; ry = ps.ry; }
+                if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [b3recomp] was !rx: a vertical-only mouse move was lost */
             }
         }
     } else if (x_present(slot) && devices_live()) {
@@ -1143,9 +1151,18 @@ static int th_six(uint32_t id, float accel[3], float gyro[3], int *rest) {
     return rd32((uint64_t)(uintptr_t)buf + 0x58) == 1;
 }
 static void th_test_mode(int on) { g_pad_test = on; if (on) { _putenv("SSBU_REC=NUL"); hid_setup(); } }
+static void th_kb(int on) {                                 /* [b3recomp] keyboard + mouse on player 1 from the test's keys, or back to none */
+    static int saved = -2;
+    if (on && saved == -2) saved = g_keyboard_player;
+    memset(g_kb_test, 0, sizeof g_kb_test); g_mouse_test_dx = g_mouse_test_dy = 0;
+    g_kb_test_on = on;
+    if (on) g_keyboard_player = 0; else if (saved != -2) { g_keyboard_player = saved; saved = -2; }
+}
+static void th_key(int vk, int down) { g_kb_test[vk & 0xff] = (unsigned char)(down != 0); }
+static void th_mouse(int dx, int dy) { g_mouse_test_dx += dx; g_mouse_test_dy += dy; }
 static uint32_t th_led(uint32_t id) { Ctx c; memset(&c, 0, sizeof c); c.x[0] = (uint64_t)(uintptr_t)&id; hid_GetPlayerLedPattern(&c); return (uint32_t)c.x[0]; }
 int nnhid_pad_selftest(void) {
-    NnHidHooks h = {th_style, th_state, th_vibrate, th_six, th_test_mode, th_led};
+    NnHidHooks h = {th_style, th_state, th_vibrate, th_six, th_test_mode, th_led, th_kb, th_key, th_mouse};
     return nnpad_selftest(&h);
 }
 

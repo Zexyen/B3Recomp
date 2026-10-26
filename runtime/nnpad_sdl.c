@@ -34,7 +34,7 @@ typedef struct {
     char pguid[8][40]; int pnone[8];    /* [players]: a GUID reserves the slot for that device, none = nobody */
     char ignore[16][40]; int nignore;   /* [general] ignore = <GUID>: devices that are never used */
     int kb_player;                      /* -2 auto, -1 none, 0..7 */
-    int kb_vk[24];                      /* [Recomps#1] up to two keys per binding: vk | vk2 << 8 */
+    int kb_vk[KB_N];                    /* [Recomps#1] up to two keys per binding: vk | vk2 << 8 */
     int mouse_cam, mouse_inv;           /* [Recomps#1] [keyboard] mouse_camera (default on), mouse_invert_y */
     float mouse_sens;                   /* [Recomps#1] [keyboard] mouse_sensitivity (default 1.0) */
     int prompts;                        /* [Recomps#1] [general] button_prompts: 0 auto, 1 switch, 2 playstation, 3 xbox */
@@ -46,6 +46,7 @@ typedef struct {
     int slot, wireless, dropped, nbtn, naxes, nhats, gtype, has_accel, has_gyro, virt;
     char guid[40], name[80];
     Uint16 rl, rh; ULONGLONG rsent;
+    int armed;                          /* [b3recomp] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
 } Dev;
 
 static const char *const g_pro[16] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
@@ -53,16 +54,17 @@ static const char *const g_gpbtn[] = {"south", "east", "west", "north", "back", 
     "dpup", "dpdown", "dpleft", "dpright", "misc1", "rightpaddle1", "leftpaddle1", "rightpaddle2", "leftpaddle2", "touchpad", "misc2", "misc3", "misc4", "misc5", "misc6"};
 static const char *const g_gpax[6] = {"leftx", "lefty", "rightx", "righty", "lefttrigger", "righttrigger"};
 static const char *const g_stk[4] = {"LX", "LY", "RX", "RY"};
-static const char *const g_kbn[24] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN",
-    "LSTICK_LEFT", "LSTICK_UP", "LSTICK_RIGHT", "LSTICK_DOWN", "RSTICK_LEFT", "RSTICK_UP", "RSTICK_RIGHT", "RSTICK_DOWN"};
-/* [Recomps#1] the default layout for Bayonetta 2, after the original Bayonetta on PC (WASD, the attacks on the mouse, Space
- * jump, Shift evade, Alt lock-on): A kick = right mouse or Enter, B jump = Space or Backspace, X punch = left mouse,
- * Y shoot = E or middle mouse, L (Umbran Climax) = Q, R = F, ZL = left Alt, ZR (dodge) = left Shift, stick clicks C / R,
- * Plus = Esc, Minus = Tab, D-pad = 1 2 3 4 (up right down left), left stick = W A S D, right stick = the arrows and the mouse */
+static const char *const g_kbn[KB_N] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN",
+    "LSTICK_LEFT", "LSTICK_UP", "LSTICK_RIGHT", "LSTICK_DOWN", "RSTICK_LEFT", "RSTICK_UP", "RSTICK_RIGHT", "RSTICK_DOWN", "WALK"};
+/* [b3recomp] the default layout for Bayonetta 3, by the Pro buttons the game uses (Y punch, X kick, B jump, A shoot / confirm,
+ * ZR dodge, ZL Demon Slave, R lock-on, L Umbran Climax, D-pad the Infernal Demon): Y = left mouse, X = right mouse,
+ * B = Space or Backspace, A = E or Enter, ZR = left Shift, ZL = Q or mouse 4, R = F or middle mouse, L = R, stick clicks
+ * C / V, Plus = Esc, Minus = Tab, D-pad = the arrows or 1 2 3 4 (up right down left), left stick = W A S D (walk: left Ctrl),
+ * right stick = I J K L and the mouse */
 #define KB2(a, b) ((a) | (b) << 8)
-static const int g_kb_default[24] = {KB2(VK_RBUTTON, VK_RETURN), KB2(VK_SPACE, VK_BACK), VK_LBUTTON, KB2('E', VK_MBUTTON), 'C', 'R',
-    'Q', 'F', VK_LMENU, VK_LSHIFT, VK_ESCAPE, VK_TAB, '4', '1', '2', '3',
-    'A', 'W', 'D', 'S', VK_LEFT, VK_UP, VK_RIGHT, VK_DOWN};
+static const int g_kb_default[KB_N] = {KB2('E', VK_RETURN), KB2(VK_SPACE, VK_BACK), VK_RBUTTON, VK_LBUTTON, 'C', 'V',
+    'R', KB2('F', VK_MBUTTON), KB2('Q', VK_XBUTTON1), VK_LSHIFT, VK_ESCAPE, VK_TAB, KB2(VK_LEFT, '4'), KB2(VK_UP, '1'), KB2(VK_RIGHT, '2'), KB2(VK_DOWN, '3'),
+    'A', 'W', 'D', 'S', 'J', 'I', 'L', 'K', VK_LCONTROL};
 
 static CRITICAL_SECTION g_cs;
 static volatile LONG g_cs_ready;
@@ -133,8 +135,8 @@ static const char *const g_default_ini =
 "; controllers.ini: pads and keyboard for the native build (read by nnpad_sdl.c; reloaded within a second of being saved).\r\n"
 "; Lines starting with ; or # are comments. Names are not case sensitive. Delete this file to get it written again.\r\n"
 ";\r\n"
-"; Find out what SDL sees:       ssbu_native.exe --pad-test       (devices, GUIDs, live button names)\r\n"
-"; Map a pad by pressing keys:   ssbu_native.exe --pad-map 1      (player 1; writes a [device <GUID>] section below)\r\n"
+"; Find out what SDL sees:       b3-game --pad-test       (devices, GUIDs, live button names)\r\n"
+"; Map a pad by pressing keys:   b3-game --pad-map 1      (player 1; writes a [device <GUID>] section below)\r\n"
 ";\r\n"
 "; Pro Controller buttons: A B X Y STICK_L STICK_R L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN\r\n"
 "; Sources on a pad SDL has a mapping for: south east west north back guide start leftstick rightstick leftshoulder\r\n"
@@ -172,21 +174,43 @@ static const char *const g_default_ini =
 "player1 = auto\r\nplayer2 = auto\r\nplayer3 = auto\r\nplayer4 = auto\r\nplayer5 = auto\r\nplayer6 = auto\r\nplayer7 = auto\r\nplayer8 = auto\r\n"
 "\r\n"
 "[keyboard]\r\n"
-"; auto = player 1, together with player 1's pad (Bayonetta 2 is a one-player game: it reads only player 1); 1..8 = that\r\n"
+"; auto = player 1, together with player 1's pad (Bayonetta 3 is a one-player game: it reads only player 1); 1..8 = that\r\n"
 "; player (merged with the pad of that player); none = no keyboard.\r\n"
 "; The environment variable SSBU_KEYBOARD_PLAYER (0 = none, 1..8) overrides this line. The keyboard counts only while the game window has the focus.\r\n"
 "player = auto\r\n"
 "; Keys: a letter or digit, LEFT UP RIGHT DOWN ENTER BACKSPACE SPACE TAB ESC SHIFT CTRL ALT LSHIFT RSHIFT LCTRL RCTRL LALT RALT F1..F12,\r\n"
 "; NUM0..NUM9, MOUSE1..MOUSE5 (left, right, middle, back, forward), or 0x<virtual key code>; none = unbound. Two keys for one\r\n"
-"; button: separated by a comma (Y = E, MOUSE3). The layout follows the original Bayonetta on PC: Pro buttons as Bayonetta 2\r\n"
-"; uses them: X punch, A kick, B jump, Y shoot, ZR dodge, L Umbran Climax, Plus pause; Enter / Backspace confirm / go back in menus.\r\n"
-"; The launcher's \"Keyboard and mouse...\" window edits these lines.\r\n"
-"A = MOUSE2, ENTER\r\nB = SPACE, BACKSPACE\r\nX = MOUSE1\r\nY = E, MOUSE3\r\nL = Q\r\nR = F\r\nZL = LALT\r\nZR = LSHIFT\r\nPLUS = ESC\r\nMINUS = TAB\r\n"
-"STICK_L = C\r\nSTICK_R = R\r\nLEFT = 4\r\nUP = 1\r\nRIGHT = 2\r\nDOWN = 3\r\n"
-"LSTICK_LEFT = A\r\nLSTICK_UP = W\r\nLSTICK_RIGHT = D\r\nLSTICK_DOWN = S\r\n"
-"RSTICK_LEFT = LEFT\r\nRSTICK_UP = UP\r\nRSTICK_RIGHT = RIGHT\r\nRSTICK_DOWN = DOWN\r\n"
+"; button: separated by a comma (A = E, ENTER). Pad and keyboard work at the same time (no switch needed). The Pro buttons\r\n"
+"; as Bayonetta 3 uses them:\r\n"
+"Y = MOUSE1\r\n"
+"; punch\r\n"
+"X = MOUSE2\r\n"
+"; kick\r\n"
+"B = SPACE, BACKSPACE\r\n"
+"; jump; back in menus\r\n"
+"A = E, ENTER\r\n"
+"; shoot (hold); confirm in menus\r\n"
+"ZR = LSHIFT\r\n"
+"; dodge (Witch Time)\r\n"
+"ZL = Q, MOUSE4\r\n"
+"; Demon Slave (hold, with the attack keys)\r\n"
+"R = F, MOUSE3\r\n"
+"; lock-on\r\n"
+"L = R\r\n"
+"; Umbran Climax\r\n"
+"PLUS = ESC\r\n"
+"; pause (also lets the mouse go)\r\n"
+"MINUS = TAB\r\n"
+"STICK_L = C\r\nSTICK_R = V\r\n"
+"; D-pad: the Infernal Demon to summon; moves in menus\r\n"
+"LEFT = LEFT, 4\r\nUP = UP, 1\r\nRIGHT = RIGHT, 2\r\nDOWN = DOWN, 3\r\n"
+"; Left stick (moving; the menus too). A diagonal is as long as a straight push; WALK held = 0.4 of the travel (walking).\r\n"
+"LSTICK_LEFT = A\r\nLSTICK_UP = W\r\nLSTICK_RIGHT = D\r\nLSTICK_DOWN = S\r\nWALK = LCTRL\r\n"
+"; Right stick (the camera) from keys; the mouse moves it too\r\n"
+"RSTICK_LEFT = J\r\nRSTICK_UP = I\r\nRSTICK_RIGHT = L\r\nRSTICK_DOWN = K\r\n"
 "; The mouse moves the camera (the right stick) once you click into the game (borderless / fullscreen: at once): the cursor\r\n"
-"; is hidden and kept in the window; Esc (pause) or Alt+Tab lets it go. mouse_sensitivity: 1.0 = full stick at a brisk move.\r\n"
+"; is hidden and kept in the window (the capturing click is not passed to the game); Esc (pause) or Alt+Tab lets it go.\r\n"
+"; mouse_sensitivity: 1.0 = full stick at 1200 counts a second (a brisk move); mouse_invert_y = on: mouse up = camera down.\r\n"
 "mouse_camera = on\r\nmouse_sensitivity = 1.0\r\nmouse_invert_y = off\r\n"
 "\r\n"
 "; Per device (GUID from --pad-test). Every key is optional; what is missing falls back to [general] and the built-in default:\r\n"
@@ -321,7 +345,7 @@ static void cfg_parse(Cfg *c, char *text) {
             else if (!_stricmp(key, "mouse_camera")) c->mouse_cam = parse_bool(val);            /* [Recomps#1] */
             else if (!_stricmp(key, "mouse_sensitivity")) { float v = (float)atof(val); if (v > 0.01f && v <= 20.0f) c->mouse_sens = v; }
             else if (!_stricmp(key, "mouse_invert_y")) c->mouse_inv = parse_bool(val);
-            else for (int i = 0; i < 24; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val);
+            else for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val);
         }
     }
 }
@@ -346,7 +370,8 @@ static void cfg_path(char *out) {
     if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
     char exe[MAX_PATH], tmp[MAX_PATH];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
-    char *s = strrchr(exe, '\\');
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [b3recomp] '/' on Linux too, as gfx_options.c opt_path */
+    if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\controllers.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
@@ -603,7 +628,7 @@ static void sensors(const Dev *d, NnPadState *o) {
     o->accel[0] = -a[0] / SDL_STANDARD_GRAVITY; o->accel[1] = a[1] / SDL_STANDARD_GRAVITY; o->accel[2] = -a[2] / SDL_STANDARD_GRAVITY;
     o->gyro[0] = -g[0] / 6.2831853f; o->gyro[1] = g[1] / 6.2831853f; o->gyro[2] = -g[2] / 6.2831853f;
 }
-static void dev_state(const Dev *d, NnPadState *o) {      /* lock held */
+static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
     float dz = EFF(d, dz), outer = EFF(d, outer), trig = EFF(d, trig);
     const DevCfg *dc = dev_cfg(d);
     int labels = eff_layout(d);
@@ -623,6 +648,9 @@ static void dev_state(const Dev *d, NnPadState *o) {      /* lock held */
     for (int i = 0; i < 4; i++) {
         Src s;
         v[i] = stick_src(d, i, &s) ? src_val(d, s) : 0;
+        /* [b3recomp] an unmapped joystick's axis drives a stick only once it has been near the centre: a mouse receiver that
+         * presents itself as a joystick (a Swiftpoint Z3: five axes resting at -32768) otherwise held both sticks pushed */
+        if (!d->gp) { if (fabsf(v[i]) < 0.25f) d->armed |= 1 << i; if (!(d->armed >> i & 1)) v[i] = 0; }
         if (i & 1) v[i] = -v[i];                             /* SDL: down is positive; the Npad: up is positive */
         if (dc && dc->inv[i]) v[i] = -v[i];
         if (v[i] > 1) v[i] = 1; if (v[i] < -1) v[i] = -1;
@@ -777,8 +805,9 @@ int nnpad_prompts_by_letter(void) {
 }
 int nnpad_kb_vk(int idx) {
     if (!g_inited) { lock(); if (!g_cfg.path[0]) { cfg_load(1); } unlock(); }
-    return idx >= 0 && idx < 24 ? g_cfg.kb_vk[idx] : 0;
+    return idx >= 0 && idx < KB_N ? g_cfg.kb_vk[idx] : 0;
 }
+int nnpad_key_vk(const char *name) { return parse_vk1(name); }
 
 /* ================================================================ tools: --pad-test, --pad-map */
 static int active_sources(const Dev *d, char out[][24], int max) {
@@ -829,7 +858,7 @@ static int pad_test(int seconds) {
         for (int i = 0; i < MAXDEV; i++) cnt += g_dev[i].used;
         if (cnt != known) { known = cnt; printf("pad-test: %d device(s)\n", cnt); print_devices(); }
         for (int i = 0; i < MAXDEV; i++) {
-            const Dev *d = &g_dev[i];
+            Dev *d = &g_dev[i];
             char cur[8][24];
             int n, q[4];
             NnPadState s;
@@ -1097,6 +1126,59 @@ int nnpad_selftest(const NnHidHooks *h) {
     }
     h->vibrate(0, 0, 0);
 
+    /* ---- [b3recomp] keyboard + mouse on player 1, merged with its pad; bindings from the default file, then rebound */
+    {
+        int ok = 1;
+        vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle();
+        h->kb(1);
+        for (int b = 0; b < 16; b++) for (int k = 0; k < 2; k++) {        /* every bound key of every Pro button, one at a time */
+            int vk = nnpad_kb_vk(b) >> (8 * k) & 0xff;
+            if (!vk) continue;
+            h->key(vk, 1); h->state(0, &btn, st, &attr); h->key(vk, 0);
+            if ((btn & 0xffff) != 1ull << b) { ok = 0; printf("    %s key %d: got %llx\n", g_kbn[b], k + 1, (unsigned long long)btn); }
+        }
+        check(ok && nnpad_kb_vk(3) == VK_LBUTTON && nnpad_kb_vk(2) == VK_RBUTTON, "default keys (controllers.ini as written): each bound key / mouse button gives exactly its Pro bit; punch Y = left mouse, kick X = right mouse");
+        h->key('W', 1); h->state(0, &btn, st, &attr);
+        check(st[0] == 0 && st[1] == 32767 && (btn >> 17 & 1), "W: left stick full up (and its stick-as-button bit)");
+        h->key('D', 1); h->state(0, &btn, st, &attr);
+        check(st[0] == 23170 && st[1] == 23170, "W + D: a diagonal of the length of a straight push (0.707, 0.707)");
+        h->key('D', 0); h->key(VK_LCONTROL, 1); h->state(0, &btn, st, &attr);
+        check(st[0] == 0 && st[1] == 13106 && !(btn >> 17 & 1), "W + walk (left Ctrl): 0.4 of the travel, no stick-as-button bit");
+        h->key(VK_LCONTROL, 0); h->key('W', 0);
+        h->state(0, &btn, st, &attr); Sleep(20); h->mouse(6, 0); h->state(0, &btn, st, &attr);
+        int rx1 = st[2];
+        check(st[2] > 3000 && st[2] < 9000 && st[3] == 0, "mouse 6 counts right in ~20 ms: right stick about 0.25 right (1200 counts/s = full)");
+        Sleep(20); h->mouse(0, 6); h->state(0, &btn, st, &attr);
+        check(st[3] < -3000 && st[3] > -9000 && st[2] == 0, "mouse down: right stick down");
+        Sleep(20); h->state(0, &btn, st, &attr);
+        check(st[2] == 0 && st[3] == 0, "mouse still: right stick back in the middle");
+        /* pad and keyboard at once: buttons add up, the pad's stick wins while it is off centre */
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, true); h->key('W', 1); h->key(VK_SPACE, 1); settle(); h->state(0, &btn, st, &attr);
+        ok = (btn & 0xffff) == 3 && st[1] == 32767;
+        SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 32767); settle(); h->state(0, &btn, st, &attr);
+        ok = ok && st[0] == 32767 && st[1] == 0;
+        SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 0); settle(); h->state(0, &btn, st, &attr);
+        ok = ok && st[0] == 0 && st[1] == 32767;
+        check(ok, "pad + keyboard on player 1 together: pad A + Space = A + B; the pad's stick wins while pushed, W again once it is centred");
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); h->key('W', 0); h->key(VK_SPACE, 0); settle();
+        /* rebinding from the file, reloaded while running */
+        Sleep(1100);
+        write_text(path, "[keyboard]\r\nplayer = none\r\nY = J\r\nZR = MOUSE5, K\r\nWALK = none\r\nmouse_invert_y = on\r\nmouse_sensitivity = 2.0\r\n");
+        Sleep(1100); nnpad_poll(1);
+        ok = 1;
+        h->key('J', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 3; h->key('J', 0);
+        h->key(VK_LBUTTON, 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 0; h->key(VK_LBUTTON, 0);
+        h->key(VK_XBUTTON2, 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key(VK_XBUTTON2, 0);
+        h->key('K', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key('K', 0);
+        h->key('W', 1); h->key(VK_LCONTROL, 1); h->state(0, &btn, st, &attr); ok = ok && st[1] == 32767; h->key('W', 0); h->key(VK_LCONTROL, 0);
+        check(ok, "rebound in the file while running: Y = J (left mouse no longer punches), ZR = MOUSE5 or K, WALK = none");
+        h->state(0, &btn, st, &attr); Sleep(20); h->mouse(6, 6); h->state(0, &btn, st, &attr);
+        check(st[3] > 0 && st[2] > rx1 * 3 / 2, "mouse_invert_y = on: mouse down = stick up; mouse_sensitivity = 2: about twice the deflection");
+        h->kb(0);
+        h->state(0, &btn, st, &attr);
+        check(btn == 0 && st[0] == 0 && st[1] == 0, "keyboard off again: player 1 is the pad alone");
+    }
+
     /* ---- 8 pads, slot assignment */
     {
         int ok = 1;
@@ -1203,8 +1285,9 @@ int nnpad_selftest(const NnHidHooks *h) {
         settle();
         fj = SDL_OpenJoystick(fill);                         /* fills the last free slot: 8 pads */
         rid = vj_make(10, 0x400, 0, 0);
-        settle();
         rj = SDL_OpenJoystick(rid);
+        for (int a = 0; a < 6; a++) SDL_SetJoystickVirtualAxis(rj, a, -32768);      /* [b3recomp] axes resting at one end, as a mouse receiver's */
+        settle();
         check(rid != 0 && !SDL_IsGamepad(rid), "a virtual joystick of unknown type has NO gamepad mapping");
         for (int i = 0; i < 8; i++) { lock(); Dev *d = dev_of(i); if (d && !d->gp) raw_has = 1; unlock(); }
         check(raw_has == 0, "8 slots full: a 9th device gets no slot and does not disturb the others");
@@ -1212,6 +1295,10 @@ int nnpad_selftest(const NnHidHooks *h) {
         for (int i = 0; i < 8; i++) { lock(); Dev *d = dev_of(i); int raw = d && !d->gp; unlock(); if (raw) p = i; }
         check(p >= 0, "the unmapped joystick is opened as a plain joystick and gets the free slot");
         if (p >= 0) {
+            h->state((uint32_t)p, &btn, st, &attr);
+            check(st[0] == 0 && st[1] == 0 && st[2] == 0 && st[3] == 0, "unmapped joystick with every axis resting at -32768 (a mouse receiver): both sticks read centred");
+            for (int a = 0; a < 6; a++) SDL_SetJoystickVirtualAxis(rj, a, 0);
+            settle(); h->state((uint32_t)p, &btn, st, &attr);
             SDL_SetJoystickVirtualButton(rj, 1, true); settle(); h->state((uint32_t)p, &btn, st, &attr);
             int a = btn == 1ull << 0;
             SDL_SetJoystickVirtualButton(rj, 1, false); SDL_SetJoystickVirtualButton(rj, 0, true); settle(); h->state((uint32_t)p, &btn, st, &attr);
