@@ -397,6 +397,13 @@ static int view_path(Mount *m, const char *rel, char *out) {
     join(out, m->root, rel);
     return exists(out);
 }
+/* [b3recomp] options_row.c: 1 when the RomFS file `rel` (e.g. "ui_000.pkz") the game reads is the one of the mod folder `mod` */
+int fs_rom_mod_serves(const char *rel, const char *mod) {
+    char out[MAX_PATH];
+    fs_roots();
+    for (int i = 0; i < g_rom_mods; i++) { join(out, g_rom_mod[i], rel); if (exists(out)) return strstr(g_rom_mod[i], mod) != NULL; }
+    return 0;
+}
 static int view_parent_is_dir(Mount *m, const char *rel) {
     char parent[MAX_PATH], host[MAX_PATH];
     snprintf(parent, sizeof parent, "%s", rel);

@@ -437,6 +437,7 @@ static void menu_open(const char *why) {
     HANDLE th = CreateThread(NULL, 0, menu_thread, NULL, 0, NULL);
     if (th) CloseHandle(th); else { InterlockedExchange(&g_guest_frozen, 0); InterlockedExchange(&g_open, 0); }
 }
+void pcmenu_open_game(void) { menu_open("the game's Options: PC Settings"); }     /* options_row.c, the game's main thread */
 /* nnhid.c, at every pad state the game reads: opens the menu, and says when the game gets an idle pad */
 int pcmenu_gate(uint32_t id, uint64_t buttons) {
     static int prev = 1, test = -1;

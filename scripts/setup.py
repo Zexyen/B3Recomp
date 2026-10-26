@@ -24,6 +24,8 @@ ignored by git; never upload them). Steps, resumable (a finished step is skipped
     lift     lifter/recomp_eh.py: your main.elf -> build/gen_eh (C)
     compile  scripts/compile_main.py: build/gen_eh -> build/obj (clang -O2; the longest step)
     link     scripts/build_runtime.py: build/game.so + build/b3-game (Linux)
+    text     scripts/pc_settings_mod.py: the label of the Options screen's "PC Settings" row in the game's own text,
+             mods/b3recomp-pc-settings/ (from your dump's ui_000.pkz, through build/b3-game --pkz-dump)
     check    lifter/test_ext.py (needs unicorn; skipped without it)
 
 Tools and libraries: the option, else the environment variable, else <repo>/deps/<name>, else what an earlier run found
@@ -47,7 +49,7 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEPS = os.path.join(REPO, 'deps')
-STEPS = ['deps', 'verify', 'convert', 'mods', 'tables', 'lift', 'compile', 'link', 'check']
+STEPS = ['deps', 'verify', 'convert', 'mods', 'tables', 'lift', 'compile', 'link', 'text', 'check']
 ALWAYS = {'deps', 'mods'}                # cheap: deps fills the tool locations every later step passes on, mods notices
                                          # a changed mods folder
 
@@ -461,6 +463,10 @@ def step_link(cx):
            os.path.getsize(os.path.join(cx.build, 'game.dll')) / 2 ** 20))
 
 
+def step_text(cx):
+    say('  ' + cx.run('text', [sys.executable, os.path.join(REPO, 'scripts', 'pc_settings_mod.py')]).strip().splitlines()[-1])
+
+
 def step_check(cx):
     try:
         import unicorn  # noqa: F401
@@ -483,7 +489,7 @@ def step_check(cx):
 # package's VERSION (the launcher compares that one to show its build screen after an update).
 SOURCE_GLOBS = ('lifter/*.py', 'lifter/*.txt', 'lifter/*.h', 'runtime/*.c', 'runtime/*.h', 'runtime/*.inc',
                 'runtime/gen/make_gen.py', 'runtime/linux/*.c', 'runtime/linux/*.h', 'runtime/linux/GL/*.h', 'scripts/*.py')
-REDO_ON_UPDATE = ('tables', 'lift', 'compile', 'link', 'check')
+REDO_ON_UPDATE = ('tables', 'lift', 'compile', 'link', 'text', 'check')
 
 
 def source_fingerprint():

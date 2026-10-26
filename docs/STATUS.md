@@ -640,15 +640,42 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
   stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
   game's textures). Sized by the window: 980 x 824 at 1080p, 1960 x 1648 at 4K.
-- **The game's own Options screen** (stage 3): not hooked. Its UI (`ui/ui_option.dat`) is loaded once at boot and stays
-  resident, opening it reads no file, leaving it writes `GameData.dat` from the save thread (whose call chain ends at the
-  thread's entry), and a sampling profile with Options open against the pause menu and gameplay only showed the game's
-  generic UI drawing (0x7100c0e... - c1b..., also busy in the pause menu), not Options-only code. What is reliable: the
-  **pause menu** (the way into Options in a chapter) reads `ui/ui_photomode.dat` from ui_000.pkz every time it opens, so
-  nnfs.c shows a small "PC SETTINGS  F1 · L3 + R3" hint at the bottom right for 8 s then (`SSBU_PCMENU_HINT=<s>`, 0 = off).
-  F1 / L3 + R3 open the panel over the game's Options screen like anywhere else. A real entry in the game's menu needs
-  that screen's code found first (a write watch on the GameData save request, or the UID layout; see the feasibility
-  report).
+- **The game's own Options screen** (2026-10-26): **a "PC Settings" row** on its Screen Display page, before Restore
+  Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
+  that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
+  `ui/ui_menu_<lang>.dat`, not the PTD tables), their hashes are immediates in main, and they led to the screen's 25 row
+  objects and its page tables (docs/RE_NOTES.md section 8). How it is built:
+  - **Lift** (`lifter/recomp_eh.py`, `_options_row_patches`): the 13 adrp + add pairs that read Screen Display's 7 row
+    numbers read them from a page the runtime maps after main's image (0x7105a00000), and its two row counts say 8;
+    28 words, each original checked against the binary. Re-lifting changes one C file.
+  - **Runtime** (`runtime/options_row.c`, at boot): that page with the numbers 18 .. 23, 25, 24; row 25 is an object
+    whose method table is the Brightness row's (an action row) with two host methods: the label (message
+    MENU_OPTION_LIST_PC_SETTINGS) and "decide" (the game's own confirm test and sounds; opens the panel, returns "used").
+  - **Text** (`scripts/pc_settings_mod.py`, setup step `text`): the message added to all 13 `messmenu.mcd` (spelled with
+    each file's own glyphs: PC Settings / PC-Einstellungen / Paramètres PC / Ajustes de PC / Impostazioni PC /
+    Настройки ПК / PC設定 / PC设置 / PC 설정; the Chinese and Korean "PC" from the files' Latin font), served as
+    `mods/b3recomp-pc-settings/romfs/ui_000.pkz`: the dump's archive byte for byte plus the 13 entries appended stored
+    and re-pointed (185 MB; made in 0.3 s here, through `b3-game --pkz-dump`). Without
+    the mod the row is named with the pause menu's "Options" and the log says how to make the text.
+  The pause menu's hint (below) stays: it names F1 / L3 + R3, which work everywhere.
+  Runs (muted, hidden window, copies of the save and graphics.ini; `/tmp/shots/optionshook_*`): r3 with the virtual pad
+  (SSBU_SCRIPT) and r4 with keyboard events (SSBU_KBM_SCRIPT): pause -> Options -> R x3 -> Screen Display shows the
+  row (`optionshook_row_screen_display_en.png`); down x6 and A / Enter open the panel over the game's Options
+  (`optionshook_panel_from_row.png`); down moves the panel, not the game; B / Backspace closes it, up / down then move
+  the game's cursor (to the greyed Naive Angel Mode and back), A / Enter opens it again, B / Esc closes it (Esc = Plus
+  reached the game only as an idle pad: no pause toggle), B leaves Options and the pause menu
+  (`optionshook_pad_close_and_leave.png`). GameData.dat is written when Options is left: byte for byte the original in
+  both runs; graphics.ini unchanged (nothing changed in the panel). Not seen: r2, the same keyboard script as r4,
+  lost the key-up of the Backspace that closed the panel (the host's key state kept B down until the next Backspace,
+  so the game read an idle pad for 17 s); three more Backspace closes (r4, a title-screen run with every SDL key event
+  logged) released normally. Cause not found; it was in the synthetic-event test path, a real key was not tried.
+  Labels, with an empty save and SSBU_LANGUAGE (the language of a save wins over it; title -> OPTIONS): zh-Hans,
+  zh-Hant, ko, ja, de, fr, es, it, ru all show their label in the list's font, the Latin "PC" of the Chinese and Korean
+  files included (`optionshook_labels_cjk.png`, `optionshook_labels_eu_and_fallback.png`); with SSBU_MODS=none the row
+  reads "Options". From the title's Options the panel opened and closed as in a chapter; there, reaching Naive Angel
+  Mode first shows its explanation (the game's code does that for row 23 when it is not greyed), which takes the input
+  until B. Not tested: a real pad or keyboard (synthetic input only), en-GB / nl / pt (their files were changed and
+  read back, not shown), Windows (not built).
 - **Cost while closed**: one key test and one mask test per pad read, one flag read per present; nothing drawn, no thread.
   Not measured with a benchmark run.
 - **Tests**: `tests/pcmenu_selftest.c` (the ini rewrite byte for byte in CRLF and LF files, duplicate keys, an appended

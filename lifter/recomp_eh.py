@@ -215,6 +215,39 @@ def lift_function(env, entry):
 # cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame clock, whose fixed step is then halved (real time).
 HOST_OVERRIDES = {0x7100b382c0: 'morton_split32', 0x7100d02de0: 'fps_mode_set', 0x7100c1f600: 'frame_clock'}
 
+# [b3recomp] A "PC Settings" row on the Options screen's Screen Display page (runtime/options_row.c). The page's row
+# numbers are a 7-entry table in main's read-only data (0x71018511bc, read by 13 adrp + add pairs of the Options screen's
+# code) and its row count is 7 in two places (cursor wrap 0x7100a31fe8, list build 0x7100a32430). The pairs read an
+# 8-entry table on the page the runtime maps at OPTX_PAGE instead, and both counts become 8. Applied through recomp.PATCHES
+# (word() returns the patched words; each original word is checked against the binary).
+OPTX_PAGE = 0x7105a00000          # runtime/options_row.c OPTX_BASE: the page after main's image
+
+
+def _options_row_patches():
+    def adrp(rd, pc, target):
+        imm = ((target >> 12) - (pc >> 12)) & 0x1fffff
+        return 0x90000000 | (imm & 3) << 29 | (imm >> 2) << 5 | rd
+    def add(rd, imm):
+        return 0x91000000 | imm << 10 | rd << 5 | rd
+    def movz_w(rd, imm):
+        return 0x52800000 | imm << 5 | rd
+    want = {}
+    for a, r in [(0x7100a30db0, 9), (0x7100a31808, 9), (0x7100a31890, 9), (0x7100a319fc, 9), (0x7100a31b48, 9),
+                 (0x7100a31bd8, 9), (0x7100a31d10, 9), (0x7100a31e1c, 9), (0x7100a31f08, 9), (0x7100a320dc, 9),
+                 (0x7100a321e0, 9), (0x7100a322fc, 9), (0x7100a32438, 28)]:      # the add of each pair; its adrp is just before
+        want[a - 4] = (adrp(r, a - 4, 0x7101851000), adrp(r, a - 4, OPTX_PAGE))
+        want[a] = (add(r, 0x1bc), add(r, 0))
+    want[0x7100a31fe8] = (movz_w(21, 7), movz_w(21, 8))
+    want[0x7100a32430] = (movz_w(20, 7), movz_w(20, 8))
+    for a, (old, new) in want.items():
+        have = struct.unpack_from('<I', IMG, FILE_OFF + a - BASE)[0]
+        if have != old:
+            raise ValueError('options row patch %x: the binary has %08x, expected %08x' % (a, have, old))
+        recomp.PATCHES[a] = new
+
+
+_options_row_patches()      # at import: the pool's workers import this module too
+
 _worker_env = None
 
 
