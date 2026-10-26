@@ -167,7 +167,8 @@ static void mods_ini_path(char *out) {                   /* beside controllers.i
         return;
     }
     GetModuleFileNameA(NULL, tmp, MAX_PATH);
-    char *s = strrchr(tmp, '\\');
+    char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');      /* [b3recomp] '/' on Linux, as graphics.ini (gfx_options.c) */
+    if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(out, MAX_PATH, "%s\\..\\config\\mods.ini", tmp);
 }
@@ -265,7 +266,8 @@ static void rom_mods_init(void) {
     if (env && env[0]) snprintf(tmp, sizeof tmp, "%s", env);
     else {
         GetModuleFileNameA(NULL, tmp, MAX_PATH);
-        char *s = strrchr(tmp, '\\');
+        char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');  /* [b3recomp] '/' on Linux: build/b3-game/../mods was no folder */
+        if (s2 > s) s = s2;
         if (s) *s = 0;
         strncat(tmp, "\\..\\mods", sizeof tmp - strlen(tmp) - 1);
     }
