@@ -542,6 +542,67 @@ per-site hit counts while the frame rate alternates 60 / 120, then read one by o
 - Estimate: the uncapped clock and pacing about a day; a playable beta with the census and the first ~50 sites about a
   week of sessions (B2's took a week after its research); then fixes as play finds them.
 
+## PC settings menu (2026-10-25)
+
+An in-game panel for the keys of graphics.ini, drawn by the runtime over the game (the feasibility study's path: plumbing,
+then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `runtime/nvn_vk_pcmenu.c`.
+
+- **Open / close**: F1, or L3 + R3 on player 1's controller (seen at the game's own pad reads, `pcmenu_gate` in nnhid.c);
+  B / Escape / F1 close it. Up / down choose a row, left / right change it (they stop at the ends), A / Enter go round;
+  the mouse points at a row and clicks the value ('‹' for the one before). While it is open the **game is held** with the
+  console's suspension (`g_guest_frozen`, as for a minimised window; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
+  game's last picture again with the panel about 60 times a second, and the game reads an idle pad, also after closing
+  until the buttons that closed it are let go.
+- **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the
+  next start), vsync (live: the present mode is chosen again and the swapchain made again, display.c's pacing chosen
+  again; a display lock is let go live, a new one is only taken if none was tried in this run), cutscene frame rate
+  (live: `game_cutscene_fps`, exported by the game library), anisotropic filtering (live: the sampler table is flushed,
+  new samplers from then on; the old ones are kept to shutdown because cached descriptor sets may name them), aspect
+  (live), internal resolution (**saved, applies at the next start**, marked on the row and in the status line). A key set
+  by an environment variable (`SSBU_WINDOW`, `SSBU_VK_PRESENT`, `SSBU_CUTSCENE_FPS`, `SSBU_VK_SCALE`) or by
+  `profile = low` is shown greyed with the reason. Hooks for the graphics round: `texture_lod_bias` is an optional row that
+  appears when graphics.ini has the key (applied by the same sampler flush once `gfx_option_set` takes its field over;
+  until then marked "next start"); a frame-rate cap is one more row plus its live field in `gfx_option_set`.
+- **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
+  the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
+  through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
+- **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
+  stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
+  game's textures). Sized by the window: 980 x 766 at 1080p, 1960 x 1532 at 4K.
+- **The game's own Options screen** (stage 3): not hooked. Its UI (`ui/ui_option.dat`) is loaded once at boot and stays
+  resident, opening it reads no file, leaving it writes `GameData.dat` from the save thread (whose call chain ends at the
+  thread's entry), and a sampling profile with Options open against the pause menu and gameplay only showed the game's
+  generic UI drawing (0x7100c0e... - c1b..., also busy in the pause menu), not Options-only code. What is reliable: the
+  **pause menu** (the way into Options in a chapter) reads `ui/ui_photomode.dat` from ui_000.pkz every time it opens, so
+  nnfs.c shows a small "PC SETTINGS  F1 · L3 + R3" hint at the bottom right for 8 s then (`SSBU_PCMENU_HINT=<s>`, 0 = off).
+  F1 / L3 + R3 open the panel over the game's Options screen like anywhere else. A real entry in the game's menu needs
+  that screen's code found first (a write watch on the GameData save request, or the UID layout; see the feasibility
+  report).
+- **Cost while closed**: one key test and one mask test per pad read, one flag read per present; nothing drawn, no thread.
+  Not measured with a benchmark run.
+- **Tests**: `tests/pcmenu_selftest.c` (the ini rewrite byte for byte in CRLF and LF files, duplicate keys, an appended
+  key, live vs next-start keys, the rows' values, left / right at the ends, the panel at 1280x720, 1920x1080, 3840x2160).
+  Game runs (muted, hidden window, copies of the save and of graphics.ini): the panel opened on the title by
+  `SSBU_PCMENU_OPEN` and by the F1 key of `SSBU_SCRIPT` ('p'), moved through with the scripted pad and keys; vsync and
+  cutscene_fps changed live (the next cutscene ran at 60: "runs at 60 (cutscene_fps = 60)") and written to the file (only
+  those lines differ); a resolution_scale change flagged "applies at the next start"; anisotropic filtering 8 -> 16 made
+  the samplers again; at resolution_scale 2.4 in a 3840x2160 window (4800x2700 pixels at 125 %) the panel is sharp and
+  SSBU_WINDOW greys the size row. Through the pause menu: the hint appeared when it opened; F1 opened the panel over the
+  game's Options screen, the scripted down / right moved the panel and not the game's Options cursor, the window size
+  change made the hidden window 2000x1125 pixels (1600x900 at 125 %), and after closing B left the game's Options and the
+  pause menu as usual. Pictures: `/tmp/shots/pcmenu_*.png` (title at 1.0, 4K at 2.4 with the next-start flag, the
+  virtual-pad steps, the pause hint and the panel over the game's Options).
+- Test aids: `SSBU_PCMENU_SHOT=<folder>` (every panel change: the next presented picture, panel included, as
+  `pcmenu_<n>.bmp`; the swapchain gets TRANSFER_SRC when the surface offers it), `SSBU_PCMENU_OPEN=<s>`,
+  `SSBU_PCMENU_LOG=1`.
+- **Not tested**: a person with a real pad, keyboard and mouse (the mouse path is untested: hidden test windows have no
+  pointer), L3 + R3 (no script key for the stick presses), a visible window made fullscreen (a size change of the hidden
+  Wayland window was confirmed by its new pixel size; fullscreen was not tried), Windows (not built), HDR output (the panel is
+  copied into the 8-bit picture; shots are refused there). Movies keep their clock while the game is held, so a movie
+  catches up (drops frames) after the panel closes.
+- Found on the way: `SSBU_LPROF` crashed the run once (glibc's `backtrace()` in the sampler's signal handler, interrupting
+  a RADV driver frame without unwind information); not changed here.
+
 ## Next blockers (most urgent first)
 
 Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no work needed.

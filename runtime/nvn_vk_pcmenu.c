@@ -9,11 +9,11 @@
  *     while it is closed.
  *   - SSBU_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
  *     pcmenu_<n>.bmp (needs swapchain images with TRANSFER_SRC; the log says when they have none). */
-int pcmenu_is_open(void);
+int pcmenu_is_open(void), pcmenu_visible(void);
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again */
-static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready; } g_pcm;
+static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: the pixels are the menu's, not the hint's */
 static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, said; } g_pcm_shot;
 
 static void pcm_shot_write(void) {                 /* the picture copied by the last present (the GPU has finished: cmd_wait_all) */
@@ -52,13 +52,13 @@ void nvn_vk_pcmenu_job(void *arg) {
             g_pcm.buf = vbuf_new(need, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &g_pcm.mem); g_pcm.size = need;
         }
         pcmenu_panel_read(g_pcm.mem.map, r[2], r[3]);
-        memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1;
+        memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_is_open();
         if (getenv("SSBU_PCMENU_SHOT")) g_pcm_shot.pending = -1;       /* the next present */
     }
-    if (g_pcm_last.win) vk_present2(&g_pcm_last, 1);
+    if (g_pcm_last.win && pcmenu_is_open()) vk_present2(&g_pcm_last, 1);      /* (the hint alone rides on the game's presents) */
 }
 static void pcm_vk_draw(VkImage tgt) {
-    if (!pcmenu_is_open() || !g_pcm.ready) return;
+    if (!pcmenu_visible() || !g_pcm.ready || g_pcm.panel != pcmenu_is_open()) return;      /* (not the other one's pixels before the next job)*/
     int W = (int)V.extent.width, H = (int)V.extent.height, *r = g_pcm.r;
     if (r[0] < 0 || r[1] < 0 || r[0] + r[2] > W || r[1] + r[3] > H) return;      /* made for another window size: the next job makes it again */
     VkBufferImageCopy c;

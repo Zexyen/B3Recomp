@@ -274,13 +274,58 @@ static void draw_panel(int W, int H) {
     text(pw - pad - 6 * s - text_w(keys, fpx, 0), fy, keys, fpx, C_GOLD_DIM, 0);
 }
 
-/* render thread (nvn_vk_pcmenu.c): the panel for this window size, drawn again when something changed */
+/* The hint: a small box at the bottom right for a few seconds when the game's pause menu opens (nnfs.c sees it load), the
+ * way into the game's own Options. The Options screen itself is not recognised (its UI is loaded once at the start). */
+static volatile ULONGLONG g_hint_until;
+static void draw_hint(int W, int H) {
+    float s = (float)W / 1920.0f < (float)H / 1080.0f ? (float)W / 1920.0f : (float)H / 1080.0f;
+    if (s < 0.45f) s = 0.45f;
+    const char *t1 = "PC SETTINGS", *t2 = "F1  \xC2\xB7  L3 + R3";
+    float p1 = 21 * s, p2 = 19 * s, w1 = text_w(t1, p1, 3 * s), w2 = text_w(t2, p2, 0);
+    int pw = (int)((w1 > w2 ? w1 : w2) + 64 * s), ph = (int)(78 * s), b = s > 1.4f ? 3 : 2;
+    if (pw * ph != g_pw * g_ph) { free(g_px); g_px = malloc((size_t)pw * ph * 4); }
+    g_pw = pw; g_ph = ph;
+    if (!g_px) return;
+    g_rect[0] = W - pw - (int)(40 * s); g_rect[1] = H - ph - (int)(96 * s); g_rect[2] = pw; g_rect[3] = ph;
+    for (int y = 0; y < ph; y++) rect(0, y, pw, 1, mix(C_BG0, C_BG1, (float)y / ph), 1);
+    rect(0, 0, pw, b, C_GOLD, 1); rect(0, ph - b, pw, b, C_GOLD, 1); rect(0, 0, b, ph, C_GOLD, 1); rect(pw - b, 0, b, ph, C_GOLD, 1);
+    diamond(22 * s, 31 * s - p1 * 0.33f, 5 * s, C_GOLD);
+    text(34 * s, (int)(31 * s), t1, p1, C_GOLD_HI, 3 * s);
+    text(34 * s, (int)(60 * s), t2, p2, C_TEXT, 0);
+}
+static int hint_on(void) {
+    ULONGLONG u = g_hint_until;
+    if (!u) return 0;
+    if (GetTickCount64() < u) return 1;
+    g_hint_until = 0;
+    return 0;
+}
+static DWORD WINAPI hint_late_job(LPVOID arg) { (void)arg; Sleep(500); nvn_front_post_pcmenu(); return 0; }
+void pcmenu_hint(void) {                                   /* nnfs.c, a guest thread: the pause menu is opening */
+    static int ms = -1;
+    if (ms < 0) { const char *e = getenv("SSBU_PCMENU_HINT"); ms = e ? atoi(e) * 1000 : 8000; }      /* seconds; 0 = never */
+    if (g_open || !ms) return;
+    if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
+    if (!g_inited) return;
+    g_hint_until = GetTickCount64() + (ULONGLONG)ms;
+    printf("pcmenu: the game's pause menu opened: the hint is shown for %d s\n", ms / 1000);
+    nvn_front_post_pcmenu();                               /* its pixels into the staging buffer; the game's presents copy them */
+    if (getenv("SSBU_PCMENU_SHOT")) { HANDLE th = CreateThread(NULL, 0, hint_late_job, NULL, 0, NULL); if (th) CloseHandle(th); }      /* (writes the picture) */
+}
+
+/* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
+int pcmenu_visible(void) { return g_open || hint_on(); }
 int pcmenu_holds(void) { return g_open != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
-    if (!g_open) return 0;
+    static int drawn_open = -1;
+    int open = g_open != 0;
+    if (!open && !hint_on()) return 0;
     AcquireSRWLockExclusive(&g_lock);
-    if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H) { draw_panel(W, H); g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; g_gen++; }
+    if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_open != open) {
+        if (open) draw_panel(W, H); else draw_hint(W, H);
+        g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_open = open; g_gen++;
+    }
     memcpy(r, g_rect, sizeof g_rect); *gen = g_gen;
     ReleaseSRWLockExclusive(&g_lock);
     return g_px != NULL;
@@ -376,6 +421,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
 }
 static void menu_open(const char *why) {
     if (InterlockedExchange(&g_open, 1)) return;
+    g_hint_until = 0;
     if (g_log < 0) g_log = getenv("SSBU_PCMENU_LOG") && atoi(getenv("SSBU_PCMENU_LOG"));
     AcquireSRWLockExclusive(&g_lock);
     if (!g_inited) {
