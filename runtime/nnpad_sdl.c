@@ -56,14 +56,15 @@ static const char *const g_gpax[6] = {"leftx", "lefty", "rightx", "righty", "lef
 static const char *const g_stk[4] = {"LX", "LY", "RX", "RY"};
 static const char *const g_kbn[KB_N] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN",
     "LSTICK_LEFT", "LSTICK_UP", "LSTICK_RIGHT", "LSTICK_DOWN", "RSTICK_LEFT", "RSTICK_UP", "RSTICK_RIGHT", "RSTICK_DOWN", "WALK"};
-/* [b3recomp] the default layout for Bayonetta 3, by the Pro buttons the game uses (Y punch, X kick, B jump, A shoot / confirm,
- * ZR dodge, ZL Demon Slave, R lock-on, L Umbran Climax, D-pad the Infernal Demon): Y = left mouse, X = right mouse,
- * B = Space or Backspace, A = E or Enter, ZR = left Shift, ZL = Q or mouse 4, R = F or middle mouse, L = R, stick clicks
- * C / V, Plus = Esc, Minus = Tab, D-pad = the arrows or 1 2 3 4 (up right down left), left stick = W A S D (walk: left Ctrl),
- * right stick = I J K L and the mouse */
+/* [b3recomp] the default layout for Bayonetta 3, by the game's own controller page (Options, Controller, Type A): X punch,
+ * A kick / confirm, B jump / back, Y shoot, ZL Demon Slave, L weapon switch, ZR dodge, R stance change, right stick press
+ * camera / lock-on, left stick press waypoint, D-pad left / up / right Demon Select, down taunt, Minus subscreen, Plus pause.
+ * X = left mouse, A = right mouse or Enter, B = Space or Backspace, Y = E, ZL = Q or mouse 4, L = R, ZR = left Shift, R = F,
+ * STICK_R = middle mouse or V, STICK_L = C, D-pad = the arrows or 1 2 3 (demons) and T (taunt), Minus = Tab, Plus = Esc,
+ * left stick = W A S D (walk: left Ctrl), right stick = I J K L and the mouse */
 #define KB2(a, b) ((a) | (b) << 8)
-static const int g_kb_default[KB_N] = {KB2('E', VK_RETURN), KB2(VK_SPACE, VK_BACK), VK_RBUTTON, VK_LBUTTON, 'C', 'V',
-    'R', KB2('F', VK_MBUTTON), KB2('Q', VK_XBUTTON1), VK_LSHIFT, VK_ESCAPE, VK_TAB, KB2(VK_LEFT, '4'), KB2(VK_UP, '1'), KB2(VK_RIGHT, '2'), KB2(VK_DOWN, '3'),
+static const int g_kb_default[KB_N] = {KB2(VK_RBUTTON, VK_RETURN), KB2(VK_SPACE, VK_BACK), VK_LBUTTON, 'E', 'C', KB2(VK_MBUTTON, 'V'),
+    'R', 'F', KB2('Q', VK_XBUTTON1), VK_LSHIFT, VK_ESCAPE, VK_TAB, KB2(VK_LEFT, '1'), KB2(VK_UP, '2'), KB2(VK_RIGHT, '3'), KB2(VK_DOWN, 'T'),
     'A', 'W', 'D', 'S', 'J', 'I', 'L', 'K', VK_LCONTROL};
 
 static CRITICAL_SECTION g_cs;
@@ -180,30 +181,34 @@ static const char *const g_default_ini =
 "player = auto\r\n"
 "; Keys: a letter or digit, LEFT UP RIGHT DOWN ENTER BACKSPACE SPACE TAB ESC SHIFT CTRL ALT LSHIFT RSHIFT LCTRL RCTRL LALT RALT F1..F12,\r\n"
 "; NUM0..NUM9, MOUSE1..MOUSE5 (left, right, middle, back, forward), or 0x<virtual key code>; none = unbound. Two keys for one\r\n"
-"; button: separated by a comma (A = E, ENTER). Pad and keyboard work at the same time (no switch needed). The Pro buttons\r\n"
-"; as Bayonetta 3 uses them:\r\n"
-"Y = MOUSE1\r\n"
+"; button: separated by a comma (A = MOUSE2, ENTER). Pad and keyboard work at the same time (no switch needed). The Pro buttons\r\n"
+"; as Bayonetta 3 uses them (the game's Options, Controller page, Type A; another Type there changes them on top of these):\r\n"
+"X = MOUSE1\r\n"
 "; punch\r\n"
-"X = MOUSE2\r\n"
-"; kick\r\n"
+"A = MOUSE2, ENTER\r\n"
+"; kick; confirm in menus\r\n"
 "B = SPACE, BACKSPACE\r\n"
 "; jump; back in menus\r\n"
-"A = E, ENTER\r\n"
-"; shoot (hold); confirm in menus\r\n"
+"Y = E\r\n"
+"; shoot (hold)\r\n"
 "ZR = LSHIFT\r\n"
-"; dodge (Witch Time)\r\n"
+"; dodge\r\n"
 "ZL = Q, MOUSE4\r\n"
 "; Demon Slave (hold, with the attack keys)\r\n"
-"R = F, MOUSE3\r\n"
-"; lock-on\r\n"
 "L = R\r\n"
-"; Umbran Climax\r\n"
+"; weapon switch\r\n"
+"R = F\r\n"
+"; stance change\r\n"
+"STICK_R = MOUSE3, V\r\n"
+"; camera / lock-on\r\n"
+"STICK_L = C\r\n"
+"; waypoint\r\n"
 "PLUS = ESC\r\n"
 "; pause (also lets the mouse go)\r\n"
 "MINUS = TAB\r\n"
-"STICK_L = C\r\nSTICK_R = V\r\n"
-"; D-pad: the Infernal Demon to summon; moves in menus\r\n"
-"LEFT = LEFT, 4\r\nUP = UP, 1\r\nRIGHT = RIGHT, 2\r\nDOWN = DOWN, 3\r\n"
+"; subscreen\r\n"
+"; D-pad: left / up / right = Demon Select, down = taunt; moves in menus\r\n"
+"LEFT = LEFT, 1\r\nUP = UP, 2\r\nRIGHT = RIGHT, 3\r\nDOWN = DOWN, T\r\n"
 "; Left stick (moving; the menus too). A diagonal is as long as a straight push; WALK held = 0.4 of the travel (walking).\r\n"
 "LSTICK_LEFT = A\r\nLSTICK_UP = W\r\nLSTICK_RIGHT = D\r\nLSTICK_DOWN = S\r\nWALK = LCTRL\r\n"
 "; Right stick (the camera) from keys; the mouse moves it too\r\n"
@@ -1141,7 +1146,7 @@ int nnpad_selftest(const NnHidHooks *h) {
             h->key(vk, 1); h->state(0, &btn, st, &attr); h->key(vk, 0);
             if ((btn & 0xffff) != 1ull << b) { ok = 0; printf("    %s key %d: got %llx\n", g_kbn[b], k + 1, (unsigned long long)btn); }
         }
-        check(ok && nnpad_kb_vk(3) == VK_LBUTTON && nnpad_kb_vk(2) == VK_RBUTTON, "default keys (controllers.ini as written): each bound key / mouse button gives exactly its Pro bit; punch Y = left mouse, kick X = right mouse");
+        check(ok && nnpad_kb_vk(2) == VK_LBUTTON && (nnpad_kb_vk(0) & 0xff) == VK_RBUTTON, "default keys (controllers.ini as written): each bound key / mouse button gives exactly its Pro bit; punch X = left mouse, kick A = right mouse");
         h->key('W', 1); h->state(0, &btn, st, &attr);
         check(st[0] == 0 && st[1] == 32767 && (btn >> 17 & 1), "W: left stick full up (and its stick-as-button bit)");
         h->key('D', 1); h->state(0, &btn, st, &attr);
@@ -1167,15 +1172,15 @@ int nnpad_selftest(const NnHidHooks *h) {
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); h->key('W', 0); h->key(VK_SPACE, 0); settle();
         /* rebinding from the file, reloaded while running */
         Sleep(1100);
-        write_text(path, "[keyboard]\r\nplayer = none\r\nY = J\r\nZR = MOUSE5, K\r\nWALK = none\r\nmouse_invert_y = on\r\nmouse_sensitivity = 2.0\r\n");
+        write_text(path, "[keyboard]\r\nplayer = none\r\nX = U\r\nZR = MOUSE5, O\r\nWALK = none\r\nmouse_invert_y = on\r\nmouse_sensitivity = 2.0\r\n");
         Sleep(1100); nnpad_poll(1);
         ok = 1;
-        h->key('J', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 3; h->key('J', 0);
+        h->key('U', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 2; h->key('U', 0);
         h->key(VK_LBUTTON, 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 0; h->key(VK_LBUTTON, 0);
         h->key(VK_XBUTTON2, 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key(VK_XBUTTON2, 0);
-        h->key('K', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key('K', 0);
+        h->key('O', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key('O', 0);
         h->key('W', 1); h->key(VK_LCONTROL, 1); h->state(0, &btn, st, &attr); ok = ok && st[1] == 32767; h->key('W', 0); h->key(VK_LCONTROL, 0);
-        check(ok, "rebound in the file while running: Y = J (left mouse no longer punches), ZR = MOUSE5 or K, WALK = none");
+        check(ok, "rebound in the file while running: X = U (left mouse no longer punches), ZR = MOUSE5 or O, WALK = none");
         h->state(0, &btn, st, &attr); Sleep(20); h->mouse(6, 6); h->state(0, &btn, st, &attr);
         check(st[3] > 0 && st[2] > rx1 * 3 / 2, "mouse_invert_y = on: mouse down = stick up; mouse_sensitivity = 2: about twice the deflection");
         h->kb(0);

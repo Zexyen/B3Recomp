@@ -16,7 +16,7 @@ game (converted ELFs, translated C, the compiled `game.so`, caches) is generated
 | Boot and gameplay | boots and plays; 60 fps in play (Tokyo and Shibuya tested), occasional short hitches |
 | Menus and cutscenes | 30 fps as on the console by default; 60 fps with `cutscene_fps = 60` in `config/graphics.ini` (timing stays real time; movies keep their 30 fps) |
 | Resolution | the game's 1600x900 by default; `resolution_scale` in `config/graphics.ini` renders it larger (1.2 = 1080p, 1.6 = 1440p, 2.4 = 4K, measured at 60 fps on an RX 9070 XT; the first run at a new scale has about two minutes of held loading screens once) |
-| Input | controller only |
+| Input | controllers, and keyboard + mouse (rebindable in `config/controllers.ini`; mouse camera; both at once); keyboard tested with synthetic events, not yet by hand |
 
 Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_NOTES.md).
 

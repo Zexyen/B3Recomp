@@ -215,7 +215,8 @@ Left, judged benign or known:
   (Verse 1, the Punch / Kick / Shoot / Jump / Dodge prompts, combo points) against Homunculi and a giant Homunculus.
   With A alone Bayonetta keeps dying ("THE WITCH HUNTS ARE OVER", retry) in Verse 1.
 - **Input beyond A works.** Run `fight1` (1,500 s, the same A presses plus an `SSBU_SCRIPT` of 1,716 steps from 700 s:
-  punch `V`=Y, kick `C`=X, dodge `S`=ZR, jump `X`=B, left stick right / left, punch+dodge): Verse 1 is cleared (1,525
+  `V`=Y, `C`=X, dodge `S`=ZR, jump `X`=B (the game's controller page shows X = punch, Y = shoot, A = kick; the labels
+  first written here had them swapped), left stick right / left, punch+dodge): Verse 1 is cleared (1,525
   combo points x1.75 on one shot) and the fight goes on into **Verse 2** (another giant Homunculus, another arena).
   52,448 frames, 32 M draws, 0 skipped, no stop. `SCRIPT_MAX` is 4,096 steps now (was 256).
 - Screenshots: `/tmp/shots/b3_first_fight_verse1.png`, `b3_verse1_start.png`, `b3_verse1_combo.png`, `b3_verse2.png`,
@@ -466,10 +467,55 @@ halved in 2:1 steps first).
 - **graphics.ini on Linux**: until this round the file was never read on Linux (the program's folder was cut at '\'
   only); now `config/graphics.ini` is (resolution_scale and cutscene_fps from the file checked). The tracked file sets
   `anisotropic_filtering = 8` (from B2recomp), which now applies on Linux too; its `resolution_scale` was 2.0 (B2's
-  2560x1440; 3200x1800 for B3) and is back to 1.0. `controllers.ini` (nnpad_sdl.c) has the same cut, not changed.
+  2560x1440; 3200x1800 for B3) and is back to 1.0. `controllers.ini` (nnpad_sdl.c) had the same cut: fixed in the keyboard round below.
 - **First run at a scale other than 1.0**: the fragment stages are another translation (one for every scale, keyed
   `rs1`); B3 has no start-up shader preparation (no shader containers), so the first such run translated 3,755 of them
   behind held loading screens: 110.7 s of holds, once per GPU and driver. Later runs at 1.2, 1.6 and 2.4: none.
+
+## Keyboard and mouse (2026-10-25)
+
+The keyboard + mouse path came from B2recomp (nnhid.c, nnpad_sdl.c, display.c) and was never used on Linux:
+`config/controllers.ini` was not read (the program's folder was cut at '\' only, as graphics.ini), and its defaults were
+Bayonetta 2's. Now:
+
+- **controllers.ini is read on Linux** and reloaded within a second of being saved (rebinding while the game runs).
+- **B3 defaults**, from the game's own Options -> Controller page (Type A; `/tmp/shots/kbm_game_controls_typeA.png`):
+  left mouse = X punch, right mouse / Enter = A kick / confirm, Space / Backspace = B jump / back, E = Y shoot,
+  left Shift = ZR dodge, Q / mouse 4 = ZL Demon Slave, R = L weapon switch, F = R stance change, middle mouse / V =
+  right-stick press (camera / lock-on), C = left-stick press (waypoint), arrows or 1 2 3 / T = D-pad (Demon Select /
+  taunt), Tab = Minus (subscreen), Esc = Plus (pause), WASD = left stick, I J K L = right stick, left Ctrl = WALK.
+  One line per action in the file, two keys each at most; a key bound to two actions is named in the log.
+- **Movement**: key diagonals have the length of a straight push; WALK holds the stick at 0.4 (below the stick-as-button
+  bits at 0.5). **Camera**: mouse movement becomes right-stick deflection proportional to its speed (1200 counts/s =
+  full, times `mouse_sensitivity`; `mouse_invert_y`). The pointer is captured (SDL relative mode) after a click into
+  the window (at once when fullscreen); that click is not given to the game; Esc or losing the focus releases it.
+- **Pad and keyboard together**: both drive player 1 at once (buttons add up; a pad's stick wins while it is off
+  centre), so switching is just using the other device. The button prompts stay the game's Switch ones: there are
+  no keyboard pictures in the game (pad prompts: `button_prompts` as before, chosen at start).
+- **Linux key state** comes from the window's SDL events (window thread), not from SDL_GetKeyboardState on the game's
+  thread; cleared when the focus goes.
+- Fixed on the way: with a pad on the keyboard's player, a vertical-only mouse move was replaced by the pad's centred
+  stick; an unmapped joystick's axis now drives a stick only after it was seen near the centre (this machine's
+  Swiftpoint Z3 mouse receiver is a joystick with five axes resting at -32768: it was player 1 with both sticks held,
+  which would override WASD and the mouse once the window had the focus).
+
+Tests:
+
+- `SSBU_PAD_SELFTEST=1 build/b3-game`: 61/61 (was 49), new: every default key gives exactly its Pro bit, WASD,
+  diagonal, walk, mouse to right stick (both axes), pad + keyboard together, rebinding by editing the file while
+  running, invert / sensitivity, the pinned-axis receiver.
+- **Game runs with synthetic events** (`SSBU_KBM_SCRIPT`, below; muted, hidden window, a copy of the save, no other
+  input): Enter through the title into Shibuya; capture click swallowed; run, diagonal, walk; camera turned and tilted by
+  the mouse; punch, kick, shoot, jump, dodge, lock-on, taunt; Tab subscreen and Backspace back; Esc pause, arrows / S /
+  Enter / Backspace through the pause menu and Options; X rebound to U in the run's file at 150 s: U punches, the left
+  mouse no longer does. The log line of each step and the Npad state the game read match. 60 fps in the free roam of
+  that run. Pictures: `/tmp/shots/kbm_*.png`.
+- `SSBU_KBM_SCRIPT="<s>[+<dur>]:<input> ..."` (Linux, test only): pushes SDL key / mouse-button / motion events
+  (`MOUSE1`, `W`, `M<dx>,<dy>` = motion every 10 ms) into the window's queue, seconds from window creation; the window
+  counts as focused, and the keyboard player's Npad state is logged at each change (`kbm: ...`).
+
+Not tested: a person at a real keyboard and mouse (camera feel, sensitivity default), Wayland / X11 pointer capture of a
+visible window (the test window is hidden, so SDL's relative mode was not switched there), Windows (not built).
 
 ## Next blockers (most urgent first)
 
