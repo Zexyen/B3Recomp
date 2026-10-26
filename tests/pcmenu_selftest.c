@@ -6,7 +6,7 @@
 #include <assert.h>
 #include <sys/stat.h>
 
-volatile LONG g_guest_frozen;
+volatile LONG g_guest_frozen, g_display_close;
 volatile int game_cutscene_fps;
 static int g_vsync_applied, g_win_applied;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly) { *b = 0; *lx = *ly = 0; }
@@ -71,7 +71,8 @@ int main(int argc, char **argv) {
     /* the menu's rows from that file; changes through the menu */
     menu_open("test");                                    /* (its thread runs on with the stubs' idle input) */
     assert(g_cur[4] == 4 && !strcmp(val_name(4), "1.6 \xE2\x80\x94 2560 \xC3\x97 1440"));
-    assert(!g_shown[6]);                                   /* texture_lod_bias: not in the file */
+    assert(g_shown[6] && g_cur[6] == 2);                   /* texture_lod_bias: not in the file, its default 0 */
+    change(6, -1, 0); assert(gfx_options()->texture_lod_bias == -0.5f && (g_work & 1) && !row_restart(6));
     change(2, 1, 0); assert(gfx_options()->present == 4 && g_vsync_applied == 1 && (g_work & 2));      /* auto -> display */
     change(3, 1, 0); assert(game_cutscene_fps == 60);
     change(4, 1, 0); assert(row_restart(4));                  /* 1.6 -> 2.0: applies at the next start */

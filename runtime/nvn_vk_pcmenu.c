@@ -2,7 +2,7 @@
  * BGRA pixels on the CPU when its content changes; here they are copied over the presented picture (after the game's frame, the
  * bars and the first-run text: never into the game's textures), at the size of the window.
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:
- *     the work the menu asks for (a sampler flush for anisotropic filtering, the present mode for vsync), the panel's pixels
+ *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync), the panel's pixels
  *     into a staging buffer when they changed, then the game's last picture presented again with the panel (vk_present2's
  *     extra present, as the held loading screens do).
  *   - pcm_vk_draw: in every present while the menu is open (also the game's own presents before it is held); one flag read
@@ -36,10 +36,10 @@ void nvn_vk_pcmenu_job(void *arg) {
     unsigned gen;
     if (work || g_pcm_shot.pending) cmd_wait_all();
     pcm_shot_write();
-    if (work & 1) {      /* anisotropic filtering: new samplers from now on; the old ones may still be named by cached descriptor sets */
+    if (work & 1) {      /* anisotropic filtering, texture_lod_bias: new samplers from now on; the old ones may still be named by cached descriptor sets */
         if (g_nsmp_old + g_nsmp <= (int)(sizeof g_smp_old / sizeof g_smp_old[0])) {
             for (int i = 0; i < g_nsmp; i++) g_smp_old[g_nsmp_old++] = g_smp[i].s;
-            printf("pcmenu: %d samplers made again from now on (anisotropic_filtering %d)\n", g_nsmp, gfx_options()->aniso);
+            printf("pcmenu: %d samplers made again from now on (anisotropic_filtering %d, texture_lod_bias %.2f)\n", g_nsmp, gfx_options()->aniso, gfx_options()->texture_lod_bias);
             g_nsmp = 0;
         } else printf("pcmenu: too many samplers kept already: anisotropic_filtering applies to new samplers only (all at the next start)\n");
     }

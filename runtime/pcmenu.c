@@ -11,10 +11,10 @@
  * Controls: up / down choose a row, left / right (or A / Enter, B / Escape closes) change it; the mouse: point at a row,
  * click on the value (on '‹' for the one before). A change is written to graphics.ini at once (gfx_option_set: comments and
  * other keys kept) and applied while the game runs where the runtime can: cutscene_fps (the game library's switch), vsync
- * (present mode and pacing), the window (Linux), anisotropic filtering (new samplers from then on), aspect. The rest
+ * (present mode and pacing), the window (Linux), anisotropic filtering and texture detail (new samplers from then on), aspect. The rest
  * (resolution_scale) is marked "applies at the next start". A key set by an environment variable is shown and locked.
- * Rows with `optional` appear only when graphics.ini has their key (the hook for keys of later builds: texture_lod_bias;
- * a frame-rate cap: one more row, and its live field in gfx_option_set).
+ * Rows with `optional` appear only when graphics.ini has their key (for keys of later builds; a frame-rate cap: one more row,
+ * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
  * a subset of Noto Serif (SIL OFL 1.1, third_party/OFL-NotoSerif.txt), embedded with #embed; opaque, dark, gold lines.
  * Test aids: SSBU_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), SSBU_PCMENU_OPEN=<seconds> opens it that long after the first pad
@@ -34,6 +34,7 @@ static const unsigned char k_font[] = {
 };
 
 extern volatile LONG g_guest_frozen;                       /* hostrt.c */
+extern volatile LONG g_display_close;                      /* display.c: the window is being closed (the game must run to exit) */
 __declspec(dllimport) extern volatile int game_cutscene_fps;      /* game_shim_eh.c (the game library) */
 void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly);       /* nnhid.c */
 int nnhid_menu_key(int vk);
@@ -64,8 +65,8 @@ static const Row k_rows[] = {
       "2.0 \xE2\x80\x94 3200 \xC3\x97 1800", "2.4 \xE2\x80\x94 3840 \xC3\x97 2160", "3.0 \xE2\x80\x94 4800 \xC3\x97 2700"}},
     {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
      {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
-    {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "SSBU_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 1,
-     {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x88\x92" "1", "\xE2\x88\x92" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
+    {"texture_lod_bias", "Texture detail", "Below 0: finer mip levels, sharper textures in the distance (can shimmer). Above 0: blurrier.", "SSBU_TEXTURE_LOD_BIAS", "0", A_SAMPLER, 0,
+     {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
     {"aspect", "Aspect ratio", "Keep: the 16:9 picture keeps its shape, with black bars on a wider or taller window. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep 16:9", "Stretch"}},
 };
@@ -195,8 +196,7 @@ static int wrap(char lines[][160], int maxl, const char *s, float px, float widt
 static const char *val_name(int i) { return g_cur[i] >= 0 ? k_rows[i].name[g_cur[i]] : g_raw[i]; }
 static int row_restart(int i) {                            /* a value that is not the running one yet */
     if (g_cur[i] == g_start[i]) return 0;
-    return k_rows[i].apply == A_RESTART || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin)
-        || !strcmp(k_rows[i].key, "texture_lod_bias");      /* live once gfx_option_set takes over its field (the sampler flush is there already) */
+    return k_rows[i].apply == A_RESTART || ((k_rows[i].apply == A_WINDOW || k_rows[i].apply == A_SIZE) && g_nowin);
 }
 static void button(float x, int base, float px, const char *letter, const char *what, Rgb ring) {
     float r = px * 0.62f, cx = x + r, cy = base - px * 0.36f;
@@ -355,7 +355,7 @@ static void change(int i, int dir, int wrap) {             /* wrap 0 (left / rig
     case A_SAMPLER: add_work(1); break;
     default: break;
     }
-    printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], row_restart(i) ? "applies at the next start" : r->apply == A_SAMPLER && strcmp(r->key, "anisotropic_filtering") ? "saved" : "applied");
+    printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], row_restart(i) ? "applies at the next start" : "applied");
 }
 
 /* ---------------------------------------------------------------- the menu's thread */
@@ -376,7 +376,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     ULONGLONG t_dir = 0;
     float sens; int inv;
     display_mouse_want(0);                                 /* the cursor back for the menu (the mouse camera lets it go) */
-    while (g_open) {
+    while (g_open && !g_display_close) {
         uint64_t b; int lx, ly, mx, my, md;
         nnhid_menu_read(&b, &lx, &ly);
         enum { BA = 1 << 0, BB = 1 << 1, BL3 = 1 << 4, BR3 = 1 << 5, BLEFT = 1 << 12, BUP = 1 << 13, BRIGHT = 1 << 14, BDOWN = 1 << 15 };

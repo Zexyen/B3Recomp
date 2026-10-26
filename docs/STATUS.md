@@ -556,19 +556,19 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the
   next start), vsync (live: the present mode is chosen again and the swapchain made again, display.c's pacing chosen
   again; a display lock is let go live, a new one is only taken if none was tried in this run), cutscene frame rate
-  (live: `game_cutscene_fps`, exported by the game library), anisotropic filtering (live: the sampler table is flushed,
-  new samplers from then on; the old ones are kept to shutdown because cached descriptor sets may name them), aspect
+  (live: `game_cutscene_fps`, exported by the game library), anisotropic filtering and texture detail (`texture_lod_bias`; live: the sampler table is
+  flushed, new samplers from then on; the old ones are kept to shutdown because cached descriptor sets may name them), aspect
   (live), internal resolution (**saved, applies at the next start**, marked on the row and in the status line). A key set
-  by an environment variable (`SSBU_WINDOW`, `SSBU_VK_PRESENT`, `SSBU_CUTSCENE_FPS`, `SSBU_VK_SCALE`) or by
-  `profile = low` is shown greyed with the reason. Hooks for the graphics round: `texture_lod_bias` is an optional row that
-  appears when graphics.ini has the key (applied by the same sampler flush once `gfx_option_set` takes its field over;
-  until then marked "next start"); a frame-rate cap is one more row plus its live field in `gfx_option_set`.
+  by an environment variable (`SSBU_WINDOW`, `SSBU_VK_PRESENT`, `SSBU_CUTSCENE_FPS`, `SSBU_VK_SCALE`,
+  `SSBU_TEXTURE_LOD_BIAS`) or by `profile = low` is shown greyed with the reason. Hook for a frame-rate cap (a study so far,
+  above): one more row (with `optional`, it appears only when graphics.ini has its key) plus its live field in
+  `gfx_option_set`.
 - **graphics.ini writer** (`gfx_option_set`, `gfx_ini_get` in gfx_options.c): every line with the key gets the new value,
   the rest of the file stays byte for byte (comments, unknown keys, CRLF or LF), a missing key is appended, written
   through `<file>.tmp` and a rename; then the file is read again into a copy and the live keys are taken over.
 - **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
   stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
-  game's textures). Sized by the window: 980 x 766 at 1080p, 1960 x 1532 at 4K.
+  game's textures). Sized by the window: 980 x 824 at 1080p, 1960 x 1648 at 4K.
 - **The game's own Options screen** (stage 3): not hooked. Its UI (`ui/ui_option.dat`) is loaded once at boot and stays
   resident, opening it reads no file, leaving it writes `GameData.dat` from the save thread (whose call chain ends at the
   thread's entry), and a sampling profile with Options open against the pause menu and gameplay only showed the game's
@@ -585,8 +585,8 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   Game runs (muted, hidden window, copies of the save and of graphics.ini): the panel opened on the title by
   `SSBU_PCMENU_OPEN` and by the F1 key of `SSBU_SCRIPT` ('p'), moved through with the scripted pad and keys; vsync and
   cutscene_fps changed live (the next cutscene ran at 60: "runs at 60 (cutscene_fps = 60)") and written to the file (only
-  those lines differ); a resolution_scale change flagged "applies at the next start"; anisotropic filtering 8 -> 16 made
-  the samplers again; at resolution_scale 2.4 in a 3840x2160 window (4800x2700 pixels at 125 %) the panel is sharp and
+  those lines differ); a resolution_scale change flagged "applies at the next start"; anisotropic filtering 8 -> 16 and
+  texture detail 0 -> -0.5 made the samplers again (the line in graphics.ini changed, nothing else); at resolution_scale 2.4 in a 3840x2160 window (4800x2700 pixels at 125 %) the panel is sharp and
   SSBU_WINDOW greys the size row. Through the pause menu: the hint appeared when it opened; F1 opened the panel over the
   game's Options screen, the scripted down / right moved the panel and not the game's Options cursor, the window size
   change made the hidden window 2000x1125 pixels (1600x900 at 125 %), and after closing B left the game's Options and the
