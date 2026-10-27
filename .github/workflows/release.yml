@@ -158,7 +158,11 @@ jobs:
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
 
-      # the runtime, with the bundled clang, against the SDL3, FFmpeg and glslang above and the runner's GL
+      # the Vulkan headers the runtime is written against (Ubuntu 22.04's libvulkan-dev is 1.3.204, too old for it)
+      - name: Vulkan-Headers
+        run: git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+
+      # the runtime, with the bundled clang, against the SDL3, FFmpeg, Vulkan headers and glslang above and the runner's GL
       - name: Runtime
         run: |
           mkdir -p prebuilt
@@ -167,7 +171,7 @@ jobs:
             cp -L "$RUNNER_TEMP/ffmpeg/lib/$so" prebuilt/
           done
           export LLVM_ROOT="$PWD/deps/llvm"
-          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/glslang/include"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
           export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
           export WT_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
           tools/wtbuild/target/release/wtbuild runtime --out prebuilt

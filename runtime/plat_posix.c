@@ -19,6 +19,22 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
+#ifndef PAGEMAP_SCAN                          /* [witchtime] Linux 6.7's uapi, for older kernel headers (the release builds
+                                                 on Ubuntu 22.04); whether the kernel has it is asked at run time */
+#define PAGEMAP_SCAN _IOWR('f', 16, struct pm_scan_arg)
+#define PAGE_IS_WRITTEN (1 << 1)
+#define PM_SCAN_WP_MATCHING (1 << 0)
+#define PM_SCAN_CHECK_WPASYNC (1 << 1)
+struct page_region { __u64 start, end, categories; };
+struct pm_scan_arg { __u64 size, flags, start, end, walk_end, vec, vec_len, max_pages, category_inverted, category_mask,
+                     category_anyof_mask, return_mask; };
+#endif
+#ifndef UFFD_FEATURE_WP_UNPOPULATED
+#define UFFD_FEATURE_WP_UNPOPULATED (1 << 13)
+#endif
+#ifndef UFFD_FEATURE_WP_ASYNC
+#define UFFD_FEATURE_WP_ASYNC (1 << 15)
+#endif
 
 /* [witchtime] the start of this module: the program, or libwitchtime.so when the launcher runs the game in its process */
 extern const char __ehdr_start __attribute__((visibility("hidden")));
