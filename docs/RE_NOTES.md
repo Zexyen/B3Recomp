@@ -279,3 +279,45 @@ hash = `crc32(lower-case name) & 0x7fffffff`. The translated strings follow (not
   screen in +0x08.
 - List build 0x7100a32390: for each number of the page's table calls +0x00 with the row state at screen + 0x2e18 + 0x2c *
   position; rows 16, 19, 20, 23 can be greyed (by a flag of the screen; which state sets it is not checked).
+
+**Row kinds** (2026-10-27; method tables of the 25 rows, offsets into the table). All share +0x00 fill, +0x08 decide,
++0x20 button guide, +0x28 a second button, +0x30 refresh (row, screen, row state, widget, ...); from +0x38 on the methods
+take only the row:
+- *two-choice* (rows 0, 4-7, 10, 11, 21-23; 11 entries, fill 0x7100a70cb8): +0x38 label, +0x40 get (0 / 1), +0x48 set,
+  +0x50 probably the default (not checked). Decide: right (pad bits 0x20002) sets 0 when on, left (0x10001) sets 1; the widget draws ON / OFF.
+- *slider* (rows 8, 9, 13-15; 13 entries, fill 0x7100a71f78).
+- *list* (rows 16, 19, 20; 14 entries, fill 0x7100a725ac, decide 0x7100a72640): +0x38 label, +0x40 get (index), +0x48 set,
+  +0x50 the **bank** of the value texts (crc32 of the bank name & 0x7fffffff: "core" 0x6b8d854f = messcore.mcd, the
+  language names CORE_LANGUAGE_*; "menu" 0x7d053a93 = messmenu.mcd, the control types MENU_OPTION_SETTING_*), +0x58
+  (index) -> the value's message hash, +0x60 count, +0x68 reset to the default. Decide: left / right held with the
+  screen's repeat timer (screen + 0x38), new index = (index +- 1 + count) % count, set, then +0x50 / +0x58 again into the
+  row state (+0x0c bank, +0x10 text) and the widget's value animation (sound 4). +0x28: the button of the guide's "Reset
+  Option" (X; mask from 0x7100983950) calls +0x68, refreshes, sound 5. The rows 1 / 2 (Controls) are list rows with more
+  methods (+0x50 "menu").
+- *action* (rows 3, 12, 17, 24 Restore Defaults, 18 Brightness; 9 entries): +0x38 label, +0x40 the page's reset; Restore
+  Defaults' +0x18 calls its +0x40 (the game's settings of that page only, e.g. 0x710071ca20 for Screen Display) and then
+  the list build 0x7100a32390 (screen) again, which re-fills every row from its get.
+- The row table's 26th slot (row 25) is 0; right after it (0x7101c2b278) comes the type info of row 0's method table, so
+  more rows need a longer table elsewhere (9 adrp + add pairs read it, all in the Options screen's code). The row number
+  is compared only with 23 (Naive Angel Mode's explanation) and used in the greyed mask 0x990000 (rows <= 23), so numbers
+  above 25 are safe.
+
+**The list and the page counts**: the list widget (screen + 0x538) has 11 row widgets of 0x390 bytes and scrolls (a
+scroll bar from 10 rows); its count is at list + 0x28bc (set through its method +0x118, called by the list build with
+the page's count and the cursor of the category, screen + 0x40e0 + 4 * category). Row states: screen + 0x2e18 + 0x2c *
+position, up to 24 before the next object (screen + 0x3238). The cursor wrap (0x7100a31fe8) and the list build
+(0x7100a32430) take the page's count as an immediate (Camera 9, Sound 5, Screen Display 7; Controller from + 0x40dc).
+
+**The tab strip** (why a fifth tab was not made): screen + 0x130 is the layout object (vtable 0x7101c31d80); in it, at
+screen + 0x1d0, the tab strip (vtable 0x7101c31f30, constructor 0x7100aa4c64), which loads `option0011.uid` ("option",
+0x11: four anchors at x = -250, -80, 80, 250, the L / R icons at +-380) and embeds four tab objects of 0xb0 bytes
+(screen + 0x270, 0x320, 0x3d0, 0x480; vtable 0x7101c320e0, each an `option0012.uid`) that it attaches to the anchors 3..6.
+Its methods (ready 0x7100aa5118, draw 0x7100aa519c, attach 0x7100aa5240, select 0x7100aa5718, ...) are unrolled for the
+four. The screen sets the four labels (0x7100aa6148, MENU_OPTION_CATEGORY_001-004) and the selected tab at entry
+(0x7100a305b0: (category + 4) mod 4 by `& ~3`); L / R move the category with the same arithmetic (7 places in all) and
+every per-category choice (row table, count, Controller's own table) is a 4-case jump table (about 17 in the screen's code).
+
+**Glyphs**: messmenu.mcd has no 0 and 5-9 in any language (its texts use 1-4 only); messcore.mcd has all digits in 11 of
+the 13 files (font 7, or the CJK font in cn / tw / kr). nl and pt messcore are stubs (40 / 44 symbols; CORE_SETTING_003
+"ON" is an empty text there, and the game shows blank ON / OFF and button guides with SSBU_LANGUAGE=nl). A glyph of
+another font than the paragraph's is drawn at its own size.

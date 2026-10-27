@@ -640,7 +640,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Look**: opaque dark panel, gold frame and lozenges, Noto Serif (a 22 KB Latin subset, SIL OFL 1.1) through
   stb_truetype, drawn on the CPU into BGRA when something changes and copied over the presented picture (never into the
   game's textures). Sized by the window: 980 x 824 at 1080p, 1960 x 1648 at 4K.
-- **The game's own Options screen** (2026-10-26): **a "PC Settings" row** on its Screen Display page, before Restore
+- **The game's own Options screen** (2026-10-26; since 2026-10-27 seven native rows above it, next section): **a "PC Settings" row** on its Screen Display page, before Restore
   Defaults, opens the panel (A / Enter on it; the game's confirm sound; the panel's own first press is ignored, so the A
   that opened it changes nothing). Found without a run: the Options labels are messages of `messmenu.mcd` (MCD, in
   `ui/ui_menu_<lang>.dat`, not the PTD tables), their hashes are immediates in main, and they led to the screen's 25 row
@@ -713,6 +713,91 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   catches up (drops frames) after the panel closes.
 - Found on the way: `SSBU_LPROF` crashed the run once (glibc's `backtrace()` in the sampler's signal handler, interrupting
   a RADV driver frame without unwind information); not changed here.
+
+## PC settings as rows of the game's Options screen (2026-10-27)
+
+Asked for: a "PC Settings" **tab** in the game's Options screen with native rows. Done instead: **the same rows on the
+Screen Display page** (the fallback asked for when a tab is not possible), below the game's own six:
+
+| row | values | applies |
+|---|---|---|
+| Internal Resolution (next start) | 1.0 / 1.2 / 1.6 / 2.4 | at the next start (said in the label: the value field has room for about 10 letters, no help line exists) |
+| Cutscene Frame Rate | 30 / 60 | at once |
+| Vertical Sync | Auto / Monitor (display) / Timer (clock) / ON / OFF | at once |
+| Display Mode | Windowed / Borderless / Fullscreen | at once (Linux; Windows at the next start, as the panel) |
+| Anisotropic Filtering | Default (the game's) / 2x / 4x / 8x / 16x | at once (new samplers) |
+| Texture Detail | -1 / -0.5 / 0 / +0.5 / +1 | at once (new samplers) |
+| Aspect Ratio | Original / Stretch | at once |
+
+then "PC Settings" (opens the panel, which keeps window size and the values these rows do not list; F1 / L3 + R3 as
+before) and Restore Defaults. Left / right go round the values with the game's sounds and key repeat (the game's own list
+row), X resets the row to its default (the game's own "Reset Option" guide); a value of graphics.ini that is none of a
+row's shows "Custom" (an extra value until left / right leave it). The game's Restore Defaults does not touch these rows
+(its reset is the game's own Screen Display settings).
+
+**Why not a tab** (main, docs/RE_NOTES.md section 8): the tab strip is its own layout, `option0011.uid`, which places four
+instances of the tab layout `option0012.uid` at fixed x positions (-250, -80, 80, 250; L / R icons at +-380), and its class
+(screen + 0x1d0) embeds exactly four tab objects (0xb0 bytes each, screen + 0x270 .. 0x480) with every method unrolled
+four times (load, attach to slots 3..6, update, draw, select animation). The screen keeps the category (0..3) at
++0x40c8 and branches on it in about 17 jump-table switches; it wraps it with `& ~3` arithmetic in 7 places, and keeps a
+cursor per category in a 4-entry array (+0x40e0) followed by other fields. A fifth tab would need: an element added to
+a UID layout whose element format is only partly known (variable-length elements, key frames and links by index), a
+fifth tab object outside the screen with host versions of about ten tab-strip methods, a fifth case in about 17 switches whose
+jump tables the lifter resolves from the binary at lift time (it cannot take a case the binary does not have), mod-5 in
+7 places, and a fifth cursor slot. Each part is possible in principle; together they are a large change to code that
+cannot be tested without the game running, and it was not attempted. The rows are what the tab would hold.
+
+How it is built:
+- **Lift** (`lifter/recomp_eh.py`, `_options_row_patches`, 46 words, each original checked): the 13 adrp + add pairs read
+  Screen Display's row numbers from the runtime's page (0x7105a00000); the 9 adrp + add pairs that read the 25 row objects
+  (0x7101c2b1a8) read a longer table on that page; the list build reads the page's row count from the page (+0xffc) and
+  the cursor wrap reads the count the list widget was given (`ldr w21, [x20, #0x28bc]`) instead of the constant 7.
+- **Runtime** (`runtime/options_row.c`): the page holds rows 18 .. 23, 26 .. 32, 25, 24 (15) and the table; rows 26 .. 32
+  share one method table copied from the Display Language row (a list row; fill, decide, button guide, refresh and the
+  reset button are the game's) with its seven value methods ours (+0x38 label, +0x40 get, +0x48 set, +0x50 bank, +0x58
+  value text, +0x60 count, +0x68 reset). Values go through `pcmenu_key_get` / `pcmenu_key_set` (pcmenu.c, the panel's own
+  `set_value`), so graphics.ini is written with its comments kept and the live keys applied exactly as from the panel.
+  When the panel opened from the PC Settings row closes, that row calls the game's list build (as Restore Defaults does),
+  so the rows show what was changed in the panel.
+- **Text** (`scripts/pc_settings_mod.py`, setup step `text`): 8 labels (MENU_OPTION_LIST_PC_*) into the 13 `messmenu.mcd`
+  and 21 values (CORE_PC_*) into the 13 `messcore.mcd`: a list row names the bank of its values (+0x50: crc32("core") for
+  the language names, crc32("menu") for the control types), and only messcore has all digits (messmenu lacks 0 and 5-9 in
+  every language). ON / OFF are the game's own CORE_SETTING_003 / 004. Each text is spelled with the file's own glyphs,
+  preferring the list font and the Latin font 7 (another font's glyph is drawn at its own size: a Japanese グ came out
+  too large); where a file has not the glyphs of a word, another word or the English one (the Chinese / Korean / Japanese
+  files: VSync, Anisotropic Filtering, Aspect Ratio, Windowed, Frameless, Fullscreen; zh-Hans / zh-Hant "画面大小
+  (Restart)"). ui_000.pkz in the mod now replaces 26 entries (ui_menu and ui_core, 13 each), 203 MB.
+- **Without the text mod**: the page is the 8 rows of before (PC Settings named "Options", opening the panel); the log says
+  how to make the text.
+
+Runs (muted, hidden window, copies of the save and of the user's graphics.ini; synthetic input; `/tmp/shots/optionstab_*`):
+- **Pad, title Options** (`title_rows_top_en`, `title_rows_bottom_en`, `window_borderless_en`, `resolution_changed_en`):
+  every row changed with right / left and written to graphics.ini (only its line differs): aspect keep -> stretch,
+  texture -1 -> -0.5, anisotropic 16 -> Default ("game"), window windowed -> borderless (the hidden window became 2000 x
+  1125 pixels, desktop fullscreen) -> windowed, vsync display -> clock (pacing changed at once), cutscene 60 -> 30 (the
+  menu dropped to 30 fps at once), resolution 1.0 -> 1.2 -> 1.6 -> 1.2 -> 1.0 ("applies at the next start", then "applied"
+  back at 1.0). A on a row does nothing; X on a changed row restores its default (`reset_aspect_en`: Stretch -> Original,
+  -1 -> 0); 15 rows wrap top <-> bottom (`cursor_wrap_15rows`).
+- **Keyboard** (SSBU_KBM_SCRIPT, `kbd_panel_from_row`, `kbd_after_panel_esc`): Enter / arrows / F (= R) to the page, Enter
+  on PC Settings opens the panel, Up + Right there sets aspect = stretch, Esc closes and the Aspect Ratio row shows Stretch
+  at once; Left / Right then change the rows. The keyboard's X is MOUSE1, whose first click captures the mouse: it did not
+  reset (not looked into further).
+- **Pause menu in chapter 1** (Continue from the save copy; `pause_rows_en`, `pause_rows2_en`, `pause_back_to_game`):
+  aspect, texture, anisotropic, vsync, cutscene changed and written; leaving Options wrote GameData.dat (new time stamp),
+  **byte for byte the original**; SlotData untouched; B closed the pause menu, gameplay went on.
+- **Languages** (empty save + SSBU_LANGUAGE, `lang_*`): ja, zh-Hans, zh-Hant, ko, de, fr, es, it, ru show their labels and
+  values in the list's font; es / ru / it / fr / ja / zh-Hans again after shortening the values that overflowed (es
+  "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto", not shown
+  again). **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
+  no digits, so our values are partly blank there too; pt has the same files (not run). SSBU_LANGUAGE=en-GB showed the
+  Japanese text (the game's choice; gb not tested).
+- Without the mod (SSBU_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
+- Tests: pcmenu self-test (the new key API: set / get by key, a value none of the row's refused, the file's lines), pad
+  self-test 61/61, lifter check 382 + 25 words and 200 words / 4,000 cases: all pass.
+
+Not tested: a person with a real pad or keyboard; Windows (not built); en-GB, pt; Fullscreen chosen from the rows (only
+borderless); a profile = low or environment-locked key from the rows (the set is refused and logged, the row keeps its
+value; not seen in a run).
 
 ## Performance report (2026-10-26)
 
