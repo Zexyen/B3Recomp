@@ -446,13 +446,15 @@ def step_compile(cx):
 
 
 def step_link(cx):
-    if cx.tools.get('TOOLCHAIN') == 'linux':                 # no launcher yet: build/b3-game and build/game.so
+    if cx.tools.get('TOOLCHAIN') == 'linux':                 # build/b3-game, build/game.so, build/libb3host.so (the launcher's)
         cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
         for f in ('game.so', 'b3-game'):
             if not os.path.isfile(os.path.join(cx.build, f)):
                 raise Fail('build/%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
-        say('  build/b3-game %.1f MB, game.so %.0f MB (no launcher on Linux yet)'
-            % (os.path.getsize(os.path.join(cx.build, 'b3-game')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20))
+        say('  build/b3-game %.1f MB, game.so %.0f MB, %s'
+            % (os.path.getsize(os.path.join(cx.build, 'b3-game')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20,
+               'libb3host.so (the launcher plays in its own window)' if os.path.isfile(os.path.join(cx.build, 'libb3host.so'))
+               else 'no libb3host.so (the launcher starts b3-game)'))
         return
     cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
     for f in ('game.dll', 'b3-game.exe', 'SDL3.dll', 'ssbu_glslang.dll'):

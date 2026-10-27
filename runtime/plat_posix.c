@@ -20,7 +20,8 @@
 #include <sys/syscall.h>
 #include <ucontext.h>
 
-extern char __executable_start;
+/* [b3recomp] the start of this module: the program, or libb3host.so when the launcher runs the game in its process */
+extern const char __ehdr_start __attribute__((visibility("hidden")));
 
 static int64_t mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; }
 static struct timespec ns_to_ts(int64_t ns) { struct timespec ts = { ns / 1000000000, ns % 1000000000 }; return ts; }
@@ -496,14 +497,22 @@ HMODULE LoadLibraryA(LPCSTR name) {
     if (n > 4 && !strcasecmp(name + n - 4, ".dll")) return NULL;   /* a Windows system DLL (gdi32, dwmapi, ...): not here */
     return dlopen(name, RTLD_NOW);
 }
-void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == (HMODULE)&__executable_start ? RTLD_DEFAULT : m, name); }
-HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : (HMODULE)&__executable_start; }
+void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == (HMODULE)&__ehdr_start ? RTLD_DEFAULT : m, name); }
+HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : (HMODULE)&__ehdr_start; }
 DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     (void)m;   /* the runtime asks for its own program only */
     ssize_t len = readlink("/proc/self/exe", out, n ? n - 1 : 0);
     if (len < 0) { if (n) out[0] = 0; return 0; }
     out[len] = 0;
     return (DWORD)len;
+}
+/* [b3recomp] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libb3host.so) sets
+ * the hook to see the exit first: it goes back to its own screens instead of ending with the game. */
+void (*plat_exit_hook)(int code);
+void plat_exit_process(int code) {
+    fflush(NULL);
+    if (plat_exit_hook) plat_exit_hook(code);
+    _exit(code);
 }
 /* the runtime raises only before report_and_exit, for a debugger to stop at: nothing to do without one */
 void RaiseException(DWORD code, DWORD flags, DWORD n, const ULONG_PTR *args) { (void)code; (void)flags; (void)n; (void)args; }

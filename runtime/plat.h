@@ -419,7 +419,10 @@ static inline void Sleep(DWORD ms) {
     while (nanosleep(&ts, &ts) && errno == EINTR) {}
 }
 #define SwitchToThread() (sched_yield(), 1)
-#define ExitProcess(code) (fflush(NULL), _exit((int)(code)))   /* like ExitProcess: other threads are not unwound, no atexit */
+/* like ExitProcess: other threads are not unwound, no atexit. [b3recomp] plat_exit_hook (plat_posix.c) runs first when
+ * a host has set it: the Witch Time launcher, which runs the game in its own process and window (launcher/) */
+__attribute__((noreturn)) void plat_exit_process(int code);
+#define ExitProcess(code) plat_exit_process((int)(code))
 
 /* _aligned_*: glibc's free and malloc_usable_size accept memory from aligned_alloc / posix_memalign */
 static inline void *_aligned_malloc(size_t n, size_t align) { void *p; return posix_memalign(&p, align, n) ? NULL : p; }

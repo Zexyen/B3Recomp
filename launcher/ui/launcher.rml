@@ -1,0 +1,221 @@
+<rml>
+<head>
+	<title>Witch Time</title>
+	<link type="text/rcss" href="witch.rcss"/>
+</head>
+<body data-model="wt">
+
+<!-- ======================================================================= title menu -->
+<div class="screen bg-title" data-if="screen == 'title'">
+	<div class="title-main">
+		<div class="title-left">
+			<div class="brand">
+				<div class="kicker">NATIVE PORT</div>
+				<div class="wordmark">WITCH<br/>TIME</div>
+				<div class="rule"><div class="line"></div><div class="diamond"></div><div class="line"></div></div>
+				<div class="tagline">Built on this machine, from your own copy.</div>
+			</div>
+			<div class="menu">
+				<div class="item autofocus" data-if="built" data-event-click="play()"><div class="mark"></div><span>PLAY</span><div class="trail"></div></div>
+				<div class="item autofocus" data-if="!built" data-event-click="go('setup')"><div class="mark"></div><span>SET UP</span><div class="trail"></div></div>
+				<div class="item" data-if="built" data-event-click="go('build')"><div class="mark"></div><span>REBUILD</span><div class="trail"></div></div>
+				<div class="item" data-event-click="go('mods')"><div class="mark"></div><span>MODS</span><div class="trail"></div></div>
+				<div class="item" data-event-click="go('settings')"><div class="mark"></div><span>SETTINGS</span><div class="trail"></div></div>
+				<div class="item" data-if="built" data-event-click="go('setup')"><div class="mark"></div><span>CHANGE DUMP</span><div class="trail"></div></div>
+				<div class="item muted" data-event-click="quit()"><div class="mark"></div><span>QUIT</span><div class="trail"></div></div>
+			</div>
+		</div>
+		<div class="title-right">
+			<div class="dial">
+				<img class="ring-outer" src="gen:ring?c=c9a35a&amp;a=140&amp;w=2"/>
+				<img class="ring-min" src="gen:ticks?n=60&amp;c=c9a35a&amp;a=200&amp;w=3&amp;l=10"/>
+				<img class="ring-hour" src="gen:ticks?n=12&amp;c=e8cf94&amp;w=5&amp;l=24"/>
+				<img class="ring-inner" src="gen:ring?c=c9a35a&amp;a=90&amp;w=3"/>
+				<div class="abs num" style="left: 190dp; top: 39dp;">XII</div>
+				<div class="abs num" style="left: 274.5dp; top: 61.6dp;">I</div>
+				<div class="abs num" style="left: 336.4dp; top: 123.5dp;">II</div>
+				<div class="abs num" style="left: 359dp; top: 208dp;">III</div>
+				<div class="abs num" style="left: 336.4dp; top: 292.5dp;">IIII</div>
+				<div class="abs num" style="left: 274.5dp; top: 354.4dp;">V</div>
+				<div class="abs num" style="left: 190dp; top: 377dp;">VI</div>
+				<div class="abs num" style="left: 105.5dp; top: 354.4dp;">VII</div>
+				<div class="abs num" style="left: 43.6dp; top: 292.5dp;">VIII</div>
+				<div class="abs num" style="left: 21dp; top: 208dp;">IX</div>
+				<div class="abs num" style="left: 43.6dp; top: 123.5dp;">X</div>
+				<div class="abs num" style="left: 105.5dp; top: 61.6dp;">XI</div>
+				<div class="abs hub"></div>
+				<img class="moon" src="gen:moon?c=e8cf94"/>
+				<div class="abs hand accent"></div>
+				<div class="abs hand long"></div>
+				<div class="abs pin"></div>
+			</div>
+			<div class="caption">
+				<div class="state" data-class-bad="status_bad">{{ status_title }}</div>
+				<div class="line">{{ status_line }}</div>
+			</div>
+		</div>
+	</div>
+	<div class="footer">
+		<div>{{ footer_info }}</div>
+		<div class="spacer"></div>
+		<div class="hint"><div class="key">A</div><span>Select</span></div>
+		<div class="hint"><div class="key">B</div><span>Back</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= first run: the dump -->
+<div class="screen bg-top" data-if="screen == 'setup'">
+	<div class="header">
+		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
+		<div class="diamond"></div>
+		<h1>{{ built ? 'YOUR DUMP' : 'FIRST RUN' }}</h1>
+		<div class="aside">Step 1 of 2 · Your dump</div>
+	</div>
+	<div class="body">
+		<div class="col">
+			<h2>Point the launcher at your dump</h2>
+			<p class="lead">A folder holding <em>exefs</em> and <em>romfs</em> that you extracted from your own console. Nothing is downloaded, decrypted or sent anywhere.</p>
+			<div class="label">DUMP FOLDER</div>
+			<div class="field-row">
+				<input type="text" class="text autofocus" data-value="dump"/>
+				<div class="button" data-event-click="browse()">BROWSE</div>
+			</div>
+			<div class="rows">
+				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
+					<div class="diamond"></div>
+					<div class="grow">{{ c.text }}</div>
+					<div class="right">{{ c.right }}</div>
+				</div>
+			</div>
+		</div>
+		<div class="panel">
+			<div class="label">WHAT HAPPENS NEXT</div>
+			<p>The launcher turns your copy's code into a native program on this PC. You do this once; updates rebuild only what changed.</p>
+			<div class="facts">
+				<div>About 15 minutes on 16 threads</div>
+				<div>About 9 GB of free space</div>
+				<div>Close the window any time; it resumes</div>
+			</div>
+			<div class="button primary" data-if="!verified" data-event-click="check_dump()">{{ checking ? 'CHECKING…' : 'CHECK DUMP' }}</div>
+			<div class="button primary" data-if="verified" data-event-click="start_build()">BEGIN BUILD</div>
+		</div>
+	</div>
+	<div class="footer">
+		<div class="spacer"></div>
+		<div class="hint"><div class="key">A</div><span>Select</span></div>
+		<div class="hint"><div class="key">B</div><span>Back</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= building -->
+<div class="screen bg-left" data-if="screen == 'build'">
+	<div class="header">
+		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
+		<div class="diamond"></div>
+		<h1>BUILDING</h1>
+		<div class="aside">{{ build_aside }}</div>
+	</div>
+	<div class="body" style="padding-left: 72dp;">
+		<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18dp; width: 420dp;">
+			<div class="dial progress-dial">
+				<img class="ring-outer" src="gen:ring?c=c9a35a&amp;a=128&amp;w=2"/>
+				<img class="ring-min" src="gen:ticks?n=60&amp;c=c9a35a&amp;a=190&amp;w=3&amp;l=10"/>
+				<img class="track" src="gen:ring?c=2a1834&amp;w=22"/>
+				<progress direction="clockwise" start-edge="top" data-attr-value="progress"></progress>
+				<img class="ring-inner" src="gen:ring?c=c9a35a&amp;a=80&amp;w=3"/>
+				<div class="abs needle" data-style-transform="'rotate(' + (progress * 360) + 'deg)'"></div>
+				<div class="abs readout">
+					<div class="pct">{{ percent }}<span>%</span></div>
+					<div class="phase">{{ phase }}</div>
+				</div>
+			</div>
+			<div style="display: flex; flex-direction: row; gap: 14dp;">
+				<div class="button small autofocus" data-if="building" data-event-click="stop_build()">STOP</div>
+				<div class="button small primary autofocus" data-if="!building &amp;&amp; built" data-event-click="play()">PLAY</div>
+				<div class="button small autofocus" data-if="!building" data-event-click="start_build()">{{ built ? 'REBUILD' : 'BUILD' }}</div>
+			</div>
+		</div>
+		<div class="col">
+			<div class="rows steps">
+				<div data-for="s : steps" class="row" data-class-done="s.state == 'done'" data-class-run="s.state == 'run'" data-class-wait="s.state == 'wait'" data-class-fail="s.state == 'fail'">
+					<div class="num">{{ s.num }}</div>
+					<div class="what"><div class="name">{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
+					<div class="right">{{ s.right }}</div>
+				</div>
+			</div>
+			<div class="error" data-if="build_error != ''">{{ build_error }}</div>
+			<div class="log"><div data-for="l : log">{{ l }}</div></div>
+		</div>
+	</div>
+	<div class="footer">
+		<div>You can close the window; the build picks up where it stopped.</div>
+		<div class="spacer"></div>
+		<div class="hint"><div class="key">B</div><span>Back</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= mods -->
+<div class="screen bg-top" data-if="screen == 'mods'">
+	<div class="header">
+		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
+		<div class="diamond"></div>
+		<h1>MODS</h1>
+		<div class="aside"><div class="button small" data-event-click="open_mods()">OPEN MODS FOLDER</div></div>
+	</div>
+	<div class="body">
+		<div class="col" style="gap: 0;">
+			<div class="rows">
+				<div data-for="m, i : mods" class="row mod">
+					<div class="switch autofocus" data-class-on="m.on" data-event-click="toggle_mod(i)"><div class="knob"></div></div>
+					<div class="what"><div class="name">{{ m.name }}</div><div class="note">{{ m.note }}</div></div>
+					<div class="tag">{{ m.kind }}</div>
+				</div>
+			</div>
+			<div class="empty" data-if="mods.size == 0">No mods yet. Put each one in its own folder in the mods folder: code patches (.pchtxt, .ips) or a romfs folder.</div>
+			<div class="error" data-if="mods_error != ''">{{ mods_error }}</div>
+		</div>
+		<div class="panel">
+			<div class="label">BEFORE YOU PLAY</div>
+			<p class="plain">{{ mods_summary }}</p>
+			<div class="button primary" data-if="mods_rebuild" data-event-click="start_build()">APPLY AND REBUILD</div>
+			<div class="facts"><div>Data mods apply at the next start. Code mods rebuild from the mods step.</div></div>
+		</div>
+	</div>
+	<div class="footer">
+		<div class="spacer"></div>
+		<div class="hint"><div class="key">A</div><span>Turn on or off</span></div>
+		<div class="hint"><div class="key">B</div><span>Back</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= settings -->
+<div class="screen bg-top" data-if="screen == 'settings'">
+	<div class="header">
+		<div class="crumb" data-event-click="go('title')">WITCH TIME</div>
+		<div class="diamond"></div>
+		<h1>SETTINGS</h1>
+	</div>
+	<div class="body">
+		<div class="col" style="gap: 0;">
+			<div class="rows">
+				<div data-for="s, i : settings" class="row setting autofocus" data-attr-index="i">
+					<div class="what"><div class="name">{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
+					<div class="chooser">
+						<div class="arrow" data-event-click="setting(i, -1)">&lt;</div>
+						<div class="value">{{ s.value }}</div>
+						<div class="arrow" data-event-click="setting(i, 1)">&gt;</div>
+					</div>
+				</div>
+			</div>
+			<div class="note-line">Saved to config/graphics.ini as you change them. The same options are in the game while you play (F1).</div>
+		</div>
+	</div>
+	<div class="footer">
+		<div class="spacer"></div>
+		<div class="hint"><div class="key wide">&lt; &gt;</div><span>Change</span></div>
+		<div class="hint"><div class="key">B</div><span>Back</span></div>
+	</div>
+</div>
+
+</body>
+</rml>

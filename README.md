@@ -32,6 +32,9 @@ decrypts nothing.
 python scripts/setup.py --dump <your dump folder>
 ```
 
+Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which does the same with progress on screen
+and then plays in its own window.
+
 Steps and options are as in B2recomp's [BUILDING.md](../B2recomp/BUILDING.md) (minus the Windows launcher, icon and
 game-specific patches). The `verify` step accepts only the build named in `scripts/setup.py`.
 

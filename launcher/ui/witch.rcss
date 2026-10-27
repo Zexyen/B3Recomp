@@ -1,0 +1,166 @@
+/* Witch Time: the launcher's look. Lengths are dp: the screens are laid out for 1280 x 800 and scaled with the window
+ * (app.cpp). Ink and plum ground, gold rules and diamonds, one accent for what is selected or running. */
+
+/* RmlUi has no default style sheet: the block elements the screens use */
+div, p, h1, h2 { display: block; }
+p, h1, h2 { margin: 0; }
+span { display: inline; }
+
+body {
+	width: 100%;
+	height: 100%;
+	font-family: "Barlow Semi Condensed";
+	font-size: 18dp;
+	color: #efe6d8;
+	background-color: #0a0610;
+}
+
+.screen { display: flex; flex-direction: column; width: 100%; height: 100%; }
+.bg-title { decorator: image(gen:glow?x=0.78&y=0.45&rx=0.7&ry=0.9&c1=24112e&c0=0a0610&stop=0.62 fill); }
+.bg-top { decorator: image(gen:glow?x=0.5&y=0&rx=0.8&ry=0.8&c1=1d0f26&c0=0a0610&stop=0.65 fill); }
+.bg-left { decorator: image(gen:glow?x=0.28&y=0.5&rx=0.6&ry=0.8&c1=22102c&c0=0a0610&stop=0.65 fill); }
+
+.display { font-family: "Cinzel"; }
+.serif { font-family: "Cormorant Garamond"; }
+.gold { color: #c9a35a; }
+.dim { color: #b9aabd; }
+.accent { color: #e0338a; }
+.kicker { font-family: "Cinzel"; font-size: 13dp; letter-spacing: 6dp; color: #c9a35a; }
+
+.diamond { width: 9dp; height: 9dp; transform: rotate(45deg); background-color: #e0338a; }
+.diamond.gold { background-color: #c9a35a; }
+.diamond.hollow { background-color: transparent; border: 1dp #c9a35a; }
+.rule { display: flex; flex-direction: row; align-items: center; gap: 12dp; width: 360dp; margin-top: 8dp; }
+.rule .line { flex: 1; height: 1dp; background-color: #c9a35a; }
+.rule .diamond { background-color: transparent; border: 1dp #c9a35a; width: 8dp; height: 8dp; }
+
+/* ---- header and footer bars ---- */
+.header { display: flex; flex-direction: row; align-items: center; gap: 22dp; height: 96dp; margin: 0 48dp; border-bottom: 1dp #c9a35a66; flex-shrink: 0; }
+.header .crumb { font-family: "Cinzel"; font-size: 15dp; letter-spacing: 4dp; color: #c9a35a; tab-index: auto; nav: auto; }
+.header .crumb:hover, .header .crumb:focus-visible { color: #e8cf94; }
+.header h1 { font-family: "Cinzel"; font-weight: 500; font-size: 30dp; letter-spacing: 4dp; }
+.header .aside { margin-left: auto; font-size: 16dp; letter-spacing: 1dp; color: #b9aabd; }
+.footer { display: flex; flex-direction: row; align-items: center; gap: 26dp; height: 64dp; margin: 0 48dp; border-top: 1dp #c9a35a66; font-size: 16dp; letter-spacing: 1dp; color: #b9aabd; flex-shrink: 0; }
+.footer .spacer { flex: 1; }
+.hint { display: flex; flex-direction: row; align-items: center; gap: 10dp; }
+.key { width: 26dp; height: 26dp; border: 1dp #efe6d8; border-radius: 13dp; text-align: center; line-height: 24dp; font-size: 14dp; font-weight: 600; color: #efe6d8; }
+.key.wide { width: auto; padding: 0 8dp; border-radius: 4dp; font-size: 13dp; }
+
+/* ---- buttons ---- */
+.button { display: block; height: 52dp; line-height: 52dp; padding: 0 26dp; border: 1dp #c9a35a; color: #e8cf94; font-family: "Cinzel"; font-size: 15dp; letter-spacing: 3dp; text-align: center; white-space: nowrap; tab-index: auto; nav: auto; }
+.button:hover, .button:focus-visible { background-color: #c9a35a26; border-color: #e8cf94; }
+.button.primary { background-color: #e0338a; border-color: #e0338a; color: #0a0610; font-weight: 600; font-size: 17dp; letter-spacing: 4dp; }
+.button.primary:hover, .button.primary:focus-visible { background-color: #f04a9c; border-color: #efe6d8; }
+.button.quiet { border-color: #efe6d866; color: #efe6d8; }
+.button.small { height: 44dp; line-height: 44dp; font-size: 14dp; padding: 0 22dp; }
+
+/* ---- title menu ---- */
+.title-main { display: flex; flex-direction: row; flex: 1; padding: 64dp 96dp 0 96dp; gap: 40dp; }
+.title-left { display: flex; flex-direction: column; gap: 40dp; flex: 1; }
+.brand { display: flex; flex-direction: column; gap: 10dp; }
+.wordmark { font-family: "Cinzel"; font-weight: 600; font-size: 68dp; line-height: 70dp; letter-spacing: 8dp; color: #efe6d8; }
+.tagline { font-family: "Cormorant Garamond"; font-style: italic; font-size: 22dp; color: #b9aabd; }
+.menu { display: flex; flex-direction: column; gap: 2dp; }
+.menu .item { display: flex; flex-direction: row; align-items: center; gap: 18dp; height: 48dp; font-family: "Cinzel"; font-size: 24dp; letter-spacing: 4dp; color: #efe6d8; tab-index: auto; nav: vertical; }
+.menu .item .mark { width: 12dp; height: 12dp; transform: rotate(45deg); background-color: #e0338a; visibility: hidden; }
+.menu .item .trail { width: 220dp; height: 1dp; decorator: image(gen:fade?c=e0338a fill); visibility: hidden; }
+.menu .item:hover, .menu .item:focus-visible { color: #e0338a; font-size: 30dp; }
+.menu .item:hover .mark, .menu .item:focus-visible .mark, .menu .item:hover .trail, .menu .item:focus-visible .trail { visibility: visible; }
+.menu .item.muted { color: #a99bb0; }
+.title-right { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22dp; width: 520dp; flex-shrink: 0; }
+.caption { display: flex; flex-direction: column; align-items: center; gap: 4dp; text-align: center; }
+.caption .state { font-family: "Cinzel"; font-size: 15dp; letter-spacing: 6dp; color: #c9a35a; }
+.caption .state.bad { color: #e0338a; }
+.caption .line { font-size: 16dp; color: #b9aabd; letter-spacing: 1dp; }
+
+/* ---- the clock dial ---- */
+.dial { position: relative; width: 440dp; height: 440dp; }
+.dial img, .dial .abs { position: absolute; }
+.dial .ring-outer { left: 0; top: 0; width: 440dp; height: 440dp; }
+.dial .ring-min { left: 14dp; top: 14dp; width: 412dp; height: 412dp; }
+.dial .ring-hour { left: 7dp; top: 7dp; width: 426dp; height: 426dp; }
+.dial .ring-inner { left: 76dp; top: 76dp; width: 288dp; height: 288dp; }
+.dial .hub { left: 144dp; top: 144dp; width: 152dp; height: 152dp; border-radius: 76dp; background-color: #0a0610; border: 1dp #c9a35a99; }
+.dial .moon { left: 168dp; top: 168dp; width: 104dp; height: 104dp; }
+.dial .num { width: 60dp; height: 24dp; line-height: 24dp; text-align: center; font-family: "Cinzel"; font-size: 20dp; color: #c9a35a; }
+.dial .hand { left: 218dp; width: 4dp; transform-origin: 50% 100%; }
+.dial .hand.long { top: 93dp; height: 127dp; background-color: #efe6d8; }
+.dial .hand.accent { top: 75dp; height: 145dp; background-color: #e0338a; transform: rotate(-45deg); }
+.dial .pin { left: 213dp; top: 213dp; width: 14dp; height: 14dp; border-radius: 7dp; background-color: #e0338a; }
+
+/* the build screen's dial: smaller, with the progress ring */
+.dial.progress-dial { width: 400dp; height: 400dp; }
+.progress-dial .ring-outer { width: 400dp; height: 400dp; }
+.progress-dial .ring-min { left: 8dp; top: 8dp; width: 384dp; height: 384dp; }
+.progress-dial .track { left: 30dp; top: 30dp; width: 340dp; height: 340dp; }
+.progress-dial progress { position: absolute; left: 30dp; top: 30dp; width: 340dp; height: 340dp; fill-image: gen:ring?c=e0338a&w=22; }
+.progress-dial .ring-inner { left: 58dp; top: 58dp; width: 284dp; height: 284dp; }
+/* a short needle riding on the ring, turning about the dial's centre (178dp below its top: 445% of its height) */
+.progress-dial .needle { left: 198dp; top: 22dp; width: 4dp; height: 40dp; transform-origin: 50% 445%; background-color: #efe6d8; }
+.progress-dial .readout { left: 0; top: 0; width: 400dp; height: 400dp; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2dp; }
+.readout .pct { font-family: "Cinzel"; font-weight: 600; font-size: 72dp; line-height: 76dp; }
+.readout .pct span { font-size: 32dp; color: #c9a35a; }
+.readout .phase { font-family: "Cormorant Garamond"; font-style: italic; font-size: 22dp; color: #b9aabd; }
+
+/* ---- two-column screens ---- */
+.body { display: flex; flex-direction: row; flex: 1; gap: 64dp; padding: 44dp 96dp 28dp 96dp; }
+.col { display: flex; flex-direction: column; gap: 22dp; flex: 1; }
+.panel { display: flex; flex-direction: column; gap: 18dp; width: 340dp; padding: 28dp; border: 1dp #c9a35a66; background-color: #170c1fb3; flex-shrink: 0; align-self: flex-start; }
+.panel p { font-family: "Cormorant Garamond"; font-size: 22dp; line-height: 29dp; }
+.panel p.plain { font-family: "Barlow Semi Condensed"; font-size: 19dp; line-height: 27dp; }
+.panel .facts { display: flex; flex-direction: column; gap: 6dp; font-size: 17dp; color: #b9aabd; }
+h2 { font-family: "Cormorant Garamond"; font-weight: 500; font-size: 40dp; line-height: 44dp; }
+.lead { font-size: 19dp; line-height: 28dp; color: #b9aabd; }
+.lead em { color: #efe6d8; font-style: normal; }
+.label { font-family: "Cinzel"; font-size: 13dp; letter-spacing: 5dp; color: #c9a35a; }
+.field-row { display: flex; flex-direction: row; gap: 12dp; }
+input.text { flex: 1; height: 52dp; padding: 0 18dp; line-height: 50dp; background-color: #170c1fe6; border: 1dp #c9a35a80; color: #efe6d8; font-size: 19dp; tab-index: auto; nav: auto; }
+input.text:focus { border-color: #e8cf94; }
+
+.rows { display: flex; flex-direction: column; border-top: 1dp #c9a35a40; }
+.row { display: flex; flex-direction: row; align-items: center; gap: 18dp; padding: 13dp 0; border-bottom: 1dp #c9a35a40; font-size: 19dp; }
+.row .grow { flex: 1; }
+.row .right { color: #b9aabd; }
+.row .diamond { width: 10dp; height: 10dp; flex-shrink: 0; }
+.row.done .diamond { background-color: #c9a35a; }
+.row.run .diamond { background-color: transparent; border: 2dp #e0338a; }
+.row.run .right { color: #e0338a; }
+.row.wait { color: #a99bb0; }
+.row.wait .diamond { background-color: transparent; border: 1dp #a99bb0; }
+.row.fail .diamond { background-color: #e0338a; }
+.row.fail { color: #ffb3d4; }
+
+.steps .row { align-items: flex-start; padding: 15dp 0; }
+.steps .num { width: 44dp; font-family: "Cinzel"; font-size: 20dp; color: #c9a35a; }
+.steps .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
+.steps .name { font-size: 21dp; color: #efe6d8; }
+.steps .note { font-size: 16dp; color: #b9aabd; }
+.steps .row.run .num, .steps .row.run .right { color: #e0338a; }
+.steps .row.wait .num, .steps .row.wait .name, .steps .row.wait .note { color: #a99bb0; }
+.steps .row.fail .num, .steps .row.fail .right { color: #ffb3d4; }
+.log { flex: 1; padding: 12dp 16dp; background-color: #050308cc; border: 1dp #c9a35a40; font-size: 15dp; line-height: 22dp; color: #a99bb0; overflow: hidden; }
+.error { color: #ffb3d4; font-size: 17dp; line-height: 24dp; }
+
+/* ---- mods ---- */
+.switch { position: relative; width: 58dp; height: 30dp; border: 1dp #c9a35a99; border-radius: 15dp; flex-shrink: 0; tab-index: auto; nav: vertical; }
+.switch .knob { position: absolute; left: 3dp; top: 3dp; width: 22dp; height: 22dp; border-radius: 11dp; background-color: #c9a35a; }
+.switch.on { background-color: #e0338a; border-color: #e0338a; }
+.switch.on .knob { left: 31dp; background-color: #0a0610; }
+.switch:focus-visible, .switch:hover { border: 2dp #efe6d8; }
+.mod .what { display: flex; flex-direction: column; gap: 3dp; flex: 1; }
+.mod .name { font-size: 22dp; }
+.mod .note { font-size: 16dp; color: #b9aabd; }
+.tag { font-family: "Cinzel"; font-size: 12dp; letter-spacing: 3dp; color: #c9a35a; border: 1dp #c9a35a80; padding: 5dp 10dp; }
+.empty { font-family: "Cormorant Garamond"; font-style: italic; font-size: 22dp; color: #b9aabd; padding: 20dp 0; }
+
+/* ---- settings ---- */
+.setting { tab-index: auto; nav: vertical; padding: 10dp 0; }
+.setting:focus-visible .name, .setting:hover .name { color: #e0338a; }
+.setting .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
+.setting .name { font-size: 21dp; }
+.setting .note { font-size: 15dp; color: #b9aabd; }
+.chooser { display: flex; flex-direction: row; align-items: center; width: 320dp; flex-shrink: 0; }
+.chooser .arrow { width: 44dp; height: 44dp; line-height: 44dp; text-align: center; font-size: 22dp; color: #c9a35a; }
+.chooser .arrow:hover { color: #efe6d8; }
+.chooser .value { flex: 1; text-align: center; font-family: "Cinzel"; font-size: 18dp; letter-spacing: 2dp; }
+.note-line { font-family: "Cormorant Garamond"; font-style: italic; font-size: 19dp; color: #b9aabd; margin-top: 14dp; }
