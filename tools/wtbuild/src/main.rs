@@ -5,6 +5,8 @@ mod py;
 mod nvn_procs;
 mod sdklift;
 mod tables;
+mod text;
+mod text_strings;
 mod util;
 
 use std::io::{BufRead, Write};
@@ -80,6 +82,14 @@ fn main() {
                 eprintln!("error: {}", e);
                 std::process::exit(1);
             }
+        }
+        Some("text") => {
+            // pc_settings_mod.py [--romfs <folder>] [--dump <folder>] [--out <mods folder>]
+            let repo = repo_root(&args);
+            let opt = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).map(PathBuf::from);
+            let romfs = opt("--romfs").unwrap_or_else(|| repo.join("targets").join("romfs"));
+            let mods = opt("--out").unwrap_or_else(|| repo.join("mods"));
+            text::run(&repo, &romfs, opt("--dump").as_deref(), &mods, &|_| {}, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         _ => die("usage: see tools/wtbuild/README.md"),
     }
