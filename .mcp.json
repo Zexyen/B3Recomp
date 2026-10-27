@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "better-design": {
+      "type": "http",
+      "url": "https://better-design.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BETTER_DESIGN_API_KEY}",
+        "X-Better-Design-Client": "claude-code"
+      }
+    }
+  }
+}
