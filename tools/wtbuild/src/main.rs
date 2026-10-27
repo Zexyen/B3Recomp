@@ -1,5 +1,8 @@
 mod lifter;
 mod nso;
+mod nvn_procs;
+mod sdklift;
+mod tables;
 mod util;
 
 use std::io::{BufRead, Write};
@@ -40,6 +43,9 @@ fn main() {
                 lifter::eh::options_row_patches(&mut im).unwrap_or_else(|e| die(e));
             }
             lifter::eh::lift_main(&im, Path::new(&args[2]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+        }
+        Some("tables") if args.len() == 2 => {
+            tables::run(Path::new(&args[1]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         _ => die("usage: see tools/wtbuild/README.md"),
     }

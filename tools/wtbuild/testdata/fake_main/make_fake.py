@@ -3,7 +3,7 @@
 for AArch64 with clang and linked by ld.lld into the NSO layout (MOD0 first, text / rodata / data at their offsets),
 then packed as an NSO with an LZ4-compressed text segment, the way the console's files are.
 
-    python3 make_fake.py <out.nso> [functions] [--seed N]
+    python3 make_fake.py <out.nso> [functions] [--seed N] [--extra <file.c|.s>]... [--ld <flag>]...
 
 Needs clang and ld.lld with the AArch64 target and the Python lz4 package (developer machines and CI only).
 """
@@ -56,17 +56,22 @@ def gen_c(n, rnd):
     return '\n'.join(out) + '\n'
 
 
-def build(out, nfuncs, seed):
+def build(out, nfuncs, seed, extra=(), ldflags=()):
     rnd = random.Random(seed)
     with tempfile.TemporaryDirectory() as t:
         with open(os.path.join(t, 'gen.c'), 'w') as f:
             f.write(gen_c(nfuncs, rnd))
-        tgt = ['--target=aarch64-linux-gnu', '-fPIC', '-nostdinc', '-nostdlib']
+        tgt = ['--target=aarch64-linux-gnu', '-fPIC', '-nostdinc', '-nostdlib', '-fno-builtin']
+        objs = []
+        for i, x in enumerate(extra):
+            objs.append(os.path.join(t, 'extra%d.o' % i))
+            subprocess.run(['clang'] + tgt + ['-O2', '-c', x, '-o', objs[-1]], check=True)
         for cmd in (['clang++'] + tgt + ['-O2', '-fexceptions', '-c', os.path.join(HERE, 'fake.cpp'), '-o', os.path.join(t, 'fake.o')],
                     ['clang'] + tgt + ['-O2', '-c', os.path.join(t, 'gen.c'), '-o', os.path.join(t, 'gen.o')],
                     ['clang'] + tgt + ['-c', os.path.join(HERE, 'mod0.s'), '-o', os.path.join(t, 'mod0.o')],
                     ['ld.lld', '-shared', '--hash-style=sysv', '-T', os.path.join(HERE, 'link.ld'), '-z', 'norelro', '--eh-frame-hdr',
-                     os.path.join(t, 'mod0.o'), os.path.join(t, 'fake.o'), os.path.join(t, 'gen.o'), '-o', os.path.join(t, 'fake.so')]):
+                     os.path.join(t, 'mod0.o'), os.path.join(t, 'fake.o'), os.path.join(t, 'gen.o')] + objs + list(ldflags)
+                    + ['-o', os.path.join(t, 'fake.so')]):
             subprocess.run(cmd, check=True)
         elf = open(os.path.join(t, 'fake.so'), 'rb').read()
     phoff, = struct.unpack_from('<Q', elf, 0x20)
@@ -101,9 +106,13 @@ def build(out, nfuncs, seed):
 
 if __name__ == '__main__':
     a = sys.argv[1:]
-    seed = 1
-    if '--seed' in a:
-        k = a.index('--seed')
-        seed = int(a[k + 1])
-        del a[k:k + 2]
-    build(a[0], int(a[1]) if len(a) > 1 else 300, seed)
+    seed, extra, ldflags = 1, [], []
+    for opt, dst in (('--seed', None), ('--extra', extra), ('--ld', ldflags)):
+        while opt in a:
+            k = a.index(opt)
+            if dst is None:
+                seed = int(a[k + 1])
+            else:
+                dst.append(a[k + 1])
+            del a[k:k + 2]
+    build(a[0], int(a[1]) if len(a) > 1 else 300, seed, extra, ldflags)

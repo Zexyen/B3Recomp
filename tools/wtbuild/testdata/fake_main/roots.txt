@@ -1,0 +1,17 @@
+# tables comparison roots for the stand-in sdk (lifter/sdklift_roots.txt's syntax)
+g3
+g40
+g41   # comment after a name
+sdk_uses_helper
+caught
+nested
+nvn_fake_get_integer
+not_a_symbol_here
+addr 1000 at_0x1000
+cut g77
+trap g120
+lift sdk_helper
+nvn nvnDeviceGetInteger
+nvn nvnTextureBuilderGetStorageSize
+vmethod N8nvrm_gpu5nvgpu15NvRmNvgpuDeviceE 8 device_method1
+vmethod N8nvrm_gpu33NvRmGpu_HwHalFunctions_GM200_BaseE 0 hal_method0

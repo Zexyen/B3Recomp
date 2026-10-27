@@ -16,6 +16,7 @@ SECTIONS
     .gcc_except_table : { *(.gcc_except_table .gcc_except_table.*) }
     . = ALIGN(0x1000);
     .data : { *(.data .data.*) *(.data.rel.ro .data.rel.ro.*) }
+    .init_array : { KEEP(*(.init_array .init_array.*)) }
     .dynamic : { *(.dynamic) }
     .got : { *(.got) }
     .got.plt : { *(.got.plt) }
