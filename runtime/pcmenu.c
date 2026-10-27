@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 #include "gfx_options.h"
 #define STBTT_STATIC
 #define STB_TRUETYPE_IMPLEMENTATION

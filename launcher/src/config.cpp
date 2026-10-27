@@ -1,4 +1,5 @@
 #include "config.h"
+#include "platform.h"
 #include <algorithm>
 #include <cctype>
 #include <climits>
@@ -7,8 +8,12 @@
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -81,20 +86,32 @@ bool file_exists(const std::string& path)
 
 std::vector<std::string> build_command(const std::string& repo, const std::string& command)
 {
-	for (const std::string& exe : {repo + "/build/wtbuild", repo + "/tools/wtbuild/target/release/wtbuild"})
-		if (access(exe.c_str(), X_OK) == 0)
+	for (const std::string& exe : {repo + "/build/wtbuild" WT_EXE, repo + "/tools/wtbuild/target/release/wtbuild" WT_EXE})
+		if (is_program(exe))
 			return {exe, command, "--repo", repo};
+#ifdef _WIN32
+	const char* python = "python";
+#else
+	const char* python = "python3";
+#endif
 	if (command == "mods-tree")
-		return {"python3", repo + "/scripts/pchtxt.py", "tree"};
-	return {"python3", repo + "/scripts/setup.py"};
+		return {python, repo + "/scripts/pchtxt.py", "tree"};
+	return {python, repo + "/scripts/setup.py"};
 }
 
 Paths Paths::find(const char* argv0)
 {
 	Paths p;
+#ifdef _WIN32
+	std::wstring buf(32768, L'\0');
+	DWORD n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
+	p.self = n > 0 ? narrow(buf.substr(0, n)) : std::string(argv0);
+	std::replace(p.self.begin(), p.self.end(), '\\', '/');    // '/' throughout, which Windows takes too
+#else
 	char buf[PATH_MAX];
 	ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
 	p.self = n > 0 ? std::string(buf, size_t(n)) : std::string(argv0);
+#endif
 	const char* env = std::getenv("WITCHTIME_REPO");
 	p.repo = env && env[0] ? env : dirname(dirname(p.self));
 	p.build = p.repo + "/build";
@@ -188,6 +205,22 @@ SetupState SetupState::read(const std::string& build_dir)
 
 std::string run_capture(const std::vector<std::string>& argv, const std::string& cwd, int* exit_code)
 {
+#ifdef _WIN32
+	ChildProcess child;
+	std::string out;
+	int code = -1;
+	if (child.start(argv, cwd))
+		while (true)
+		{
+			bool done = child.wait(&code, 20);
+			out += child.read_available();
+			if (done)
+				break;
+		}
+	if (exit_code)
+		*exit_code = code;
+	return out;
+#else
 	int fd[2];
 	if (pipe(fd))
 		return "";
@@ -218,6 +251,7 @@ std::string run_capture(const std::vector<std::string>& argv, const std::string&
 	if (exit_code)
 		*exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	return out;
+#endif
 }
 
 std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir, std::string& error)

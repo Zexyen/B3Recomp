@@ -1,7 +1,7 @@
-# Builds the Witch Time launcher for Linux and publishes it as a release.
+# Builds the Witch Time launcher for Linux and Windows and publishes them as a release.
 #
-#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with the archive attached
-#   Actions > Release > Run workflow, or a PR    -> builds only; the archive is kept as a workflow artifact
+#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
+#   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
 # The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
 #   build/witch-time, libSDL3.so.0   the launcher and the SDL3 it was built with
@@ -13,6 +13,18 @@
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
 # Nothing derived from the game is in it: the player builds that from their own dump.
+#
+# Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
+#   witch-time.exe                   starts build/witch-time.exe
+#   build/witch-time.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
+#   build/wtbuild.exe                the build tool
+#   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), ssbu_glslang.dll (static glslang),
+#                                    game_shim_eh.o and libucrtbase.a (game.dll's C functions come from the UCRT, part of
+#                                    Windows 10 and 11); the movies use Windows' own Media Foundation, so no FFmpeg
+#   deps/llvm/                       clang.exe and ld.lld.exe (LLVM_VERSION, trimmed from LLVM's release), clang's headers
+#                                    and llvm-mingw's compiler-rt builtins: the player's PC compiles the game's code and
+#                                    links game.dll with these alone (tools/wtbuild/src/link.rs)
+#   licenses/
 name: Release
 
 on:
@@ -31,6 +43,9 @@ env:
   FFMPEG_TAG: n7.1.5
   GLSLANG_TAG: 16.6.0
   LLVM_VERSION: 23.1.4
+  LLVM_MINGW_TAG: '20260922'
+  VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
+  FREETYPE_TAG: VER-2-13-3
 
 jobs:
   linux:
@@ -203,4 +218,229 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/*.sha256
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build zip
+
+      # the cross compiler for everything built here: clang, lld and mingw-w64 for the UCRT
+      - name: llvm-mingw cache
+        id: llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm-mingw
+          key: llvm-mingw-${{ env.LLVM_MINGW_TAG }}-ucrt-ubuntu-22.04
+      - name: llvm-mingw
+        if: steps.llvm-mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/llvm-mingw"
+          curl -sSfL "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_TAG/llvm-mingw-$LLVM_MINGW_TAG-ucrt-ubuntu-22.04-x86_64.tar.xz" |
+            tar -xJ --strip-components=1 -C "$RUNNER_TEMP/llvm-mingw"
+      - name: Cross toolchain file
+        run: |
+          m="$RUNNER_TEMP/llvm-mingw"
+          echo "$m/bin" >> "$GITHUB_PATH"
+          cat > "$RUNNER_TEMP/mingw.cmake" <<EOF
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR x86_64)
+          set(CMAKE_C_COMPILER $m/bin/x86_64-w64-mingw32-clang)
+          set(CMAKE_CXX_COMPILER $m/bin/x86_64-w64-mingw32-clang++)
+          set(CMAKE_RC_COMPILER $m/bin/x86_64-w64-mingw32-windres)
+          set(CMAKE_FIND_ROOT_PATH $m/x86_64-w64-mingw32)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          EOF
+
+      # the compiler players get: clang.exe, ld.lld.exe and clang's headers from LLVM's Windows release, and the
+      # compiler-rt builtins for the MinGW target (stack probe, 128-bit division) from llvm-mingw, same LLVM major
+      - name: LLVM for Windows cache
+        id: llvm-win
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm-win
+          key: llvm-win-${{ env.LLVM_VERSION }}-${{ env.LLVM_MINGW_TAG }}-trim1
+      - name: LLVM for Windows
+        if: steps.llvm-win.outputs.cache-hit != 'true'
+        run: |
+          v="$LLVM_VERSION"; major="${v%%.*}"; d="$RUNNER_TEMP/llvm-win"; top="clang+llvm-$v-x86_64-pc-windows-msvc"
+          mkdir -p "$d"
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/$top.tar.xz" |
+            tar -xJ --strip-components=1 -C "$d" --wildcards "$top/bin/clang.exe" "$top/bin/ld.lld.exe" \
+              "$top/lib/clang/$major/include/*" "$top/LICENSE.TXT"
+          mkdir -p "$d/lib/clang/$major/lib/windows"
+          cp "$RUNNER_TEMP"/llvm-mingw/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a "$d/lib/clang/$major/lib/windows/"
+          du -sh "$d"
+
+      - name: SDL3
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl"
+          cmake -S "$RUNNER_TEMP/sdl" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF \
+            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+          cp "$RUNNER_TEMP/sdl/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+
+      - name: Vulkan headers
+        run: git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+
+      # glslang for ssbu_glslang.dll, static (no SPIRV-Tools optimizer), with libc++ linked in
+      - name: glslang cache
+        id: glslang
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/glslang
+          key: glslang-${{ env.GLSLANG_TAG }}-llvm-mingw-${{ env.LLVM_MINGW_TAG }}-1
+      - name: glslang
+        if: steps.glslang.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$GLSLANG_TAG" https://github.com/KhronosGroup/glslang.git "$RUNNER_TEMP/glslang-src"
+          cmake -S "$RUNNER_TEMP/glslang-src" -B "$RUNNER_TEMP/glslang-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/glslang" -DCMAKE_INSTALL_LIBDIR=lib \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=OFF
+          cmake --build "$RUNNER_TEMP/glslang-build"
+          cmake --install "$RUNNER_TEMP/glslang-build"
+          cp "$RUNNER_TEMP/glslang-src/LICENSE.txt" "$RUNNER_TEMP/glslang/"
+
+      # FreeType for the launcher's text (RmlUi), static, nothing optional
+      - name: FreeType cache
+        id: freetype
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/freetype
+          key: freetype-${{ env.FREETYPE_TAG }}-llvm-mingw-${{ env.LLVM_MINGW_TAG }}-1
+      - name: FreeType
+        if: steps.freetype.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FREETYPE_TAG" https://github.com/freetype/freetype.git "$RUNNER_TEMP/freetype-src"
+          cmake -S "$RUNNER_TEMP/freetype-src" -B "$RUNNER_TEMP/freetype-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/freetype" -DBUILD_SHARED_LIBS=OFF \
+            -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
+          cmake --build "$RUNNER_TEMP/freetype-build"
+          cmake --install "$RUNNER_TEMP/freetype-build"
+          cp "$RUNNER_TEMP/freetype-src/LICENSE.TXT" "$RUNNER_TEMP/freetype-src/docs/FTL.TXT" "$RUNNER_TEMP/freetype/"
+
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" -DCMAKE_BUILD_TYPE=Release \
+            -DSDL3_DIR="$RUNNER_TEMP/sdl3/lib/cmake/SDL3" -DFREETYPE_LIBRARY="$RUNNER_TEMP/freetype/lib/libfreetype.a" \
+            -DFREETYPE_INCLUDE_DIRS="$RUNNER_TEMP/freetype/include/freetype2" -DWT_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          ls -la build/witch-time.exe witch-time.exe
+
+      # wtbuild twice: for this runner (it builds the Windows runtime below) and for Windows (what players run)
+      - name: wtbuild
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: x86_64-w64-mingw32-clang
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          rustup target add x86_64-pc-windows-gnullvm
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml --target x86_64-pc-windows-gnullvm
+
+      # the runtime, with llvm-mingw, against the SDL3, Vulkan headers and glslang above
+      - name: Runtime
+        run: |
+          export LLVM_ROOT="$RUNNER_TEMP/llvm-mingw"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
+          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib"
+          export WT_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
+          tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
+          llvm-strip prebuilt/ssbu_glslang.dll
+          llvm-readobj --coff-imports prebuilt/witch-time-game.exe | grep 'Name:' | sort -u
+          ls -la prebuilt
+
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          p="dist/$name"
+          mkdir -p "$p/build" "$p/deps" "$p/licenses"
+          git archive HEAD | tar -x -C "$p"
+          rm -rf "$p/.github"
+          cp witch-time.exe "$p/"
+          cp build/witch-time.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
+          cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"
+          llvm-strip "$p/build/witch-time.exe" "$p/build/SDL3.dll" "$p/witch-time.exe"
+          cp -a prebuilt "$p/prebuilt"
+          cp -a "$RUNNER_TEMP/llvm-win" "$p/deps/llvm"
+          cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "$p/licenses/SDL3.txt"
+          cp "$RUNNER_TEMP/glslang/LICENSE.txt" "$p/licenses/glslang.txt"
+          cp "$RUNNER_TEMP/llvm-win/LICENSE.TXT" "$p/licenses/LLVM.txt"
+          cp "$RUNNER_TEMP/freetype/FTL.TXT" "$p/licenses/FreeType-FTL.txt"
+          cp build/launcher/_deps/rmlui-src/LICENSE.txt "$p/licenses/RmlUi.txt"
+          cp "$RUNNER_TEMP/llvm-mingw/x86_64-w64-mingw32/share/mingw32/COPYING.MinGW-w64-runtime.txt" "$p/licenses/MinGW-w64-runtime.txt"
+          (cd dist && zip -q -r -9 "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+  # the archive as a player unpacks it, on Windows: the build tool's own tests, then the link step on stand-in modules
+  # with the bundled clang.exe and ld.lld.exe and the prebuilt runtime, run until witch-time-game.exe has mapped the image
+  windows-test:
+    needs: windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: wtbuild tests (Windows)
+        shell: bash
+        run: cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      - name: Smoke test of the link step
+        shell: bash
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          (cd dist && sha256sum -c "$name.zip.sha256" && unzip -q "$name.zip")
+          p="$PWD/dist/$name"
+          pip install lz4
+          # make_fake.py builds the stand-in modules with the bundled clang and ld.lld too
+          export PATH="$p/deps/llvm/bin:$PATH"
+          python "$p/tools/wtbuild/smoke_link.py" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll" --wtbuild "$p/build/wtbuild.exe"
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Witch Time ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
             dist/*.sha256

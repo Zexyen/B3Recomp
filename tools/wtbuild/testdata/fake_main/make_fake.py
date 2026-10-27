@@ -66,7 +66,7 @@ def build(out, nfuncs, seed, extra=(), ldflags=()):
         for i, x in enumerate(extra):
             objs.append(os.path.join(t, 'extra%d.o' % i))
             subprocess.run(['clang'] + tgt + ['-O2', '-c', x, '-o', objs[-1]], check=True)
-        for cmd in (['clang++'] + tgt + ['-O2', '-fexceptions', '-c', os.path.join(HERE, 'fake.cpp'), '-o', os.path.join(t, 'fake.o')],
+        for cmd in (['clang'] + tgt + ['-O2', '-fexceptions', '-c', os.path.join(HERE, 'fake.cpp'), '-o', os.path.join(t, 'fake.o')],
                     ['clang'] + tgt + ['-O2', '-c', os.path.join(t, 'gen.c'), '-o', os.path.join(t, 'gen.o')],
                     ['clang'] + tgt + ['-c', os.path.join(HERE, 'mod0.s'), '-o', os.path.join(t, 'mod0.o')],
                     ['ld.lld', '-shared', '--hash-style=sysv', '-T', os.path.join(HERE, 'link.ld'), '-z', 'norelro', '--eh-frame-hdr',

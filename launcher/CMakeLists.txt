@@ -1,8 +1,9 @@
 # Witch Time: the launcher. Builds the game from the player's dump (scripts/setup.py) and plays it in the same window
-# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux first.
+# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
-#     cmake --build build/launcher                      -> build/witch-time
+#     cmake --build build/launcher                      -> build/witch-time (Windows: build/witch-time.exe, and
+#                                                          witch-time.exe at the top, which starts it)
 #
 # Needs the system's SDL3 (3.2 or newer) and FreeType. RmlUi is fetched at the pinned tag below, or taken from
 # -DRMLUI_SOURCE_DIR=<folder> (an RmlUi checkout of that tag) when there is no network.
@@ -39,6 +40,7 @@ add_executable(witch-time
 	src/build_runner.cpp
 	src/config.cpp
 	src/game_host.cpp
+	src/platform.cpp
 	src/ui_render.cpp
 	"${RMLUI_BACKENDS}/RmlUi_Platform_SDL.cpp"
 	"${RMLUI_BACKENDS}/RmlUi_Renderer_SDL_GPU.cpp")
@@ -52,3 +54,15 @@ target_link_libraries(witch-time PRIVATE RmlUi::Core SDL3::SDL3 ${CMAKE_DL_LIBS}
 # $ORIGIN: a release ships libSDL3.so.0 beside it, which libwitchtime.so (also $ORIGIN) then shares
 set_target_properties(witch-time PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
 	BUILD_RPATH "$ORIGIN")
+if(WIN32)
+	# a window program (no console), with UTF-8 as its code page (win32/witch-time.rc); C++ runtime linked in, so that it
+	# needs nothing beside it but SDL3.dll
+	target_sources(witch-time PRIVATE win32/witch-time.rc)
+	set_target_properties(witch-time PROPERTIES WIN32_EXECUTABLE ON)
+	target_link_options(witch-time PRIVATE -static)
+	# witch-time.exe at the top of a release: starts build/witch-time.exe (Windows has no symbolic link to ship there)
+	add_executable(witch-time-start WIN32 win32/start.c win32/witch-time.rc)
+	target_compile_options(witch-time-start PRIVATE -municode)
+	target_link_options(witch-time-start PRIVATE -static -municode)
+	set_target_properties(witch-time-start PROPERTIES OUTPUT_NAME witch-time RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+endif()

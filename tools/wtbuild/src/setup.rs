@@ -1,8 +1,9 @@
-//! `wtbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux. The steps, their output lines,
+//! `wtbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The steps, their output lines,
 //! build/setup_state.json and build/logs/ are scripts/setup.py's (the launcher follows them); every step runs inside
 //! this program, so the build needs no Python. scripts/setup.py's module comment describes the steps and the dump.
 
 use crate::compile::{self, which};
+use crate::target::{self, Target};
 use crate::util::{fmt_secs, py_repr, sha256_file};
 use crate::{lifter, link, nso, pchtxt, tables, text};
 use serde_json::{json, Map, Value};
@@ -58,7 +59,7 @@ const ROMFS_FILES: [(&str, u64, &str); 3] = [
 const ROMFS_MANIFEST: (usize, u64, &str) = (552, 15047510227, "4926189e02ad8f4a385ac36f21fd62a914926fd70778869bec2f4bd19afab741");
 const ENCRYPTED: [&str; 5] = [".nsp", ".xci", ".nca", ".nsz", ".xcz"];
 
-/// the system libraries the link step uses: (what, a header the runtime includes, linker flags)
+/// the system libraries the link step uses when it builds the runtime: (what, a header the runtime includes, linker flags)
 const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
     ("SDL3", "SDL3/SDL.h", "-lSDL3"),
     ("Vulkan headers", "vulkan/vulkan.h", ""),
@@ -69,6 +70,16 @@ const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
     ),
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
     ("OpenGL", "", "-lGL"),
+];
+/// the same on Windows (llvm-mingw has the system's own; SDL3, the Vulkan headers and glslang come with the developer's)
+const WINDOWS_LIBS: [(&str, &str, &str); 3] = [
+    ("SDL3", "SDL3/SDL.h", "-lSDL3"),
+    ("Vulkan headers", "vulkan/vulkan.h", ""),
+    (
+        "glslang",
+        "glslang/Include/glslang_c_interface.h",
+        "-lglslang -lglslang-default-resource-limits",
+    ),
 ];
 
 const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified]
@@ -139,11 +150,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--repo" => a.repo = Some(val()?),
             "--toolchain" => {
                 let v = val()?;
-                if v != "linux" {
-                    return Err(format!(
-                        "--toolchain {}: wtbuild builds for Linux; the Windows toolchains are scripts/setup.py's",
-                        v
-                    ));
+                if v != Target::host().name() {
+                    return Err(format!("--toolchain {}: wtbuild builds for this system ({})", v, Target::host().name()));
                 }
             }
             _ => return Err(format!("unrecognized arguments: {}", k)),
@@ -153,6 +161,16 @@ fn parse(args: &[String]) -> Result<Args, String> {
 }
 
 /// os.path.abspath: absolute, normalised, symbolic links kept
+#[cfg(windows)]
+fn abspath(p: &str) -> String {
+    // GetFullPathNameW, which also takes out . and ..
+    std::path::absolute(p)
+        .map(|a| a.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| p.to_string())
+}
+
+/// os.path.abspath: absolute, normalised, symbolic links kept
+#[cfg(not(windows))]
 fn abspath(p: &str) -> String {
     let base = if p.starts_with('/') {
         PathBuf::new()
@@ -292,24 +310,30 @@ fn dump_json(v: &Value, level: usize, out: &mut String) {
 
 // ---------------------------------------------------------------------------------------------- steps
 fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
+    let t = Target::host();
+    let clang_exe = target::exe("clang");
     if let Some(l) = &cx.a.llvm {
-        if !Path::new(l).join("bin").join("clang").exists() {
-            return Err(Fail(format!("--llvm {}: there is no bin/clang in it", l)));
+        if !Path::new(l).join("bin").join(&clang_exe).exists() {
+            return Err(Fail(format!("--llvm {}: there is no bin/{} in it", l, clang_exe)));
         }
         std::env::set_var("LLVM_ROOT", abspath(l));
     } else if std::env::var_os("LLVM_ROOT").is_none() {
         if let Some(saved) = cx.state.get("tools").and_then(|t| t.get("LLVM_ROOT")).and_then(|v| v.as_str()) {
-            if Path::new(saved).join("bin").join("clang").exists() {
+            if Path::new(saved).join("bin").join(&clang_exe).exists() {
                 std::env::set_var("LLVM_ROOT", saved);
             }
         }
     }
     let clang = compile::find_clang(cx.root());
     if !Path::new(&clang).exists() && which(&clang).is_none() {
-        return Err(Fail("clang not found on PATH (install clang and lld from your distribution)".into()));
+        return Err(Fail(if t.windows() {
+            "clang not found: a release has it in deps\\llvm; a checkout needs llvm-mingw (--llvm <folder>, README)".into()
+        } else {
+            "clang not found on PATH (install clang and lld from your distribution)".into()
+        }));
     }
     let mut tools = Map::new();
-    tools.insert("TOOLCHAIN".into(), json!("linux"));
+    tools.insert("TOOLCHAIN".into(), json!(t.name()));
     if let Some(l) = std::env::var_os("LLVM_ROOT") {
         tools.insert("LLVM_ROOT".into(), json!(l.to_string_lossy()));
     }
@@ -318,23 +342,30 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
         .unwrap_or_default();
-    say(format!("  compiler (linux): {}   [{}]", ver, clang));
+    say(format!("  compiler ({}): {}   [{}]", t.name(), ver, clang));
     let probe = cx.build.join("probe");
     fs::create_dir_all(&probe).map_err(|e| Fail(e.to_string()))?;
     if link::has_prebuilt(cx.root()) {
         // a release: the runtime is prebuilt, and this PC only compiles and links game.so, without system headers
         let src = probe.join("t.c");
-        fs::write(
-            &src,
+        let mut code = String::from(
             "#include <string.h>\n#include <math.h>\n#include <stdint.h>\ndouble t(double *d, const void *s) { memcpy(d, s, 8); return trunc(*d); }\n",
-        )
-        .map_err(|e| Fail(e.to_string()))?;
+        );
+        if t.windows() {
+            code += "int __stdcall DllMainCRTStartup(void *m, unsigned long r, void *p) { return 1; }\n";
+            // as game_shim.c's
+        }
+        fs::write(&src, code).map_err(|e| Fail(e.to_string()))?;
         let mut c = Command::new(&clang);
-        c.args(["-shared", "-fPIC", "-O2", "-nostdlib", "-fuse-ld=lld"])
+        c.args(t.clang_flags())
+            .args(["-shared", "-O2", "-nostdlib", "-fuse-ld=lld"])
+            .args(t.pic())
             .args(link::freestanding(cx.root()))
-            .arg(&src)
-            .arg("-o")
-            .arg(probe.join("t.so"));
+            .arg(&src);
+        if t.windows() {
+            c.arg(cx.root().join(link::PREBUILT).join("libucrtbase.a")); // memcpy and trunc from the UCRT, as game.dll
+        }
+        c.arg("-o").arg(probe.join(if t.windows() { "t.dll" } else { "t.so" }));
         let (code, out, _) = compile::run(&mut c, Some(120));
         if code != Some(0) {
             return Err(Fail(format!(
@@ -345,18 +376,32 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         say("  compiler builds the game's library: ok");
         let missing = link::prebuilt_missing(cx.root());
         if !missing.is_empty() {
-            return Err(Fail(format!(
-                "the game needs these libraries, which are not installed: {}. Install them from your distribution (README, \"Build (Linux)\")",
-                missing.join(", ")
-            )));
+            return Err(Fail(if t.windows() {
+                let mf = missing.iter().any(|d| d.to_ascii_lowercase().starts_with("mf"));
+                format!(
+                    "the game needs these DLLs, which this PC does not have: {}{} (README, \"Build (Windows)\")",
+                    missing.join(", "),
+                    if mf {
+                        ". The MF ones are Media Foundation, which Windows N editions get from Microsoft's Media Feature Pack"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                format!(
+                    "the game needs these libraries, which are not installed: {}. Install them from your distribution (README, \"Build (Linux)\")",
+                    missing.join(", ")
+                )
+            }));
         }
         say("  runtime: prebuilt, its libraries are installed");
     } else {
         let src = probe.join("p.c");
-        let exe = probe.join("p");
+        let exe = probe.join(target::exe("p"));
         fs::write(&src, "#include <stdio.h>\nint main(void){puts(\"ok\");return 0;}\n").map_err(|e| Fail(e.to_string()))?;
         let build_run = |extra: &[&str]| -> Result<(), String> {
             let o = Command::new(&clang)
+                .args(t.clang_flags())
                 .arg(&src)
                 .arg("-o")
                 .arg(&exe)
@@ -372,17 +417,18 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
             }
             Ok(())
         };
-        build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a Linux program\n{}", e)))?;
+        let os = if t.windows() { "Windows" } else { "Linux" };
+        build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a {} program\n{}", os, e)))?;
         build_run(&["-fuse-ld=lld"]).map_err(|e| {
             Fail(format!(
                 "clang works, but not with the lld linker: install lld (ld.lld) from your distribution\n{}",
                 e
             ))
         })?;
-        say("  compiler builds and runs a Linux program: ok");
+        say(format!("  compiler builds and runs a {} program: ok", os));
         if std::env::var_os("WTBUILD_SKIP_LIB_CHECK").is_none() {
             let mut missing = Vec::new();
-            for (what, header, libs) in SYSTEM_LIBS {
+            for (what, header, libs) in if t.windows() { &WINDOWS_LIBS[..] } else { &SYSTEM_LIBS[..] } {
                 let c = probe.join("lib.c");
                 let inc = if header.is_empty() {
                     String::new()
@@ -391,6 +437,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
                 };
                 let _ = fs::write(&c, format!("{}int main(void){{return 0;}}\n", inc));
                 let ok = Command::new(&clang)
+                    .args(t.clang_flags())
                     .arg(&c)
                     .arg("-o")
                     .arg(probe.join("lib"))
@@ -403,17 +450,28 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
                     missing.push(format!(
                         "{} ({})",
                         what,
-                        [header, libs].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ")
+                        [*header, *libs].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ")
                     ));
                 }
             }
             if !missing.is_empty() {
-                return Err(Fail(format!(
-                    "the development files of these libraries are missing: {}. Install them from your distribution (README, \"Build (Linux)\")",
-                    missing.join("; ")
-                )));
+                return Err(Fail(if t.windows() {
+                    format!(
+                        "the development files of these libraries are missing: {}. Name their folders in CPATH and LIBRARY_PATH (README, \"Build (Windows)\")",
+                        missing.join("; ")
+                    )
+                } else {
+                    format!(
+                        "the development files of these libraries are missing: {}. Install them from your distribution (README, \"Build (Linux)\")",
+                        missing.join("; ")
+                    )
+                }));
             }
-            say("  SDL3, Vulkan headers, glslang, FFmpeg, OpenGL: ok");
+            say(if t.windows() {
+                "  SDL3, Vulkan headers, glslang: ok"
+            } else {
+                "  SDL3, Vulkan headers, glslang, FFmpeg, OpenGL: ok"
+            });
         }
     }
     cx.clang = clang;
@@ -579,14 +637,14 @@ fn link_folder(link: &Path, target: &Path) -> Result<String, Fail> {
             if fs::canonicalize(link).ok() == fs::canonicalize(target).ok() {
                 return Ok("kept".into());
             }
-            fs::remove_file(link).map_err(|e| Fail(e.to_string()))?; // the link only, never what it points to
+            target::remove_dir_link(link).map_err(|e| Fail(e.to_string()))?; // the link only, never what it points to
         } else {
             return Ok("a real folder, kept (not replaced by the dump's)".into());
         }
     }
     fs::create_dir_all(link.parent().unwrap()).map_err(|e| Fail(e.to_string()))?;
-    std::os::unix::fs::symlink(target, link).map_err(|e| Fail(format!("could not make the link {} -> {}: {}", link.display(), target.display(), e)))?;
-    Ok(format!("symlink to {}", target.display()))
+    target::link_dir(target, link).map_err(|e| Fail(format!("could not make the link {} -> {}: {}", link.display(), target.display(), e)))?;
+    Ok(format!("{} to {}", if cfg!(windows) { "junction" } else { "symlink" }, target.display()))
 }
 
 /// shutil.copy2: the bytes and the modification time
@@ -786,15 +844,21 @@ fn step_lift(cx: &mut Ctx) -> Result<(), Fail> {
 
 fn step_compile(cx: &mut Ctx) -> Result<(), Fail> {
     let (repo, clang, jobs) = (cx.repo.clone(), cx.clang.clone(), cx.jobs);
-    let out = cx.logged("compile", |log| compile::run_step(&repo, &clang, jobs, &child_env, log))?;
+    let out = cx.logged("compile", |log| compile::run_step(&repo, &clang, Target::host(), jobs, &child_env, log))?;
     say(format!("  {}", out.lines().find(|l| l.starts_with("compiled ")).unwrap_or("compiled")));
     Ok(())
 }
 
 fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     let (root, clang) = (cx.root().to_path_buf(), cx.clang.clone());
-    cx.logged("link", |log| link::run_step(&root, &clang, &child_env, log))?;
-    for f in ["game.so", "libwitchtime.so", "witch-time-game"] {
+    let t = Target::host();
+    cx.logged("link", |log| link::run_step(&root, &clang, t, &child_env, log))?;
+    let files: &[&str] = if t.windows() {
+        &["game.dll", "witch-time-game.exe"]
+    } else {
+        &["game.so", "libwitchtime.so", "witch-time-game"]
+    };
+    for f in files {
         if !cx.build.join(f).is_file() {
             return Err(Fail(format!(
                 "build/{} is missing after the link step (see {})",
@@ -805,9 +869,11 @@ fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     }
     let mb = |f: &str| fs::metadata(cx.build.join(f)).map(|m| m.len()).unwrap_or(0) as f64 / (1u64 << 20) as f64;
     say(format!(
-        "  build/game.so {:.0} MB, libwitchtime.so {:.1} MB ({})",
-        mb("game.so"),
-        mb("libwitchtime.so"),
+        "  build/{} {:.0} MB, {} {:.1} MB ({})",
+        files[0],
+        mb(files[0]),
+        files[1],
+        mb(files[1]),
         if link::has_prebuilt(&root) { "prebuilt" } else { "built here" }
     ));
     Ok(())
@@ -1007,7 +1073,10 @@ pub fn main(args: &[String]) -> i32 {
             cx.state.insert("version".into(), json!(v));
         }
         cx.save();
-        say("Start the game: build/witch-time-game targets/exefs/main.elf (docs/STATUS.md)");
+        say(format!(
+            "Start the game: build/{} targets/exefs/main.elf (docs/STATUS.md)",
+            Target::host().game_exe()
+        ));
     }
     0
 }

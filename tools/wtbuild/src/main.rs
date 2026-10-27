@@ -8,6 +8,7 @@ mod py;
 mod sdklift;
 mod setup;
 mod tables;
+mod target;
 mod text;
 mod text_strings;
 mod util;
@@ -71,7 +72,8 @@ fn main() {
                 .and_then(|i| args.get(i + 1))
                 .and_then(|j| j.parse().ok())
                 .unwrap_or(8);
-            if let Err(e) = compile::run_step(&repo, &clang, jobs, &setup::child_env, &mut |l| println!("{}", l)) {
+            let t = target::Target::from_args(&args).unwrap_or_else(|e| die(e));
+            if let Err(e) = compile::run_step(&repo, &clang, t, jobs, &setup::child_env, &mut |l| println!("{}", l)) {
                 die(e)
             }
         }
@@ -79,10 +81,11 @@ fn main() {
             // the link step on its own (developers, smoke_link.py): build/game.so, and the runtime when not prebuilt
             let repo = repo_root(&args);
             let clang = compile::find_clang(&repo);
-            link::run_step(&repo, &clang, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+            let t = target::Target::from_args(&args).unwrap_or_else(|e| die(e));
+            link::run_step(&repo, &clang, t, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         Some("runtime") => {
-            // the prebuilt runtime of a release (CI): wtbuild runtime --out <dir> [--repo <dir>]
+            // the prebuilt runtime of a release (CI): wtbuild runtime --out <dir> [--repo <dir>] [--target windows]
             let repo = repo_root(&args);
             let out = args
                 .iter()
@@ -90,7 +93,8 @@ fn main() {
                 .and_then(|i| args.get(i + 1))
                 .unwrap_or_else(|| die("runtime: --out <dir>"));
             let clang = compile::find_clang(&repo);
-            link::make_prebuilt(&repo, &clang, Path::new(out), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+            let t = target::Target::from_args(&args).unwrap_or_else(|e| die(e));
+            link::make_prebuilt(&repo, &clang, t, Path::new(out), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         Some("tables") if args.len() == 2 => {
             tables::run(Path::new(&args[1]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));

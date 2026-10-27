@@ -2,13 +2,16 @@
 """Developer check: the code compiled on the player's PC comes out the same with runtime/freestanding (no libc headers,
 as `wtbuild compile` and `wtbuild link` build it) as with the system's C library headers, byte for byte.
 
-    python3 tools/wtbuild/compare_freestanding.py [--words N] [--clang <clang>] [--wtbuild <path>]
+    python3 tools/wtbuild/compare_freestanding.py [--words N] [--clang <clang>] [--wtbuild <path>] [--target windows]
     python3 tools/wtbuild/compare_freestanding.py --gen build/gen_eh [--tables runtime/gen]    your own lifted code
 
 Without --gen the lifted code is made up: N random instruction words (FP / SIMD and load / store heavy, as
 compare_lifter.py) through `wtbuild lift-words`, one function each, so no game files are needed. --gen compiles your
 build/gen_eh instead; --tables also compiles runtime/gen/sdkdata.c, sdklift_gen.c and runtime/wt_tables.c. A probe
 checks that jmp_buf has glibc's size and alignment. Needs the system's libc headers (the side compared against).
+
+--target windows compares against mingw-w64's headers instead (the UCRT ones the Windows runtime is built with), for
+MinGW objects as `wtbuild` makes them on Windows: --clang names a clang that has them, such as llvm-mingw's.
 """
 import os
 import random
@@ -63,7 +66,7 @@ def word_corpus(n, seed, exe, out):
 def main():
     args = sys.argv[1:]
     exe = os.path.join(HERE, 'target', 'release', 'wtbuild')
-    clang, words, gen, tables, seed = 'clang', 60000, None, None, 1
+    clang, words, gen, tables, seed, windows = 'clang', 60000, None, None, 1, False
     while args:
         a = args.pop(0)
         if a == '--clang':
@@ -78,27 +81,38 @@ def main():
             gen = os.path.abspath(args.pop(0))
         elif a == '--tables':
             tables = os.path.abspath(args.pop(0))
+        elif a == '--target' and args and args[0] in ('linux', 'windows'):
+            windows = args.pop(0) == 'windows'
         else:
             sys.exit(__doc__)
+    lifted, tbl, target = LIFTED, TABLES, []
+    if windows:                                          # target.rs: MinGW objects, no -fPIC (PE has none)
+        lifted = [f for f in LIFTED if f != '-fPIC']
+        tbl = [f for f in TABLES if f not in ('-fPIC', '-D__declspec(x)=')]
+        target = ['--target=x86_64-w64-mingw32', '-mno-incremental-linker-compatible']   # no time stamp in the objects
     t = tempfile.mkdtemp(prefix='wtfree_')
     try:
         jobs = []                                        # (name, source, flags)
         if gen:
             for n in sorted(os.listdir(gen)):
                 if n.endswith('.c'):
-                    jobs.append((n, os.path.join(gen, n), LIFTED + ['-I', RT, '-I', gen]))
+                    jobs.append((n, os.path.join(gen, n), lifted + ['-I', RT, '-I', gen]))
         else:
             gen = os.path.join(t, 'gen')
             for p in word_corpus(words, seed, exe, gen):
-                jobs.append((os.path.basename(p), p, LIFTED + ['-I', RT, '-I', gen]))
+                jobs.append((os.path.basename(p), p, lifted + ['-I', RT, '-I', gen]))
         if tables:
             for p in (os.path.join(tables, 'sdkdata.c'), os.path.join(tables, 'sdklift_gen.c'), os.path.join(RT, 'wt_tables.c')):
-                jobs.append((os.path.basename(p), p, TABLES + ['-I', RT, '-I', tables]))
+                jobs.append((os.path.basename(p), p, tbl + ['-I', RT, '-I', tables]))
         probe = os.path.join(t, 'probe.c')
         with open(probe, 'w') as f:
-            f.write('#include <setjmp.h>\n#include <stdio.h>\n#include <string.h>\n#include <math.h>\n'
-                    'const unsigned long jmp_size = sizeof(jmp_buf), jmp_align = _Alignof(jmp_buf);\n'
-                    'const unsigned long tag_mask = __builtin_offsetof(struct __jmp_buf_tag, __mask_was_saved);\n')
+            f.write('#include <setjmp.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>\n'
+                    'const unsigned long jmp_size = sizeof(jmp_buf), jmp_align = _Alignof(jmp_buf);\n')
+            if windows:                                  # setjmp as mingw-w64 expands it (the UCRT's _setjmp and a frame)
+                f.write('int jump(jmp_buf b) { return setjmp(b); }\n'
+                        'float mag(float x) { return fabsf(x); }\n')
+            else:
+                f.write('const unsigned long tag_mask = __builtin_offsetof(struct __jmp_buf_tag, __mask_was_saved);\n')
         jobs.append(('probe.c', probe, ['-O2']))
 
         def build(job):
@@ -107,7 +121,7 @@ def main():
             for side, extra in (('sys', []), ('free', FREE)):
                 o = os.path.join(t, side, name + '.o')
                 os.makedirs(os.path.dirname(o), exist_ok=True)
-                p = subprocess.run([clang, '-c'] + flags + extra + [src, '-o', o], capture_output=True, text=True)
+                p = subprocess.run([clang] + target + ['-c'] + flags + extra + [src, '-o', o], capture_output=True, text=True)
                 if p.returncode:
                     return name, '%s headers: %s' % (side, p.stderr[-1500:])
                 res.append(open(o, 'rb').read())

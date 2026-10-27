@@ -28,7 +28,7 @@ tools/wtbuild/target/release/wtbuild setup --dump <your dump folder> [--jobs N] 
 ```
 
 The launcher runs `build/wtbuild` (a release) or `tools/wtbuild/target/release/wtbuild` (a checkout), and falls back to
-`python3 scripts/setup.py` when neither is there. The Windows toolchains (mingw, msvc) are still `scripts/setup.py`'s.
+`python3 scripts/setup.py` when neither is there.
 
 Other commands, mostly for developers: `nso2elf <in> <out>`, `lift <main.elf> <outdir> [--no-patches]`,
 `tables <repo>`, `compile [--jobs N]`, `link`, `runtime --out <dir>` (the prebuilt runtime, CI), `text [--romfs <folder>] [--dump <folder>] [--out <mods folder>]`,
@@ -53,7 +53,21 @@ a player installs nothing to build. `smoke_link.py` runs the tables, lift, compi
 checks that every symbol resolves and runs `witch-time-game` until it has mapped the image; the release workflow runs
 it on the runtime it ships.
 
-`scripts/build_runtime.py` (the Python reference, and the Windows build) still links everything into one program.
+### Windows
+
+The same split, with Windows' files: the runtime is one program, `witch-time-game.exe`, built with llvm-mingw
+(`wtbuild runtime --target windows --out prebuilt`, which CI runs on Linux), and the player's PC links `game.dll`. The
+program imports the tables from `game.dll` through `libgame.dll.a` (made by llvm-dlltool from the export list,
+`GAME_EXPORTS` in `src/link.rs`); `game.dll` imports nothing from the program, and its calls back into the runtime go
+through the function pointers `game_bind` hands it (`runtime/game_shim.c`). `game.dll` links with `-nostdlib` and its
+own entry point, takes its C functions from `ucrtbase.dll` (mingw-w64's `libucrtbase.a`, shipped in `prebuilt/`) and
+llvm-mingw's builtins. Every clang gets `--target=x86_64-w64-mingw32` (`src/target.rs`), so the bundled compiler is
+LLVM's own Windows release plus those builtins in `lib/clang/23/lib/windows/`. The `deps` step checks the DLLs the
+program imports (its PE import table) against `build\`, `prebuilt\` and System32. `smoke_link.py --target windows`
+runs the smoke test there, or on Linux under Wine; `compare_freestanding.py --target windows` checks the freestanding
+headers against mingw-w64's.
+
+`scripts/build_runtime.py` (the Python reference) still links everything into one program.
 
 ## Checked against the Python
 

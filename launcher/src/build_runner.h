@@ -2,6 +2,7 @@
 // process and follows its output: which of its steps runs, which are done, how far the compile step is, and the last
 // lines of the log. poll() never blocks.
 #pragma once
+#include "platform.h"
 #include <ios>
 #include <map>
 #include <string>
@@ -16,7 +17,11 @@ public:
 	bool start(const std::string& repo, const std::vector<std::string>& args);
 	void stop();                         // ends the build; it resumes from the step it was in next time
 	bool poll();                         // reads what is new; true when anything changed
+#ifdef _WIN32
+	bool running() const { return child.running(); }
+#else
 	bool running() const { return pid > 0; }
+#endif
 
 	int exit_code = 0;                   // when it has ended
 	std::string current;                 // the step running now
@@ -28,8 +33,12 @@ public:
 	double started_at = 0;
 
 private:
+#ifdef _WIN32
+	ChildProcess child;
+#else
 	pid_t pid = -1;
 	int fd = -1;
+#endif
 	std::string repo, partial;
 	double last_log_check = 0;
 	long long compile_log_start = 0;

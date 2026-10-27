@@ -13,6 +13,8 @@ typedef struct {
     void (*guest_unimpl)(uint64_t, uint32_t, const char *);
     void (*guest_svc)(Ctx *, uint32_t);
     void (*stx_diag)(Ctx *, uint64_t, uint64_t, uint64_t, uint64_t, int);
+    void (*sdk_dispatch)(Ctx *, uint64_t);           /* [witchtime] for gen/sdklift_gen.c, which is in the game library now */
+    void (*sdk_host_call)(Ctx *, int);
 } GameHost;
 
 typedef struct {
@@ -30,6 +32,20 @@ void guest_trap(const char *what, uint64_t addr) { host.guest_trap(what, addr); 
 void guest_unimpl(uint64_t pc, uint32_t insn, const char *what) { host.guest_unimpl(pc, insn, what); }
 void guest_svc(Ctx *c, uint32_t number) { host.guest_svc(c, number); }
 void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, int bits) { host.stx_diag(c, a, expected, seen, v, bits); }
+#ifdef _WIN32
+/* [witchtime] the lifted sdk (gen/sdklift_gen.c) is linked into game.dll with the player's other tables (runtime/split);
+ * on Linux game.so finds these two in the runtime when it is loaded */
+void sdk_dispatch(Ctx *c, uint64_t addr) { host.sdk_dispatch(c, addr); }
+void sdk_host_call(Ctx *c, int index) { host.sdk_host_call(c, index); }
+#endif
+#ifdef WT_GAME_NOSTDLIB
+/* [witchtime] game.dll as wtbuild links it on the player's PC: without the C runtime's start-up code (-nostdlib), so its
+ * entry point is this; nothing in it needs initialising (no constructors, no thread-local data) */
+int __stdcall DllMainCRTStartup(void *module, unsigned long reason, void *reserved) {
+    (void)module; (void)reason; (void)reserved;
+    return 1;
+}
+#endif
 
 __declspec(dllexport) void game_bind(const GameHost *h, GameTables *t) {
     host = *h;

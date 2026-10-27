@@ -11,4 +11,4 @@ them (`prebuilt/`, `wtbuild runtime`), and the player's PC compiles only the lif
 use of these names in the runtime is an ordinary expression (none is in `#if`, a `case` label or a static
 initializer), which is what makes the swap possible; keep it that way when adding one. `wtbuild link` builds the
 runtime with `-I runtime/split` ahead of everything else, also when it builds it locally. `scripts/build_runtime.py`
-(the Python reference and Windows build) still compiles the generated headers into the program as before.
+(the Python reference) still compiles the generated headers into the program as before.

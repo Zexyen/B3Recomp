@@ -1,15 +1,21 @@
 #include "game_host.h"
+#include "platform.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <dlfcn.h>
 #include <string>
+#ifndef _WIN32
+#include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
+std::string main_elf(const Paths& paths) { return paths.repo + "/targets/exefs/main.elf"; }
+
+#ifndef _WIN32
 std::string g_self;
 volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the player closed the window
 
@@ -22,29 +28,32 @@ void on_game_exit(int code)
 	std::string c = std::to_string(code);
 	execl(g_self.c_str(), g_self.c_str(), "--returned", c.c_str(), (char*)nullptr);
 }
-
-std::string main_elf(const Paths& paths) { return paths.repo + "/targets/exefs/main.elf"; }
+#endif
 
 } // namespace
 
 GameStart prepare_game(const Paths& paths)
 {
 	GameStart g;
-	if (!file_exists(main_elf(paths)) || !file_exists(paths.build + "/game.so") || !file_exists(paths.build + "/witch-time-game"))
+	if (!file_exists(main_elf(paths)) || !file_exists(paths.build + "/" + GAME_LIB) || !file_exists(paths.build + "/" + GAME_EXE))
 	{
 		g.error = "The game is not built yet.";
 		return g;
 	}
-	mkdir(paths.run.c_str(), 0755);
+	make_dir(paths.run);
 	// as docs/STATUS.md runs it: the dump's data through targets/romfs, saves in build/userdata (..\userdata from build/run)
-	setenv("SSBU_ROMFS", (paths.repo + "/targets/romfs").c_str(), 0);
-	setenv("SSBU_TITLE", "Witch Time", 0);
-	setenv("SSBU_VK_MISSING", "warn", 0);
-	if (chdir(paths.run.c_str()))
+	set_env("SSBU_ROMFS", paths.repo + "/targets/romfs", false);
+	set_env("SSBU_TITLE", "Witch Time", false);
+	set_env("SSBU_VK_MISSING", "warn", false);
+	if (!change_dir(paths.run))
 	{
 		g.error = "Cannot open " + paths.run + ".";
 		return g;
 	}
+#ifdef _WIN32
+	// Windows: the runtime makes a window of its own (runtime/display.c), so the game always runs as a program of its own
+	return g;
+#else
 	const std::string lib = paths.build + "/libwitchtime.so";
 	if (file_exists(lib))
 	{
@@ -54,8 +63,26 @@ GameStart prepare_game(const Paths& paths)
 	}
 	g.in_process = g.host && dlsym(g.host, "wt_host_main") && dlsym(g.host, "plat_exit_hook");
 	return g;
+#endif
 }
 
+#ifdef _WIN32
+void run_in_process(GameStart&, const Paths&, SDL_Window*) { std::abort(); }   // prepare_game never offers it
+
+int run_child(const Paths& paths, SDL_Window* window)
+{
+	SDL_HideWindow(window);
+	// its output goes to build/run/witch-time-game.log: this program has no console to show it in
+	ChildProcess game;
+	int code = -1;
+	if (game.start({paths.build + "/" + GAME_EXE, main_elf(paths)}, paths.run, paths.run + "/witch-time-game.log"))
+		while (!game.wait(&code, 50))
+			SDL_PumpEvents();
+	SDL_ShowWindow(window);
+	SDL_RaiseWindow(window);
+	return code;
+}
+#else
 void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window)
 {
 	using HostMain = int (*)(int, char**);
@@ -93,3 +120,4 @@ int run_child(const Paths& paths, SDL_Window* window)
 	SDL_RaiseWindow(window);
 	return pid < 0 ? -1 : WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
+#endif
