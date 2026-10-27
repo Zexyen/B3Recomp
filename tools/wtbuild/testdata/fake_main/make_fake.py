@@ -56,6 +56,10 @@ def gen_c(n, rnd):
     return '\n'.join(out) + '\n'
 
 
+# Windows' CreateProcess adds .exe only to a name without an extension, and ld.lld has one
+LLD = 'ld.lld.exe' if os.name == 'nt' else 'ld.lld'
+
+
 def build(out, nfuncs, seed, extra=(), ldflags=()):
     rnd = random.Random(seed)
     with tempfile.TemporaryDirectory() as t:
@@ -69,7 +73,7 @@ def build(out, nfuncs, seed, extra=(), ldflags=()):
         for cmd in (['clang'] + tgt + ['-O2', '-fexceptions', '-c', os.path.join(HERE, 'fake.cpp'), '-o', os.path.join(t, 'fake.o')],
                     ['clang'] + tgt + ['-O2', '-c', os.path.join(t, 'gen.c'), '-o', os.path.join(t, 'gen.o')],
                     ['clang'] + tgt + ['-c', os.path.join(HERE, 'mod0.s'), '-o', os.path.join(t, 'mod0.o')],
-                    ['ld.lld', '-shared', '--hash-style=sysv', '-T', os.path.join(HERE, 'link.ld'), '-z', 'norelro', '--eh-frame-hdr',
+                    [LLD, '-shared', '--hash-style=sysv', '-T', os.path.join(HERE, 'link.ld'), '-z', 'norelro', '--eh-frame-hdr',
                      os.path.join(t, 'mod0.o'), os.path.join(t, 'fake.o'), os.path.join(t, 'gen.o')] + objs + list(ldflags)
                     + ['-o', os.path.join(t, 'fake.so')]):
             subprocess.run(cmd, check=True)
