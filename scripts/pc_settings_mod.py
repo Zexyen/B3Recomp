@@ -40,14 +40,15 @@ def ALL(*texts):                                             # the same in every
 
 
 # Where a file has not the glyphs of a word (a file only has those its own text uses), another word or the English one;
-# the Chinese, Korean and Japanese files have Latin letters. Names: runtime/options_row.c k_pc.
-LA, VSYNC, ASPECT, FW = 'Anisotropic Filtering', 'VSync', 'Aspect Ratio', 'Fullscreen Window'
+# the Chinese, Korean and Japanese files have Latin letters. A value has room for about 10 Latin or 9 Cyrillic letters.
+# Names: runtime/options_row.c k_pc.
+LA, VSYNC, ASPECT, FL = 'Anisotropic Filtering', 'VSync', 'Aspect Ratio', 'Frameless'
 MENU = [
     ('MENU_OPTION_LIST_PC_SETTINGS', T('PC Settings', 'PC設定', 'PC-Einstellungen', 'Paramètres PC', 'Ajustes de PC', 'Impostazioni PC',
                                        'Настройки ПК', 'PC设置', 'PC設定', 'PC 설정')),
-    ('MENU_OPTION_LIST_PC_RES', T('Internal Resolution (next start)', 'レンダリングサイズ (リスタートで切替)', 'Interne Auflösung (nach Neustart)',
+    ('MENU_OPTION_LIST_PC_RES', T('Internal Resolution (next start)', '画面サイズ (スタート時に変更)', 'Interne Auflösung (nach Neustart)',
                                   'Résolution interne (au redémarrage)', 'Resolución interna (al reiniciar)', 'Risoluzione interna (al riavvio)',
-                                  'Внутреннее разрешение (после перезапуска)', '画面大小 (Restart)', '畫面大小 (Restart)',
+                                  'Разрешение (после перезапуска)', '画面大小 (Restart)', '畫面大小 (Restart)',
                                   ('내부 해상도 (다음 시작 시)', '해상도 (다음 시작 시)'))),     # applies at the next start
     ('MENU_OPTION_LIST_PC_CUTSCENE', T('Cutscene Frame Rate', 'イベントシーンのFPS', ('Bildrate der Zwischensequenzen', 'Bildrate der Filmszenen', 'Bildrate in Filmen'), 'Fréquence des cinématiques',
                                        'Fotogramas de las cinemáticas', 'Frame rate dei filmati', 'Частота кадров в роликах', '动画FPS',
@@ -64,20 +65,20 @@ MENU = [
                                      'Соотношение сторон', ASPECT, ASPECT, ASPECT)),
 ]
 CORE = [
-    ('CORE_PC_AUTO', T('Auto', '自動', 'Automatisch', 'Auto', 'Automática', 'Automatica', 'Авто', ('自动', 'Auto'), ('自動', 'Auto'), '자동')),
+    ('CORE_PC_AUTO', T('Auto', '自動', 'Auto', 'Auto', 'Automática', 'Automatica', 'Авто', ('自动', 'Auto'), ('自動', 'Auto'), '자동')),
     ('CORE_PC_MONITOR', T('Monitor', ('モニター', 'Monitor'), 'Monitor', 'Moniteur', 'Monitor', 'Monitor', 'Монитор', ('显示器', 'Monitor'),
                           ('顯示器', 'Monitor'), ('모니터', 'Monitor'))),           # vsync = display: frames at the display's refresh
-    ('CORE_PC_TIMER', T('Timer', ('タイマー', 'Timer'), 'Timer', 'Minuterie', 'Temporizador', 'Timer', 'Таймер', ('计时器', 'Timer'),
+    ('CORE_PC_TIMER', T('Timer', ('タイマー', 'Timer'), 'Timer', 'Minuterie', 'Reloj', 'Timer', 'Таймер', ('计时器', 'Timer'),
                         ('計時器', 'Timer'), ('타이머', 'Timer'))),                  # vsync = clock: the program's 60 Hz clock
     ('CORE_PC_WINDOWED', T('Windowed', 'ウィンドウ', 'Fenster', 'Fenêtré', 'Ventana', 'Finestra', 'Окно', 'Windowed', 'Windowed', 'Windowed')),
-    ('CORE_PC_BORDERLESS', T('Borderless', ('ボーダーレス', '画面サイズのウィンドウ', FW), 'Randlos', 'Sans bordure', 'Sin bordes', 'Senza bordi', 'Без рамки',
-                             ('Borderless', FW), ('Borderless', FW), ('테두리 없음', FW))),
-    ('CORE_PC_FULLSCREEN', T('Fullscreen', 'Fullscreen', 'Vollbild', 'Plein écran', 'Pantalla completa', 'Schermo intero', 'Полный экран',
+    ('CORE_PC_BORDERLESS', T('Borderless', ('ボーダーレス', FL), 'Randlos', 'Sans cadre', 'Sin bordes', 'Senza bordi', 'Без рамки',
+                             ('Borderless', FL), ('Borderless', FL), ('테두리 없음', FL))),
+    ('CORE_PC_FULLSCREEN', T('Fullscreen', 'Fullscreen', 'Vollbild', 'Plein écran', 'Completa', 'Intero', 'Полный',
                              'Fullscreen', 'Fullscreen', '전체 화면')),
-    ('CORE_PC_DEFAULT', T('Default', '初期値', 'Standard', 'Par défaut', 'Predeterminado', 'Predefinito', 'По умолчанию', '标准', '標準', '기본')),
+    ('CORE_PC_DEFAULT', T('Default', '初期値', 'Standard', 'Par défaut', 'Estándar', 'Predefinito', 'Стандарт', '标准', '標準', '기본')),
     ('CORE_PC_KEEP', T('Original', 'オリジナル', 'Original', 'Original', 'Original', 'Originale', 'Исходное', '固定', '固定', '고정')),
     ('CORE_PC_STRETCH', T('Stretch', 'ストレッチ', 'Strecken', 'Étirer', 'Estirar', 'Allunga', 'Растянуть', '缩放', '縮放', '확대')),
-    ('CORE_PC_CUSTOM', T('Custom', 'カスタム', 'Eigene', 'Personnalisé', 'Personalizado', 'Personalizzato', 'Свой', '其他', '其他', '사용자 지정')),
+    ('CORE_PC_CUSTOM', T('Custom', 'カスタム', 'Eigene', 'Autre', 'Otro', 'Altro', 'Свой', '其他', '其他', '사용자 지정')),
     ('CORE_PC_FPS_30', ALL('30')), ('CORE_PC_FPS_60', ALL('60')),
     ('CORE_PC_AF_2', ALL('2x', '2')), ('CORE_PC_AF_4', ALL('4x', '4')), ('CORE_PC_AF_8', ALL('8x', '8')), ('CORE_PC_AF_16', ALL('16x', '16')),
     ('CORE_PC_LOD_M1', ALL('-1')), ('CORE_PC_LOD_M05', ALL('-0.5')), ('CORE_PC_LOD_0', ALL('0')), ('CORE_PC_LOD_P05', ALL('+0.5')),
@@ -166,18 +167,21 @@ def add_msgs(d, msgs, lang, font_of):
                         kern1[a][ka] += 1
     order = [font, 7] + sorted({f for f, _, _ in syms} - {font, 7})      # 7: the Latin font (the Chinese / Korean files' "PC")
 
-    def sym(ch):
-        return next((i for f in order for i, (sf, c, _) in enumerate(syms) if sf == f and c == ord(ch)), None)
+    def sym(ch, fonts=order):                               # another font's glyph has its own size: the last resort
+        return next((i for f in fonts for i, (sf, c, _) in enumerate(syms) if sf == f and c == ord(ch)), None)
     have = {h for h, _, _ in m['evs']}
     for name, texts in msgs:
         h = zlib.crc32(name.lower().encode()) & 0x7fffffff
         if h in have:
             continue
         cands = texts[lang] if isinstance(texts[lang], tuple) else (texts[lang],)
-        text = next((t for t in cands if all(ch == ' ' or sym(ch) is not None for ch in t)), cands[0])
+        text = next((t for k in (order[:2], order) for t in cands if all(ch == ' ' or sym(ch, k) is not None for ch in t)), cands[0])
         missing = ''.join(sorted({ch for ch in text if ch != ' ' and sym(ch) is None}))
+        other = ''.join(sorted({ch for ch in text if ch != ' ' and sym(ch) is not None and sym(ch, order[:2]) is None}))
         if missing:                                          # (nl / pt messcore: no digits) spelled without them
             bad.append('%s %r without %r' % (name, text, missing))
+        if other:
+            bad.append('%s %r: %r in another font' % (name, text, other))
         seq = [0x8001 if ch == ' ' else sym(ch) for ch in text if ch == ' ' or sym(ch) is not None] + [0x8000]
         us = []
         for a, b in zip(seq, seq[1:] + [None]):
@@ -258,8 +262,9 @@ def main(argv):
         f.seek(0)
         f.write(struct.pack('<4sIQIIII', b'pkzl', 0x20000, pos, count, toff, nsize, align) + table)
     os.replace(out + '.tmp', out)
-    for x in bad:
-        print('  not spelled in full (the file has no glyph for it): ' + x)
+    for n in sorted({x.split(':')[0] for x in bad}):          # (nl / pt messcore: no digits, not even the game's ON)
+        xs = [x.split(': ', 1)[1] for x in bad if x.startswith(n + ':')]
+        print('  %s: %d texts not as written (glyphs the file has not, or of another font): %s' % (n, len(xs), '; '.join(xs) if len(xs) < 4 else xs[0] + '; ...'))
     print('%s: %d bytes, %d text files with the PC settings rows\' text (%d labels, %d values)' % (out, pos, len(new), len(MENU), len(CORE)))
 
 

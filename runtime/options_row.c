@@ -5,7 +5,7 @@
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
  * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
- *   +0x000  Screen Display's row numbers (SCREEN_N): 18 .. 23, our rows 26 .. 32, 25, Restore Defaults (24)
+ *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 32, 25, Restore Defaults (24); +0xffc their count
  *   +0x100  the row table: the game's 25, row 25, rows 26 .. 32
  *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
  *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
@@ -33,14 +33,15 @@
 #define LANGUAGE    19                   /* Display Language: the list row copied */
 #define PC_ROW      25
 #define FIRST       26                   /* our list rows */
-#define SCREEN_N    15                   /* lifter/recomp_eh.py: Screen Display's row count */
 #define BANK_CORE   0x6b8d854fu          /* crc32("core") & 0x7fffffff: messcore.mcd (the menu bank: "menu") */
 #define PC_LABEL_ALT 0x5c8952aeu         /* PAUSEMENU_CATEGORY_002, the pause menu's "Options": when the label's text is missing */
 #define DECIDE_MASK 0x7100983930ULL      /* -> w0: the pad bits of "confirm" (A, or B with the buttons swapped) */
 #define TRIGGERED   0x7100983660ULL      /* (w0 bits) -> w0: pressed this frame */
 #define MENU_SOUND  0x710095a110ULL      /* (w0 sound): 2 confirm, 8 refused */
+#define LIST_BUILD  0x7100a32390ULL      /* (x0 screen): the page's rows filled again (what Restore Defaults does after its reset) */
 
 void pcmenu_open_game(void);             /* pcmenu.c */
+int pcmenu_is_open(void);
 const char *pcmenu_key_get(const char *key, int *pending);
 void pcmenu_key_set(const char *key, const char *val);
 int fs_rom_mod_serves(const char *rel, const char *mod);      /* nnfs.c */
@@ -76,13 +77,15 @@ static uint32_t msg_hash(const char *name, const char *suffix) {      /* crc32 o
 
 static void pc_row_label(Ctx *c) { c->x[0] = g_text_mod ? msg_hash("MENU_OPTION_LIST_PC_SETTINGS", NULL) : PC_LABEL_ALT; }
 /* method +0x08 (row, screen, row state, widget) -> 1 = the input is used; called every frame for the row under the cursor */
+static int g_panel;                      /* the panel was opened from the row: the rows show its changes when it closes */
 static void pc_row_decide(Ctx *c) {
-    uint64_t state = c->x[2], lr = c->x[30];
+    uint64_t screen = c->x[1], state = c->x[2], lr = c->x[30];
+    if (g_panel && !pcmenu_is_open()) { g_panel = 0; c->x[0] = screen; call_guest(c, LIST_BUILD); c->x[1] = screen; c->x[2] = state; }
     call_guest(c, DECIDE_MASK);
     call_guest(c, TRIGGERED);
     int on = (uint32_t)c->x[0] != 0, greyed = on && rd32(state + 0x28);
     if (on) { c->x[0] = greyed ? 8 : 2; call_guest(c, MENU_SOUND); }
-    if (on && !greyed) pcmenu_open_game();
+    if (on && !greyed) { pcmenu_open_game(); g_panel = 1; }
     c->x[0] = on && !greyed;
     c->x[30] = lr;
 }
@@ -120,15 +123,16 @@ void options_row_install(void) {
     for (int i = 0; i < 7; i++) known &= rd32(SCREEN_ROWS + 4 * i) == (uint32_t)(BRIGHTNESS + i);
     int n = 0;
     for (int i = 0; i < 6; i++) rows[n++] = (uint32_t)(BRIGHTNESS + i);
-    if (!known) {                            /* not known: Restore Defaults repeated, rather than rows that are not there */
-        while (n < SCREEN_N) rows[n++] = BRIGHTNESS + 6;
+    if (!known) {                            /* not known: the game's 7 */
+        rows[n++] = BRIGHTNESS + 6;
+        rows[0x3ff] = (uint32_t)n;
         printf("options row: the Options screen's rows are not the ones known: no PC settings rows\n");
         return;
     }
     g_text_mod = fs_rom_mod_serves("ui_000.pkz", "b3recomp-pc-settings");
     if (!g_text_mod)
         printf("options row: the rows' text is not there (mods/b3recomp-pc-settings: python scripts/setup.py --only text): "
-               "only the \"PC Settings\" row, called \"Options\"\n");
+               "only the \"PC Settings\" row (called \"Options\"), which opens the panel\n");
     uint64_t *mvt = (uint64_t *)(page + 0x310), *lmvt = (uint64_t *)(page + 0x370);      /* each after the table's two header words, 0 */
     for (int i = 0; i < 9; i++) mvt[i] = rd64(vt + 8 * (uint64_t)i);
     mvt[1] = hostfn_address("options row: PC Settings, decide", pc_row_decide);
@@ -152,5 +156,5 @@ void options_row_install(void) {
     }
     rows[n++] = PC_ROW;
     rows[n++] = BRIGHTNESS + 6;              /* Restore Defaults */
-    while (n < SCREEN_N) rows[n++] = BRIGHTNESS + 6;      /* (without the text: Restore Defaults also at the end) */
+    rows[0x3ff] = (uint32_t)n;
 }
