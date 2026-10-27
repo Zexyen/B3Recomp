@@ -1,0 +1,47 @@
+# Checks that wtbuild (tools/wtbuild, the Rust build) still writes exactly what the Python scripts it replaced write, and
+# that the lifted code compiles to the same objects without system headers. Runs on stand-in programs built from
+# tools/wtbuild/testdata (no game code): nothing of a dump is needed. The link step is checked by release.yml.
+name: wtbuild
+
+on:
+  pull_request:
+    paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
+            'runtime/*.h', 'tests/plat_hash_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld libssl-dev
+          pip install lz4 Pillow
+
+      - name: Build and unit tests
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      - name: Compare with the Python
+        run: |
+          python3 tools/wtbuild/compare_lifter.py 1000000 --seed 1
+          python3 tools/wtbuild/compare_lift.py --functions 2500 --seed 1
+          python3 tools/wtbuild/compare_tables.py
+          python3 tools/wtbuild/compare_mods.py 300 --seed 1
+          python3 tools/wtbuild/compare_text.py 20 --seed 1
+
+      - name: Freestanding compile (runtime/freestanding against the system's headers)
+        run: python3 tools/wtbuild/compare_freestanding.py --words 200000 --seed 1
+
+      - name: The runtime's own SHA-1 and MD5 (runtime/plat_hash.h) against OpenSSL
+        run: |
+          clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
+          "$RUNNER_TEMP/plat_hash_test"

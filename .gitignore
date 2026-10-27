@@ -5,6 +5,7 @@
 /build/
 /cache/
 /deps/
+/prebuilt/
 /userdata/
 /mods/
 /notes/

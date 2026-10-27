@@ -23,20 +23,31 @@ Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_
 
 ## Build (Linux)
 
-Needs Python 3.10+ with `lz4` and `Pillow` (`unicorn` for the self-test), clang + lld, SDL3, Vulkan headers and loader,
-glslang. Your dump: one folder with `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files) and
-`romfs/` (the `.pkz` archives and `movie/`), extracted with your own tools from your own console and game; this project
-decrypts nothing.
+A release needs nothing installed but a Vulkan driver and OpenGL (`libGL.so.1`), which every desktop distribution
+has: it brings its own compiler (clang + lld in `deps/llvm`), the runtime already built
+(`prebuilt/`, with the FFmpeg it uses) and the build tool. Your PC only translates and compiles the game's code, and
+that needs no system headers. The `deps` step checks all of it and names what is missing. Your dump: one folder with
+`exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files) and `romfs/` (the `.pkz` archives and
+`movie/`), extracted with your own tools from your own console and game; this project decrypts nothing.
+
+A checkout has no `prebuilt/`, so the link step builds the runtime too: that needs clang 19 or newer + lld and the
+development files of SDL3, Vulkan, glslang, FFmpeg and OpenGL. The same happens in a release whose `runtime/`
+you changed (`tools/wtbuild/README.md`, "Prebuilt runtime").
+
+The build is one program, `wtbuild` (`tools/wtbuild`, Rust). A release ships it built as `build/wtbuild`; in a checkout,
+build it once with cargo:
 
 ```
-python scripts/setup.py --dump <your dump folder>
+cargo build --release --manifest-path tools/wtbuild/Cargo.toml
+tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
 ```
 
 Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which does the same with progress on screen
 and then plays in its own window.
 
-Steps and options are as in B2recomp's [BUILDING.md](../B2recomp/BUILDING.md) (minus the Windows launcher, icon and
-game-specific patches). The `verify` step accepts only the build named in `scripts/setup.py`.
+The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
+are those of `scripts/setup.py`, which stays for the Windows toolchains and as the reference the Rust port is checked
+against (`tools/wtbuild/README.md`). The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
 
 ## Credits
 
