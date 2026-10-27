@@ -1,16 +1,27 @@
 mod lifter;
 mod nso;
+mod pchtxt;
+mod py;
 mod nvn_procs;
 mod sdklift;
 mod tables;
 mod util;
 
 use std::io::{BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("wtbuild: {}", msg);
     std::process::exit(1)
+}
+
+/// the checkout: --repo <dir>, else the current folder
+fn repo_root(args: &[String]) -> PathBuf {
+    args.iter()
+        .position(|a| a == "--repo")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|e| die(e)))
 }
 
 fn main() {
@@ -46,6 +57,29 @@ fn main() {
         }
         Some("tables") if args.len() == 2 => {
             tables::run(Path::new(&args[1]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+        }
+        Some("mods-tree") | Some("mods-apply") => {
+            // pchtxt.py tree <mods folder> [<main NSO>] / apply <mods folder> <main NSO> <in.elf> <out.elf>  [--ini=<mods.ini>]
+            let ini = args.iter().find_map(|a| a.strip_prefix("--ini=").map(PathBuf::from)).unwrap_or_else(|| repo_root(&args).join("config").join("mods.ini"));
+            let rest: Vec<&String> = args[1..].iter().enumerate().filter(|(i, a)| !a.starts_with("--") && args[*i] != "--repo").map(|(_, a)| a).collect();
+            let settings = pchtxt::read_settings(&ini);
+            let r = if args[0] == "mods-tree" && !rest.is_empty() {
+                pchtxt::tree(Path::new(rest[0]), rest.get(1).map(Path::new), &settings).map(|lines| println!("{}", lines.join("\n")))
+            } else if rest.len() == 4 {
+                pchtxt::load_mods(Path::new(rest[0]), Some(Path::new(rest[1])), &settings).and_then(|mods| {
+                    let mut elf = std::fs::read(rest[2]).unwrap_or_else(|e| die(e));
+                    let n = pchtxt::apply(&mut elf, &mods, &mut |l| println!("{}", l))?;
+                    std::fs::write(rest[3], &elf).unwrap_or_else(|e| die(e));
+                    println!("{} bytes patched -> {}", n, rest[3]);
+                    Ok(())
+                })
+            } else {
+                die("usage: see tools/wtbuild/README.md")
+            };
+            if let Err(pchtxt::ModError(e)) = r {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            }
         }
         _ => die("usage: see tools/wtbuild/README.md"),
     }
