@@ -5,7 +5,7 @@
 //! (runtime/wt_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
 //! made by `wtbuild runtime` in CI) and the player's PC only compiles the tables and links game.so, with no system
 //! headers or libraries (runtime/freestanding). A checkout without prebuilt/, or whose runtime sources changed since,
-//! builds the runtime here, against the system's SDL3, FFmpeg, glslang, OpenSSL and GL.
+//! builds the runtime here, against the system's SDL3, FFmpeg, glslang and GL.
 
 use crate::compile::{run, tail};
 use serde_json::{json, Value};
@@ -71,11 +71,10 @@ const HOST_SOURCES: &[&str] = &[
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
 /// the runtime reads (runtime/split)
 const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];
-/// SDL3, OpenGL, OpenSSL and FFmpeg (movies): the system's, or in CI the ones a release ships beside the runtime
+/// SDL3, OpenGL and FFmpeg (movies): the system's, or in CI the ones a release ships beside the runtime
 const LIBS: &[&str] = &[
     "-lSDL3",
     "-lGL",
-    "-lcrypto",
     "-ldl",
     "-lpthread",
     "-lm",

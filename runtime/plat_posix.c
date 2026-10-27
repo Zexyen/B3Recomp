@@ -6,7 +6,7 @@
 #endif
 #include "plat.h"
 #include "posix/win32_absent.h"
-#include <openssl/evp.h>
+#include "plat_hash.h"                        /* [witchtime] SHA-1 / MD5 of our own: no libcrypto */
 #include <dirent.h>
 #include <locale.h>
 #include <dlfcn.h>
@@ -927,30 +927,26 @@ HANDLE plat_fd_handle(int fd) {
     return &h;
 }
 
-/* ---------------------------------------------------------------- CryptoAPI subset: SHA-1 / MD5 (libcrypto), random (getrandom) */
+/* ---------------------------------------------------------------- CryptoAPI subset: SHA-1 / MD5 (plat_hash.h), random (getrandom) */
 BOOL CryptAcquireContextA(HCRYPTPROV *p, LPCSTR c, LPCSTR prov, DWORD type, DWORD flags) { (void)c; (void)prov; (void)type; (void)flags; *p = 1; return TRUE; }
 BOOL CryptReleaseContext(HCRYPTPROV p, DWORD flags) { (void)p; (void)flags; return TRUE; }
 BOOL CryptGenRandom(HCRYPTPROV p, DWORD n, BYTE *out) { (void)p; return SystemFunction036(out, n); }
 BOOL CryptCreateHash(HCRYPTPROV p, UINT alg, HCRYPTPROV key, DWORD flags, HCRYPTHASH *h) {
     (void)p; (void)key; (void)flags;
-    const EVP_MD *md = alg == CALG_SHA1 ? EVP_sha1() : alg == CALG_MD5 ? EVP_md5() : NULL;
-    EVP_MD_CTX *ctx = md ? EVP_MD_CTX_new() : NULL;
-    if (!ctx || !EVP_DigestInit_ex(ctx, md, NULL)) { EVP_MD_CTX_free(ctx); *h = 0; return FALSE; }
-    *h = (HCRYPTHASH)ctx;
+    PlatHash *ph = alg == CALG_SHA1 || alg == CALG_MD5 ? malloc(sizeof *ph) : NULL;
+    if (!ph) { *h = 0; return FALSE; }
+    ph_init(ph, alg == CALG_SHA1);
+    *h = (HCRYPTHASH)ph;
     return TRUE;
 }
-BOOL CryptHashData(HCRYPTHASH h, const BYTE *data, DWORD n, DWORD flags) { (void)flags; return EVP_DigestUpdate((EVP_MD_CTX *)h, data, n); }
+BOOL CryptHashData(HCRYPTHASH h, const BYTE *data, DWORD n, DWORD flags) { (void)flags; ph_update((PlatHash *)h, data, n); return TRUE; }
 BOOL CryptGetHashParam(HCRYPTHASH h, DWORD param, BYTE *out, DWORD *n, DWORD flags) {
     (void)flags;
-    EVP_MD_CTX *ctx = (EVP_MD_CTX *)h;
-    unsigned size = (unsigned)EVP_MD_CTX_get_size(ctx);
+    PlatHash *ph = (PlatHash *)h;
+    unsigned size = ph->sha1 ? 20 : 16;
     if (param != HP_HASHVAL || *n < size) { *n = size; return FALSE; }
-    EVP_MD_CTX *copy = EVP_MD_CTX_new();       /* CryptoAPI may be asked again; finish a copy */
-    unsigned got = 0;
-    BOOL ok = copy && EVP_MD_CTX_copy_ex(copy, ctx) && EVP_DigestFinal_ex(copy, out, &got);
-    EVP_MD_CTX_free(copy);
-    *n = got;
-    return ok;
+    *n = ph_final(ph, out);                    /* CryptoAPI may be asked again: ph_final leaves the state as it is */
+    return TRUE;
 }
-BOOL CryptDestroyHash(HCRYPTHASH h) { EVP_MD_CTX_free((EVP_MD_CTX *)h); return TRUE; }
+BOOL CryptDestroyHash(HCRYPTHASH h) { free((PlatHash *)h); return TRUE; }
 #endif

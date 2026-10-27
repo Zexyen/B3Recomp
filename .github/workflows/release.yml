@@ -53,7 +53,7 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
             libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
             libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
-            libgl-dev libssl-dev libvulkan-dev
+            libgl-dev libvulkan-dev
           python3 -m pip install --user lz4
 
       # the compiler players get: clang, lld and clang's own headers and builtins from LLVM's release, nothing else
@@ -143,7 +143,7 @@ jobs:
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
 
-      # the runtime, with the bundled clang, against the SDL3, FFmpeg and glslang above and the runner's GL and OpenSSL 3
+      # the runtime, with the bundled clang, against the SDL3, FFmpeg and glslang above and the runner's GL
       - name: Runtime
         run: |
           mkdir -p prebuilt

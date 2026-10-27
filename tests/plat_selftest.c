@@ -1,5 +1,5 @@
 /* Self-test of the Linux platform layer (runtime/plat.h, plat_posix.c, posix/win32_absent.h):
- *   clang -D_GNU_SOURCE -Iruntime/posix -Iruntime tests/plat_selftest.c runtime/plat_posix.c -lcrypto -o /tmp/plat_selftest && /tmp/plat_selftest */
+ *   clang -D_GNU_SOURCE -Iruntime/posix -Iruntime tests/plat_selftest.c runtime/plat_posix.c -o /tmp/plat_selftest && /tmp/plat_selftest */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>

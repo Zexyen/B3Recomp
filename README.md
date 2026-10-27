@@ -23,15 +23,15 @@ Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_
 
 ## Build (Linux)
 
-A release needs nothing installed but a Vulkan driver, OpenGL (`libGL.so.1`) and OpenSSL 3 (`libcrypto.so.3`), which
-every desktop distribution has: it brings its own compiler (clang + lld in `deps/llvm`), the runtime already built
+A release needs nothing installed but a Vulkan driver and OpenGL (`libGL.so.1`), which every desktop distribution
+has: it brings its own compiler (clang + lld in `deps/llvm`), the runtime already built
 (`prebuilt/`, with the FFmpeg it uses) and the build tool. Your PC only translates and compiles the game's code, and
 that needs no system headers. The `deps` step checks all of it and names what is missing. Your dump: one folder with
 `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files) and `romfs/` (the `.pkz` archives and
 `movie/`), extracted with your own tools from your own console and game; this project decrypts nothing.
 
 A checkout has no `prebuilt/`, so the link step builds the runtime too: that needs clang 19 or newer + lld and the
-development files of SDL3, Vulkan, glslang, FFmpeg, OpenSSL and OpenGL. The same happens in a release whose `runtime/`
+development files of SDL3, Vulkan, glslang, FFmpeg and OpenGL. The same happens in a release whose `runtime/`
 you changed (`tools/wtbuild/README.md`, "Prebuilt runtime").
 
 The build is one program, `wtbuild` (`tools/wtbuild`, Rust). A release ships it built as `build/wtbuild`; in a checkout,

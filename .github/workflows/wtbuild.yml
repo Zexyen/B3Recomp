@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'tests/plat_hash_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang lld
+          sudo apt-get install -y --no-install-recommends clang lld libssl-dev
           pip install lz4 Pillow
 
       - name: Build and unit tests
@@ -40,3 +40,8 @@ jobs:
 
       - name: Freestanding compile (runtime/freestanding against the system's headers)
         run: python3 tools/wtbuild/compare_freestanding.py --words 200000 --seed 1
+
+      - name: The runtime's own SHA-1 and MD5 (runtime/plat_hash.h) against OpenSSL
+        run: |
+          clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
+          "$RUNNER_TEMP/plat_hash_test"

@@ -64,7 +64,7 @@ if LINUX:
     HOST_FLAGS[HOST_FLAGS.index('-w')] = '-Wno-everything'
     HOST_FLAGS = ['-I', os.path.join(RT, 'posix')] + HOST_FLAGS + ['-D_GNU_SOURCE', '-fPIC', '-D__declspec(x)=', '-D__stdcall=', '-D__cdecl=',
                   '-Werror=implicit-function-declaration', '-Werror=incompatible-function-pointer-types', '-Werror=int-conversion']
-    LIBS = ['-lSDL3', '-lGL', '-lcrypto', '-ldl', '-lpthread', '-lm']
+    LIBS = ['-lSDL3', '-lGL', '-ldl', '-lpthread', '-lm']   # [witchtime] no -lcrypto: plat_hash.h
     LIBS += ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil']   # [witchtime] movies (nnmovie_mf.c's FFmpeg path)   # GL: the OpenGL back end is linked but Linux renders with Vulkan
 if MINGW:
     HOST_FLAGS += ['-D_WIN32_WINNT=0x0A00']               # mingw-w64 defaults to 0x601 (Windows 7); the Windows SDK to 0x0A00

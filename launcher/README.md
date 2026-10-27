@@ -24,7 +24,7 @@ The screens are in `launcher/ui` (RML and RCSS) and are read at start, so they c
 as `v0.1.0` publishes a release with `WitchTime-<tag>-linux-x86_64.tar.gz`: the repository source plus
 `build/witch-time`, the `libSDL3.so.0` it uses, `build/wtbuild` (the build tool, `tools/wtbuild`), the runtime built
 in CI (`prebuilt/`, with FFmpeg) and clang + lld (`deps/llvm`). Unpack it and run `./witch-time`. Building the game then
-needs only a Vulkan driver, OpenGL and OpenSSL 3 from the system ("Build (Linux)" in the main README). Running the
+needs only a Vulkan driver and OpenGL from the system ("Build (Linux)" in the main README). Running the
 workflow by hand only builds the archive and keeps it as a workflow artifact.
 
 ## How it works

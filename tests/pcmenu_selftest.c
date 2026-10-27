@@ -1,7 +1,7 @@
 /* Self-test of the PC settings menu without the game: graphics.ini rewritten in place (gfx_option_set, gfx_ini_get) and the
  * panel drawn at two window sizes (pcmenu.c), the pictures written as BMP into the folder given (for a look).
  *   clang -D_GNU_SOURCE -D'__declspec(x)=' -Iruntime/posix -Iruntime -Iruntime/gen tests/pcmenu_selftest.c runtime/gfx_options.c \
- *         runtime/plat_posix.c -lcrypto -lm -o /tmp/pcmenu_selftest && /tmp/pcmenu_selftest /tmp/pcmenu_test */
+ *         runtime/plat_posix.c -lm -o /tmp/pcmenu_selftest && /tmp/pcmenu_selftest /tmp/pcmenu_test */
 #include "../runtime/pcmenu.c"
 #include <assert.h>
 #include <sys/stat.h>

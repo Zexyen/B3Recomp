@@ -59,7 +59,7 @@ const ROMFS_MANIFEST: (usize, u64, &str) = (552, 15047510227, "4926189e02ad8f4a3
 const ENCRYPTED: [&str; 5] = [".nsp", ".xci", ".nca", ".nsz", ".xcz"];
 
 /// the system libraries the link step uses: (what, a header the runtime includes, linker flags)
-const SYSTEM_LIBS: [(&str, &str, &str); 6] = [
+const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
     ("SDL3", "SDL3/SDL.h", "-lSDL3"),
     ("Vulkan headers", "vulkan/vulkan.h", ""),
     (
@@ -68,7 +68,6 @@ const SYSTEM_LIBS: [(&str, &str, &str); 6] = [
         "-lglslang -lglslang-default-resource-limits",
     ),
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
-    ("OpenSSL", "openssl/evp.h", "-lcrypto"),
     ("OpenGL", "", "-lGL"),
 ];
 
@@ -414,7 +413,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
                     missing.join("; ")
                 )));
             }
-            say("  SDL3, Vulkan headers, glslang, FFmpeg, OpenSSL, OpenGL: ok");
+            say("  SDL3, Vulkan headers, glslang, FFmpeg, OpenGL: ok");
         }
     }
     cx.clang = clang;

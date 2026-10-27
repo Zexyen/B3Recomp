@@ -421,7 +421,7 @@ typedef struct { DWORD Characteristics, TimeDateStamp; WORD MajorVersion, MinorV
 #define IMAGE_DOS_SIGNATURE 0x5A4D
 #define IMAGE_NT_SIGNATURE 0x00004550u
 
-/* ---------------------------------------------------------------- CryptoAPI: SHA-1, MD5 and random bytes (plat_posix.c, OpenSSL's libcrypto) */
+/* ---------------------------------------------------------------- CryptoAPI: SHA-1, MD5 and random bytes (plat_posix.c, plat_hash.h) */
 typedef uintptr_t HCRYPTPROV, HCRYPTHASH;
 #define PROV_RSA_FULL 1u
 #define PROV_RSA_AES 24u
