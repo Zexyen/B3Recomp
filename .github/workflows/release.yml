@@ -1,0 +1,88 @@
+# Builds the Witch Time launcher for Linux and publishes it as a release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with the archive attached
+#   Actions > Release > Run workflow             -> builds only; the archive is kept as a workflow artifact
+#
+# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with build/witch-time and the
+# libSDL3.so.0 it was built with. Nothing derived from the game is in it: the player builds that from their own dump.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SDL_TAG: release-3.4.18
+
+jobs:
+  linux:
+    # the oldest supported runner, so the binary runs on older glibc too
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=WitchTime-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf libfreetype-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev
+
+      - name: SDL3
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl"
+          cmake -S "$RUNNER_TEMP/sdl" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" -DWT_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libb3host.so then shares
+          patchelf --set-rpath '$ORIGIN' build/witch-time
+
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          mkdir -p "dist/$name/build"
+          git archive HEAD | tar -x -C "dist/$name"
+          rm -rf "dist/$name/.github"
+          cp build/witch-time "dist/$name/build/"
+          cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
+          strip "dist/$name/build/witch-time" "dist/$name/build/libSDL3.so.0"
+          ln -s build/witch-time "dist/$name/witch-time"
+          LD_LIBRARY_PATH= ldd "dist/$name/build/witch-time" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Witch Time ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256

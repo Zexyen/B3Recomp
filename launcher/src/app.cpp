@@ -500,7 +500,7 @@ void App::refresh_title()
 		status_line = "Set up the build to play";
 	}
 	const char* driver = gpu ? SDL_GetGPUDeviceDriver(gpu) : nullptr;
-	footer_info = std::string(driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
+	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
 	model.DirtyVariable("built");
 	model.DirtyVariable("status_bad");

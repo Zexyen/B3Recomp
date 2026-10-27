@@ -18,6 +18,14 @@ cmake --build build/launcher
 The program is written to `build/witch-time` and finds the repository from its own folder (or from `WITCHTIME_REPO`).
 The screens are in `launcher/ui` (RML and RCSS) and are read at start, so they can be changed without rebuilding.
 
+## Releases
+
+`.github/workflows/release.yml` builds the launcher on Ubuntu 22.04 with SDL3 (`release-3.4.18`). Pushing a tag such
+as `v0.1.0` publishes a release with `WitchTime-<tag>-linux-x86_64.tar.gz`: the repository source plus
+`build/witch-time` and the `libSDL3.so.0` it uses. Unpack it and run `./witch-time`. Building the game still needs
+the tools under "Build (Linux)" in the main README. Running the workflow by hand only builds the archive and keeps it
+as a workflow artifact.
+
 ## How it works
 
 - **Build.** v1 still runs `python3 scripts/setup.py` underneath (Python 3.10+ is needed as before) and reads its
