@@ -1,7 +1,7 @@
 # Builds the Witch Time launcher for Linux and publishes it as a release.
 #
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with the archive attached
-#   Actions > Release > Run workflow             -> builds only; the archive is kept as a workflow artifact
+#   Actions > Release > Run workflow, or a PR    -> builds only; the archive is kept as a workflow artifact
 #
 # The archive is this repository's source (scripts, runtime, lifter, launcher screens) with build/witch-time and the
 # libSDL3.so.0 it was built with. Nothing derived from the game is in it: the player builds that from their own dump.
@@ -11,6 +11,9 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  # a pull request that changes the launcher builds the archive too, as a check
+  pull_request:
+    paths: ['launcher/**', '.github/workflows/release.yml']
 
 permissions:
   contents: write
