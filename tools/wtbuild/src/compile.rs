@@ -1,17 +1,17 @@
-//! The `compile` step (scripts/compile_main.py, Linux): build/gen_eh/*.c -> build/obj/*.obj with clang -O2, only the
+//! The `compile` step (scripts/compile_main.py): build/gen_eh/*.c -> build/obj/*.obj with clang -O2, only the
 //! files whose object is out of date. The up-to-date record (build/obj/_stamps.json, _funcs.h.prev) is the one
 //! compile_main.py keeps; compile_main.py's module comment has the rules. Unlike compile_main.py, the code is compiled
 //! against runtime/freestanding instead of the system's C library headers (the same objects, without a libc development
 //! package: tools/wtbuild/compare_freestanding.py), so the configuration hash differs and a build made by setup.py is
-//! compiled once more.
+//! compiled once more. On Windows the objects are MinGW ones (target.rs), for game.dll.
 
+use crate::target::{self, mtime_ns, Target};
 use crate::util::sha256_file;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,20 +24,21 @@ const OPTNONE: usize = 5000; // statements: a bigger function gets optnone (clan
 const TIME_LIMIT: u64 = 900; // seconds for one file at -O2
 const RULES: i64 = 1; // compile_main.py RULES
 
-/// clang for the Linux toolchain, found as scripts/toolchain.py finds it: $LLVM_ROOT/bin/clang, <repo>/deps/llvm/bin/clang,
-/// else clang on PATH
+/// clang, found as scripts/toolchain.py finds it: $LLVM_ROOT/bin/clang, <repo>/deps/llvm/bin/clang, else clang on PATH
+/// (clang.exe on Windows: the bundled one in a release, llvm-mingw's in a checkout)
 pub fn find_clang(repo: &Path) -> String {
     let deps = repo.join("deps").join("llvm");
+    let clang = target::exe("clang");
     for d in [std::env::var_os("LLVM_ROOT").map(PathBuf::from), Some(deps)].into_iter().flatten() {
         if d.as_os_str().is_empty() {
             continue;
         }
-        if d.join("bin").join("clang").exists() {
+        if d.join("bin").join(&clang).exists() {
             let d = if d.is_absolute() { d } else { std::env::current_dir().unwrap().join(d) };
-            return d.join("bin").join("clang").to_string_lossy().into_owned();
+            return d.join("bin").join(&clang).to_string_lossy().into_owned();
         }
     }
-    which("clang").unwrap_or_else(|| "clang".into())
+    which(&clang).unwrap_or(clang)
 }
 
 /// shutil.which
@@ -45,10 +46,8 @@ pub fn which(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let p = dir.join(name);
-        if let Ok(m) = fs::metadata(&p) {
-            if m.is_file() && m.mode() & 0o111 != 0 {
-                return Some(p.to_string_lossy().into_owned());
-            }
+        if target::is_program(&p) {
+            return Some(p.to_string_lossy().into_owned());
         }
     }
     None
@@ -145,6 +144,7 @@ fn dumps(j: &J) -> String {
 }
 
 struct Cfg {
+    target: Target,
     clang: String,
     gen: String,
     obj: PathBuf,
@@ -163,17 +163,17 @@ impl Cfg {
     /// everything an object depends on besides its C file and funcs.h, as compile_main.py config_hash
     fn hash(&self, names: &[String]) -> Result<(String, Vec<String>), String> {
         let st = fs::metadata(&self.clang).map_err(|e| format!("{}: {}", self.clang, e))?;
-        let mtime_ns = st.mtime() as i128 * 1_000_000_000 + st.mtime_nsec() as i128;
+        let mtime_ns = mtime_ns(&st);
         let flags: Vec<J> = self.flags.iter().map(|f| J::S(f)).collect();
         let head = J::L(vec![
             J::I(RULES as i128),
             J::S(&self.clang),
-            J::I(st.size() as i128),
+            J::I(st.len() as i128),
             J::I(mtime_ns),
             J::S(OPT),
             J::L(flags),
             J::I(OPTNONE as i128),
-            J::S("linux"),
+            J::S(self.target.name()),
         ]);
         let mut h = Sha256::new();
         h.update(dumps(&head).as_bytes());
@@ -249,10 +249,6 @@ fn is_word(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
 }
 
-fn mtime_ns(m: &fs::Metadata) -> i128 {
-    m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128
-}
-
 fn num(v: Option<&Value>) -> Option<i128> {
     v.and_then(|x| x.as_i64().map(|i| i as i128).or_else(|| x.as_u64().map(|u| u as i128)))
 }
@@ -268,11 +264,11 @@ fn up_to_date(c: &Cfg, name: &str, stamps: &mut Map<String, Value>, cfg: &str, g
         return false;
     }
     let Ok(st) = fs::metadata(c.src(name)) else { return false };
-    if (Some(st.size() as i128), Some(mtime_ns(&st))) != (num(s.get("size")), num(s.get("mtime"))) {
+    if (Some(st.len() as i128), Some(mtime_ns(&st))) != (num(s.get("size")), num(s.get("mtime"))) {
         if sha256_file(&c.src(name)).ok().as_deref() != s.get("src").and_then(|v| v.as_str()) {
             return false;
         }
-        s.insert("size".into(), json!(st.size()));
+        s.insert("size".into(), json!(st.len()));
         s.insert("mtime".into(), json!(mtime_ns(&st) as u64));
     }
     if let Some(g) = gone {
@@ -299,7 +295,7 @@ fn stamp(c: &Cfg, name: &str, cfg: &str) -> Value {
     let om = fs::metadata(c.obj_of(name)).ok();
     json!({
         "src": sha256_file(&c.src(name)).unwrap_or_default(),
-        "size": st.as_ref().map(|m| m.size()).unwrap_or(0),
+        "size": st.as_ref().map(|m| m.len()).unwrap_or(0),
         "mtime": st.as_ref().map(|m| mtime_ns(m) as u64).unwrap_or(0),
         "obj": om.as_ref().map(|m| mtime_ns(m) as u64).unwrap_or(0),
         "cfg": cfg,
@@ -392,33 +388,21 @@ fn compile_one(c: &Cfg, name: &str, env: &dyn Fn(&mut Command)) -> (Option<i32>,
 }
 
 /// compile_main.py <jobs>: Err(the failure) when a file did not compile
-pub fn run_step(repo: &str, clang: &str, jobs: usize, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
+pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
     let root = format!("{}/scripts/..", repo); // compile_main.py's ROOT, as its paths (and the stamps' hash) spell it
     let gen = format!("{}/build/gen_eh", root);
     let inc = format!("{}/runtime", root);
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
+    let mut flags = t.clang_flags();
+    flags.extend(["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from));
+    flags.extend(t.pic());
+    flags.extend([FORCE_INLINE, "-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     let c = Cfg {
+        target: t,
         clang: clang.to_string(),
         gen: gen.clone(),
         obj: Path::new(repo).join("build").join("obj"),
-        flags: [
-            "-ffp-contract=off",
-            "-w",
-            "-fno-strict-aliasing",
-            "-mcx16",
-            "-fPIC",
-            FORCE_INLINE,
-            "-nostdlibinc",
-            "-isystem",
-            &free,
-            "-I",
-            &inc,
-            "-I",
-            &gen,
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect(),
+        flags,
         inc,
     };
     fs::create_dir_all(&c.obj).map_err(|e| e.to_string())?;
@@ -468,7 +452,7 @@ pub fn run_step(repo: &str, clang: &str, jobs: usize, env: &(dyn Fn(&mut Command
         stamps.remove(n);
     }
     // biggest first: better packing (stable, as Python's sort)
-    stale.sort_by_key(|n| std::cmp::Reverse(fs::metadata(c.src(n)).map(|m| m.size()).unwrap_or(0)));
+    stale.sort_by_key(|n| std::cmp::Reverse(fs::metadata(c.src(n)).map(|m| m.len()).unwrap_or(0)));
     log(format!(
         "{} of {} C files to compile ({} up to date; headers: {}; {} prototype(s) removed or changed in funcs.h) after {:.1}s",
         stale.len(),
@@ -538,10 +522,11 @@ pub fn run_step(repo: &str, clang: &str, jobs: usize, env: &(dyn Fn(&mut Command
     }
     let _ = fs::write(c.obj.join("_report.txt"), rep);
     log(format!(
-        "compiled {} files in {:.0}s ({} up to date; TOOLCHAIN=linux); {} failed; {} slow/fallback (see {})",
+        "compiled {} files in {:.0}s ({} up to date; TOOLCHAIN={}); {} failed; {} slow/fallback (see {})",
         stale.len(),
         secs,
         names.len() - stale.len(),
+        t.name(),
         failed.len(),
         notes.len(),
         c.obj.join("_report.txt").display()

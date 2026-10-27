@@ -163,6 +163,13 @@ disassembly of all 44 host objects is identical before and after):
 - Build side (scripts/toolchain.py, `TOOLCHAIN=mingw`): `-D_WIN32_WINNT=0x0A00`, `-lopengl32 -lws2_32 -ladvapi32 -luuid`
   (what `#pragma comment(lib)` and MSVC's default `uuid.lib` give the MSVC build), mingw link options.
 
+## Windows split (2026-10-27)
+The Windows build follows the Linux one: the runtime is prebuilt as `witch-time-game.exe` (llvm-mingw) and the player
+links `game.dll` (`tools/wtbuild/README.md`, "Windows"). `game_shim.c` / `gamedll.c`: `GameHost` gains `sdk_dispatch`
+and `sdk_host_call`, so `game.dll` calls them through the host table instead of importing them from the program, and
+under `WT_GAME_NOSTDLIB` defines `DllMainCRTStartup` (it links without the C runtime's startup). `pcmenu.c` includes
+`stdint.h` and `nvn_gl.c` `time.h` (mingw-w64's headers do not bring them in). `win32/`: the UTF-8 code page manifest.
+
 ## Provenance of two inherited tables (2026-10-16, notes/release-audit.md section 5)
 Both are marked `[Recomps#1]` in the code; the values the game sees are unchanged (checked value by value).
 - `nncxxlib.c` `classic_table` (`std::ctype<char>::classic_table()`): upstream's 256 values copied from the SDK are replaced

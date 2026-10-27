@@ -5,18 +5,15 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
+#include <SDL3/SDL_timer.h>
+#ifndef _WIN32
+#include <fcntl.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
+#endif
 
-double now_seconds()
-{
-	timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return double(ts.tv_sec) + ts.tv_nsec * 1e-9;
-}
+double now_seconds() { return double(SDL_GetTicksNS()) * 1e-9; }
 
 const std::vector<std::string>& BuildRunner::steps()
 {
@@ -37,6 +34,13 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 	partial.clear();
 	compiled = to_compile = 0;
 	exit_code = 0;
+#ifdef _WIN32
+	set_env("PYTHONUNBUFFERED", "1", true);
+	std::vector<std::string> argv = build_command(repo, "setup");
+	argv.insert(argv.end(), args.begin(), args.end());
+	if (!child.start(argv, repo))
+		return false;
+#else
 	int p[2];
 	if (pipe(p))
 		return false;
@@ -69,14 +73,19 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 	}
 	fd = p[0];
 	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+#endif
 	started_at = now_seconds();
 	return true;
 }
 
 void BuildRunner::stop()
 {
+#ifdef _WIN32
+	child.stop();                            // the build's job: wtbuild and the compilers it started
+#else
 	if (pid > 0)
 		kill(-pid, SIGTERM);
+#endif
 }
 
 void BuildRunner::line(const std::string& l)
@@ -137,15 +146,21 @@ void BuildRunner::read_compile_log()
 
 bool BuildRunner::poll()
 {
-	if (pid <= 0)
+	if (!running())
 		return false;
 	bool changed = false;
+#ifdef _WIN32
+	std::string got = child.read_available();
+	partial += got;
+	changed = !got.empty();
+#else
 	char buf[4096];
 	for (ssize_t n; (n = read(fd, buf, sizeof buf)) > 0;)
 	{
 		partial.append(buf, size_t(n));
 		changed = true;
 	}
+#endif
 	for (size_t nl; (nl = partial.find('\n')) != std::string::npos;)
 	{
 		std::string l = partial.substr(0, nl);
@@ -161,6 +176,27 @@ bool BuildRunner::poll()
 		read_compile_log();
 		changed |= compiled != before;
 	}
+#ifdef _WIN32
+	if (int code = 0; child.finished(&code))
+	{
+		partial += child.read_available();
+		for (size_t nl; (nl = partial.find('\n')) != std::string::npos;)
+		{
+			std::string l = partial.substr(0, nl);
+			if (!l.empty() && l.back() == '\r')
+				l.pop_back();
+			partial.erase(0, nl + 1);
+			line(l);
+		}
+		if (!partial.empty())
+			line(partial);
+		partial.clear();
+		child.reset();
+		exit_code = code;
+		current.clear();
+		changed = true;
+	}
+#else
 	int status = 0;
 	if (waitpid(pid, &status, WNOHANG) == pid)
 	{
@@ -176,5 +212,6 @@ bool BuildRunner::poll()
 		current.clear();
 		changed = true;
 	}
+#endif
 	return changed;
 }

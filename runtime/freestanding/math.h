@@ -38,9 +38,18 @@ extern float fmodf (float __x, float __y) __attribute__ ((__nothrow__ ));
 extern float remainderf (float __x, float __y) __attribute__ ((__nothrow__ ));
 extern float nextafterf (float __x, float __y) __attribute__ ((__nothrow__ ));
 extern float fmaf (float __x, float __y, float __z) __attribute__ ((__nothrow__ ));
+#ifdef _WIN32
+/* Windows: the UCRT has no ldexpf and frexpf (mingw-w64 has its own); made from the double ones, which is exact */
+static __inline__ float ldexpf (float __x, int __exponent) { return (float) ldexp (__x, __exponent); }
+#else
 extern float ldexpf (float __x, int __exponent) __attribute__ ((__nothrow__ ));
+#endif
 extern float scalbnf (float __x, int __n) __attribute__ ((__nothrow__ ));
+#ifdef _WIN32
+static __inline__ float frexpf (float __x, int *__exponent) { return (float) frexp (__x, __exponent); }
+#else
 extern float frexpf (float __x, int *__exponent) __attribute__ ((__nothrow__ ));
+#endif
 extern long int lrintf (float __x) __attribute__ ((__nothrow__ ));
 extern long long int llrintf (float __x) __attribute__ ((__nothrow__ ));
 extern long int lroundf (float __x) __attribute__ ((__nothrow__ ));

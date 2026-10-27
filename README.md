@@ -46,8 +46,26 @@ Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which d
 and then plays in its own window.
 
 The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
-are those of `scripts/setup.py`, which stays for the Windows toolchains and as the reference the Rust port is checked
+are those of `scripts/setup.py`, which stays as the reference the Rust port is checked
 against (`tools/wtbuild/README.md`). The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
+
+## Build (Windows)
+
+Windows 10 or 11, 64-bit. A release (`WitchTime-<version>-windows-x86_64.zip`) needs nothing installed but a Vulkan driver: it
+brings LLVM's own clang + lld (`deps\llvm`), the runtime already built (`prebuilt\`: `witch-time-game.exe`,
+`SDL3.dll`, `ssbu_glslang.dll`) and `build\wtbuild.exe`. Unzip it, run `witch-time.exe` and pick your dump folder, or:
+
+```
+build\wtbuild.exe setup --dump <your dump folder>
+```
+
+Movies play through Media Foundation, which Windows has; the "N" editions need the Media Feature Pack, and the `deps`
+step says so when it is missing. The game's `romfs` is linked into `build\` with a directory junction, which needs no
+administrator rights. The game runs as `build\witch-time-game.exe`, with its own window; the launcher waits for it.
+
+Building the runtime yourself (a checkout, or a changed `runtime\`) needs llvm-mingw and the MinGW builds of SDL3,
+glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-builds all of it on Linux
+(`.github/workflows/release.yml`, job `windows`): `wtbuild runtime --target windows --out prebuilt`.
 
 ## Credits
 

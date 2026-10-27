@@ -13,3 +13,8 @@ headers as before.
 
 `jmp_buf` is glibc's x86-64 layout (200 bytes): `SdkJmpRec` in `sdklift.h` holds one and is shared between
 `sdklift_gen.c` (built here) and `sdklift_rt.c` (built against glibc), and the comparison checks its size too.
+
+On Windows (`_WIN32`, the MinGW target `wtbuild` gives clang there) the headers follow mingw-w64's UCRT ones instead:
+`jmp_buf` is its 256-byte layout and `setjmp` expands as mingw-w64's does (the UCRT's `_setjmp` with the frame from
+`__builtin_sponentry`), and `ldexpf` / `frexpf`, which the UCRT lacks, are inline over the double versions as mingw-w64
+gives them. `compare_freestanding.py --target windows` checks those objects against mingw-w64's headers.

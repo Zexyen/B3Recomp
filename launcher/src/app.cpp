@@ -1,5 +1,6 @@
 #include "app.h"
 #include "game_host.h"
+#include "platform.h"
 #include "ui_render.h"
 #include <algorithm>
 #include <cmath>
@@ -271,8 +272,8 @@ void App::bind_model()
 	c.BindEventCallback("open_mods", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		SetupState st = SetupState::read(paths.build);
 		std::string dir = st.mods_dir.empty() ? paths.mods : st.mods_dir;
-		mkdir(dir.c_str(), 0755);
-		SDL_OpenURL(("file://" + dir).c_str());
+		make_dir(dir);
+		SDL_OpenURL(((dir[0] == '/' ? "file://" : "file:///") + dir).c_str());   // file:///C:/... on Windows
 	});
 	c.BindEventCallback("toggle_mod", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) { toggle_mod(arg_int(a, 0)); });
 	c.BindEventCallback("setting", [this, arg_int](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
@@ -475,7 +476,7 @@ void App::go(const Rml::String& to)
 
 void App::refresh_title()
 {
-	built = file_exists(paths.build + "/witch-time-game") && file_exists(paths.build + "/game.so") &&
+	built = file_exists(paths.build + "/" + GAME_EXE) && file_exists(paths.build + "/" + GAME_LIB) &&
 		file_exists(paths.repo + "/targets/exefs/main.elf");
 	status_bad = false;
 	if (returned_code > 0)
@@ -488,7 +489,7 @@ void App::refresh_title()
 	{
 		struct stat st;
 		char when[64] = "";
-		if (stat((paths.build + "/game.so").c_str(), &st) == 0)
+		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
 			std::strftime(when, sizeof when, "%e %b, %H:%M", std::localtime(&st.st_mtime));
 		std::string scale = ini_get(paths.config + "/graphics.ini", "", "resolution_scale", "1.0");
 		status_title = returned_code == 0 ? "WELCOME BACK" : "READY";
