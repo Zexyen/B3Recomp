@@ -579,9 +579,9 @@ pub fn apply(elf: &mut [u8], mods: &[Mod], log: &mut dyn FnMut(String)) -> R<usi
             let seg = segs.iter().find(|s| s.0 <= *off && off + n <= s.0 + s.2);
             let (true, Some(seg)) = (*off >= 0, seg) else {
                 return err(format!(
-                    "{}: image offset 0x{:x} (+{} bytes) is outside the program's code and data in the file (offset_shift wrong, or the patch is for another program)",
+                    "{}: image offset 0x{} (+{} bytes) is outside the program's code and data in the file (offset_shift wrong, or the patch is for another program)",
                     wh,
-                    off,
+                    crate::util::hx(*off),
                     data.len()
                 ));
             };
