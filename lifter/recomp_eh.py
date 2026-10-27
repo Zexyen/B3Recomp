@@ -215,11 +215,13 @@ def lift_function(env, entry):
 # cutscene_fps = 60 a 1 becomes 0; 0x7100c1f600: the per-frame clock, whose fixed step is then halved (real time).
 HOST_OVERRIDES = {0x7100b382c0: 'morton_split32', 0x7100d02de0: 'fps_mode_set', 0x7100c1f600: 'frame_clock'}
 
-# [b3recomp] A "PC Settings" row on the Options screen's Screen Display page (runtime/options_row.c). The page's row
-# numbers are a 7-entry table in main's read-only data (0x71018511bc, read by 13 adrp + add pairs of the Options screen's
-# code) and its row count is 7 in two places (cursor wrap 0x7100a31fe8, list build 0x7100a32430). The pairs read an
-# 8-entry table on the page the runtime maps at OPTX_PAGE instead, and both counts become 8. Applied through recomp.PATCHES
-# (word() returns the patched words; each original word is checked against the binary).
+# [b3recomp] PC settings rows on the Options screen's Screen Display page (runtime/options_row.c). The page's row numbers
+# are a 7-entry table in main's read-only data (0x71018511bc, read by 13 adrp + add pairs of the Options screen's code) and
+# its row count is 7 in two places (cursor wrap 0x7100a31fe8, list build 0x7100a32430); the 25 row objects are a table at
+# 0x7101c2b1a8 (read by 9 adrp + add pairs). The pairs read Screen Display's table and a longer row table on the page the
+# runtime maps at OPTX_PAGE instead; the list build reads the page's count from the page (+0xffc, at most 24: the screen's
+# row states), the cursor wrap the count the list was given. Applied through recomp.PATCHES (word() returns the patched
+# words; each original word is checked against the binary).
 OPTX_PAGE = 0x7105a00000          # runtime/options_row.c OPTX_BASE: the page after main's image
 
 
@@ -237,8 +239,16 @@ def _options_row_patches():
                  (0x7100a321e0, 9), (0x7100a322fc, 9), (0x7100a32438, 28)]:      # the add of each pair; its adrp is just before
         want[a - 4] = (adrp(r, a - 4, 0x7101851000), adrp(r, a - 4, OPTX_PAGE))
         want[a] = (add(r, 0x1bc), add(r, 0))
-    want[0x7100a31fe8] = (movz_w(21, 7), movz_w(21, 8))
-    want[0x7100a32430] = (movz_w(20, 7), movz_w(20, 8))
+    for a, r in [(0x7100a30dc0, 10), (0x7100a318b8, 10), (0x7100a31a0c, 10), (0x7100a31b58, 10), (0x7100a31be8, 10),
+                 (0x7100a31d20, 10), (0x7100a31e44, 10), (0x7100a31f10, 23), (0x7100a3245c, 24)]:     # the row table: adrp, add
+        want[a] = (adrp(r, a, 0x7101c2b000), adrp(r, a, OPTX_PAGE))
+        want[a + 4] = (add(r, 0x1a8), add(r, 0x100))
+    def ldr_w(rt, rn, off):
+        return 0xb9400000 | off // 4 << 10 | rn << 5 | rt
+    want[0x7100a31fe8] = (movz_w(21, 7), ldr_w(21, 20, 0x28bc))      # x20 = the list: its row count, as the list build set it
+    want[0x7100a32430] = (movz_w(20, 7), adrp(28, 0x7100a32430, OPTX_PAGE))      # movz w20, 7; adrp x28; add x28 ->
+    want[0x7100a32434] = (want[0x7100a32434][0], ldr_w(20, 28, 0xffc))           # adrp x28; ldr w20, [x28, #0xffc]; add x28
+    want[0x7100a32438] = (want[0x7100a32438][0], add(28, 0))
     for a, (old, new) in want.items():
         have = struct.unpack_from('<I', IMG, FILE_OFF + a - BASE)[0]
         if have != old:

@@ -340,10 +340,9 @@ int pcmenu_take_work(void) { InterlockedExchange(&g_job, 0); return (int)Interlo
 
 /* ---------------------------------------------------------------- changes */
 static void add_work(LONG bit) { LONG o; do o = g_work; while (InterlockedCompareExchange(&g_work, o | bit, o) != o); }
-static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
+static void set_value(int i, int k) {                    /* value k of row i: written, and applied where it can be */
     const Row *r = &k_rows[i];
-    int n = row_count(i), k = g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir;
-    if (g_lock_why[i] || k < 0 || k >= n || k == g_cur[i]) return;
+    if (g_lock_why[i] || k < 0 || k >= row_count(i) || k == g_cur[i]) return;
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
     else ok = gfx_option_set(r->key, r->val[k]);
@@ -357,6 +356,35 @@ static void change(int i, int dir, int wrap) {             /* wrap 0 (left / rig
     default: break;
     }
     printf("pcmenu: %s = %s (%s)\n", r->key, r->val[k], row_restart(i) ? "applies at the next start" : "applied");
+}
+static void change(int i, int dir, int wrap) {             /* wrap 0 (left / right): stops at the ends; 1 (A, a click): round */
+    int n = row_count(i);
+    set_value(i, g_cur[i] < 0 ? (dir > 0 ? 0 : n - 1) : wrap ? (g_cur[i] + dir + n) % n : g_cur[i] + dir);
+}
+/* options_row.c, the game's main thread: the rows by key for the game's own Options screen. The value as the panel has it
+ * (one of the row's spellings, else the file's text as it is) and whether it waits for the next start; a set goes through
+ * set_value, so the file and what applies at once are the panel's. */
+static int row_of(const char *key) { for (int i = 0; i < NROW; i++) if (!strcmp(k_rows[i].key, key)) return i; return -1; }
+const char *pcmenu_key_get(const char *key, int *pending) {
+    int i = row_of(key);
+    if (i < 0) return "";
+    AcquireSRWLockExclusive(&g_lock);
+    if (!g_inited) menu_init();
+    const char *v = g_cur[i] >= 0 ? k_rows[i].val[g_cur[i]] : g_raw[i];
+    if (pending) *pending = row_restart(i);
+    ReleaseSRWLockExclusive(&g_lock);
+    return v;
+}
+void pcmenu_key_set(const char *key, const char *val) {
+    int i = row_of(key);
+    if (i < 0) return;
+    AcquireSRWLockExclusive(&g_lock);
+    if (!g_inited) menu_init();
+    int was = g_cur[i];
+    set_value(i, find_val(i, val));
+    if (g_cur[i] != was) g_ver++;
+    else if (g_lock_why[i]) printf("pcmenu: %s is set by %s: not changed\n", key, g_lock_why[i] == 1 ? k_rows[i].env : "profile = low");
+    ReleaseSRWLockExclusive(&g_lock);
 }
 
 /* ---------------------------------------------------------------- the menu's thread */
@@ -425,10 +453,8 @@ static void menu_open(const char *why) {
     g_hint_until = 0;
     if (g_log < 0) g_log = getenv("SSBU_PCMENU_LOG") && atoi(getenv("SSBU_PCMENU_LOG"));
     AcquireSRWLockExclusive(&g_lock);
-    if (!g_inited) {
-        if (!stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
-        menu_init();
-    }
+    if (!g_font.data && !stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
+    if (!g_inited) menu_init();
     g_ver++;
     ReleaseSRWLockExclusive(&g_lock);
     InterlockedExchange(&g_guest_frozen, 1);               /* the game stops at its next SDK call (hostrt.c) */
