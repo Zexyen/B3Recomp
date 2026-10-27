@@ -1,15 +1,26 @@
-/* [b3recomp] "PC Settings": a row of the game's own Options screen (page Screen Display) that opens the PC settings panel
- * (pcmenu.c). docs/RE_NOTES.md section 8 has the Options screen as found in main.
+/* [b3recomp] PC settings in the game's own Options screen (page Screen Display): seven rows of the game's own kind that show
+ * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
+ * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
- * The screen's 25 rows are objects behind a table of pointers (ROWS; slot 25 is 0); a page shows rows by number, Screen
- * Display the 7 of a table in main's read-only data. The lift reads that page's numbers from OPTX_BASE instead, 8 of them
- * (lifter/recomp_eh.py, _options_row_patches); here: that page, mapped after main's image, holding the 7 numbers with row 25
- * before Restore Defaults, and row 25: an object whose method table is the Brightness row's (an action row: a label, the
- * Confirm / Back button guide, no value, nothing to restore) with two methods of ours: the label (the message
- * MENU_OPTION_LIST_PC_SETTINGS, added to the game's text by scripts/pc_settings_mod.py; without that mod the pause menu's
- * "Options") and "decide", which opens the panel where the Brightness row opens its screen. */
+ * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
+ * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
+ * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
+ *   +0x000  Screen Display's row numbers (SCREEN_N): 18 .. 23, our rows 26 .. 32, 25, Restore Defaults (24)
+ *   +0x100  the row table: the game's 25, row 25, rows 26 .. 32
+ *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
+ *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
+ *           which opens the panel where the Brightness row opens its screen
+ *   +0x360  rows 26 .. 32's method table: the Display Language row's (a list row: left / right go round its values, with
+ *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
+ *   +0x400  the row objects (8 bytes: the method table)
+ * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
+ * scripts/pc_settings_mod.py; the names here are theirs (the internal resolution's label says it applies at the next start). A value of graphics.ini that is none of a row's is "Custom" (one
+ * more value, until left / right leave it). The game's Restore Defaults does not touch these rows (its reset is the game's
+ * own settings); the list row's reset button sets the row's default. Values change through pcmenu.c (pcmenu_key_set), so
+ * the file is written and the live keys applied as from the panel. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <windows.h>
 #include "plat.h"
 #include "runtime.h"
@@ -19,23 +30,51 @@
 #define ROWS        0x7101c2b1a8ULL      /* the Options screen's row objects */
 #define SCREEN_ROWS 0x71018511bcULL      /* Screen Display's 7 row numbers (18 .. 24) in main */
 #define BRIGHTNESS  18
+#define LANGUAGE    19                   /* Display Language: the list row copied */
 #define PC_ROW      25
-#define PC_LABEL    0x1a9a646fu          /* crc32("menu_option_list_pc_settings") & 0x7fffffff, scripts/pc_settings_mod.py */
+#define FIRST       26                   /* our list rows */
+#define SCREEN_N    15                   /* lifter/recomp_eh.py: Screen Display's row count */
+#define BANK_CORE   0x6b8d854fu          /* crc32("core") & 0x7fffffff: messcore.mcd (the menu bank: "menu") */
 #define PC_LABEL_ALT 0x5c8952aeu         /* PAUSEMENU_CATEGORY_002, the pause menu's "Options": when the label's text is missing */
 #define DECIDE_MASK 0x7100983930ULL      /* -> w0: the pad bits of "confirm" (A, or B with the buttons swapped) */
 #define TRIGGERED   0x7100983660ULL      /* (w0 bits) -> w0: pressed this frame */
 #define MENU_SOUND  0x710095a110ULL      /* (w0 sound): 2 confirm, 8 refused */
 
 void pcmenu_open_game(void);             /* pcmenu.c */
+const char *pcmenu_key_get(const char *key, int *pending);
+void pcmenu_key_set(const char *key, const char *val);
 int fs_rom_mod_serves(const char *rel, const char *mod);      /* nnfs.c */
 
-static void pc_row_label(Ctx *c) {
-    static int text = -1;
-    if (text < 0 && !(text = fs_rom_mod_serves("ui_000.pkz", "b3recomp-pc-settings")))
-        printf("options row: the label's text is not there (mods/b3recomp-pc-settings: python scripts/setup.py --only text): "
-               "the row is called \"Options\"\n");
-    c->x[0] = text ? PC_LABEL : PC_LABEL_ALT;
+typedef struct {
+    const char *key, *label, *val[6], *text[6];      /* text: the value's message */
+    int dflt;
+} PcRow;
+static const PcRow k_pc[] = {
+    {"resolution_scale", "MENU_OPTION_LIST_PC_RES", {"1.0", "1.2", "1.6", "2.4"}, {"CORE_PC_RES_10", "CORE_PC_RES_12", "CORE_PC_RES_16", "CORE_PC_RES_24"}, 0},
+    {"cutscene_fps", "MENU_OPTION_LIST_PC_CUTSCENE", {"30", "60"}, {"CORE_PC_FPS_30", "CORE_PC_FPS_60"}, 0},
+    {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},
+    {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
+    {"anisotropic_filtering", "MENU_OPTION_LIST_PC_ANISO", {"game", "2", "4", "8", "16"}, {"CORE_PC_DEFAULT", "CORE_PC_AF_2", "CORE_PC_AF_4", "CORE_PC_AF_8", "CORE_PC_AF_16"}, 0},
+    {"texture_lod_bias", "MENU_OPTION_LIST_PC_TEXTURE", {"-1", "-0.5", "0", "0.5", "1"}, {"CORE_PC_LOD_M1", "CORE_PC_LOD_M05", "CORE_PC_LOD_0", "CORE_PC_LOD_P05", "CORE_PC_LOD_P1"}, 2},
+    {"aspect", "MENU_OPTION_LIST_PC_ASPECT", {"keep", "stretch"}, {"CORE_PC_KEEP", "CORE_PC_STRETCH"}, 0},
+};
+#define NPC ((int)(sizeof k_pc / sizeof k_pc[0]))
+static uint32_t g_label[NPC], g_text[NPC][6], g_custom;
+static int g_text_mod;
+static uint64_t g_obj0;                  /* the guest address of row 26's object */
+
+static uint32_t msg_hash(const char *name, const char *suffix) {      /* crc32 of the lower-case name, as the MCD's events */
+    char s[64];
+    uint32_t c = ~0u;
+    snprintf(s, sizeof s, "%s%s", name, suffix ? suffix : "");
+    for (const char *p = s; *p; p++) {
+        c ^= (uint8_t)(*p >= 'A' && *p <= 'Z' ? *p + 32 : *p);
+        for (int k = 0; k < 8; k++) c = c >> 1 ^ (0xedb88320u & -(c & 1));
+    }
+    return ~c & 0x7fffffff;
 }
+
+static void pc_row_label(Ctx *c) { c->x[0] = g_text_mod ? msg_hash("MENU_OPTION_LIST_PC_SETTINGS", NULL) : PC_LABEL_ALT; }
 /* method +0x08 (row, screen, row state, widget) -> 1 = the input is used; called every frame for the row under the cursor */
 static void pc_row_decide(Ctx *c) {
     uint64_t state = c->x[2], lr = c->x[30];
@@ -48,21 +87,70 @@ static void pc_row_decide(Ctx *c) {
     c->x[30] = lr;
 }
 
+/* the list rows' value methods; x0 = the row object */
+static int nval(int r) { int n = 0; while (n < 6 && k_pc[r].val[n]) n++; return n; }
+static int row_of(Ctx *c) { return (int)((c->x[0] - g_obj0) / 8); }
+static int cur_val(int r) {                              /* the value's index; nval(r) = "Custom" */
+    const char *v = pcmenu_key_get(k_pc[r].key, NULL);
+    int n = nval(r), k = 0;
+    while (k < n && strcmp(k_pc[r].val[k], v)) k++;
+    return k;
+}
+static void pc_list_label(Ctx *c) { c->x[0] = g_label[row_of(c)]; }                                  /* +0x38 */
+static void pc_list_get(Ctx *c) { c->x[0] = (uint32_t)cur_val(row_of(c)); }                  /* +0x40 */
+static void pc_list_set(Ctx *c) {                                                                 /* +0x48 (w1 value) */
+    int r = row_of(c), k = (int)(uint32_t)c->x[1];
+    if (k >= 0 && k < nval(r)) pcmenu_key_set(k_pc[r].key, k_pc[r].val[k]);
+}
+static void pc_list_bank(Ctx *c) { c->x[0] = BANK_CORE; }                                         /* +0x50 */
+static void pc_list_text(Ctx *c) { int r = row_of(c), k = (int)(uint32_t)c->x[1]; c->x[0] = k >= 0 && k < nval(r) ? g_text[r][k] : g_custom; }      /* +0x58 (w1 value) */
+static void pc_list_count(Ctx *c) { int r = row_of(c); c->x[0] = (uint32_t)(nval(r) + (cur_val(r) == nval(r))); }      /* +0x60 */
+static void pc_list_reset(Ctx *c) { int r = row_of(c); pcmenu_key_set(k_pc[r].key, k_pc[r].val[k_pc[r].dflt]); }        /* +0x68 */
+
 void options_row_install(void) {
     uint8_t *page = plat_map_fixed(OPTX_BASE, 0x1000);
     if (!page) { fprintf(stderr, "options row: cannot map 0x%llx (the Options screen reads its Screen Display rows there)\n", OPTX_BASE); exit(1); }
     uint32_t *rows = (uint32_t *)page;
-    uint64_t bright = rd64(ROWS + 8 * BRIGHTNESS), vt = bright ? rd64(bright) : 0;
-    int known = rd64(ROWS + 8 * PC_ROW) == 0 && vt && rd64(vt + 0x38) == GUEST_BASE + 0xa72c2c;    /* Brightness's label method */
+    uint64_t *table = (uint64_t *)(page + 0x100), *obj = (uint64_t *)(page + 0x400);
+    for (int i = 0; i < PC_ROW; i++) table[i] = rd64(ROWS + 8 * (uint64_t)i);
+    uint64_t bright = table[BRIGHTNESS], vt = bright ? rd64(bright) : 0, lang = table[LANGUAGE], lvt = lang ? rd64(lang) : 0;
+    int known = rd64(ROWS + 8 * PC_ROW) == 0 && vt && rd64(vt + 0x38) == GUEST_BASE + 0xa72c2c       /* Brightness's label method */
+             && lvt && rd64(lvt) == GUEST_BASE + 0xa725ac && rd64(lvt + 0x10) == GUEST_BASE + 0xa72640      /* a list row: fill, decide */
+             && rd64(lvt + 0x50) == GUEST_BASE + 0xa72ce0;                                            /* its bank method */
     for (int i = 0; i < 7; i++) known &= rd32(SCREEN_ROWS + 4 * i) == (uint32_t)(BRIGHTNESS + i);
-    for (int i = 0; i < 7; i++) rows[i] = (uint32_t)(BRIGHTNESS + i);
-    rows[7] = BRIGHTNESS + 6;                /* not known: Restore Defaults twice, rather than a row that is not there */
-    if (!known) { printf("options row: the Options screen's rows are not the ones known: no PC Settings row\n"); return; }
-    uint64_t *mvt = (uint64_t *)(page + 0x110), *obj = (uint64_t *)(page + 0x200);   /* +0x100: the table's two header words, 0 */
+    int n = 0;
+    for (int i = 0; i < 6; i++) rows[n++] = (uint32_t)(BRIGHTNESS + i);
+    if (!known) {                            /* not known: Restore Defaults repeated, rather than rows that are not there */
+        while (n < SCREEN_N) rows[n++] = BRIGHTNESS + 6;
+        printf("options row: the Options screen's rows are not the ones known: no PC settings rows\n");
+        return;
+    }
+    g_text_mod = fs_rom_mod_serves("ui_000.pkz", "b3recomp-pc-settings");
+    if (!g_text_mod)
+        printf("options row: the rows' text is not there (mods/b3recomp-pc-settings: python scripts/setup.py --only text): "
+               "only the \"PC Settings\" row, called \"Options\"\n");
+    uint64_t *mvt = (uint64_t *)(page + 0x310), *lmvt = (uint64_t *)(page + 0x370);      /* each after the table's two header words, 0 */
     for (int i = 0; i < 9; i++) mvt[i] = rd64(vt + 8 * (uint64_t)i);
     mvt[1] = hostfn_address("options row: PC Settings, decide", pc_row_decide);
     mvt[7] = hostfn_address("options row: PC Settings, label", pc_row_label);
     obj[0] = (uint64_t)(uintptr_t)mvt;
-    rows[6] = PC_ROW;
-    wr64(ROWS + 8 * PC_ROW, (uint64_t)(uintptr_t)obj);
+    table[PC_ROW] = (uint64_t)(uintptr_t)&obj[0];
+    if (g_text_mod) {                        /* without the text the rows would show no words: the panel has them all */
+        static void (*const fn[7])(Ctx *) = {pc_list_label, pc_list_get, pc_list_set, pc_list_bank, pc_list_text, pc_list_count, pc_list_reset};
+        static const char *const what[7] = {"label", "get", "set", "bank", "value text", "count", "reset"};
+        for (int i = 0; i < 14; i++) lmvt[i] = rd64(lvt + 8 * (uint64_t)i);
+        for (int i = 0; i < 7; i++) { char nm[64]; snprintf(nm, sizeof nm, "options row: list row, %s", what[i]); lmvt[7 + i] = hostfn_address(_strdup(nm), fn[i]); }
+        g_obj0 = (uint64_t)(uintptr_t)&obj[1];
+        for (int r = 0; r < NPC; r++) {
+            obj[1 + r] = (uint64_t)(uintptr_t)lmvt;
+            table[FIRST + r] = (uint64_t)(uintptr_t)&obj[1 + r];
+            rows[n++] = (uint32_t)(FIRST + r);
+            g_label[r] = msg_hash(k_pc[r].label, NULL);
+            for (int k = 0; k < nval(r); k++) g_text[r][k] = msg_hash(k_pc[r].text[k], NULL);
+        }
+        g_custom = msg_hash("CORE_PC_CUSTOM", NULL);
+    }
+    rows[n++] = PC_ROW;
+    rows[n++] = BRIGHTNESS + 6;              /* Restore Defaults */
+    while (n < SCREEN_N) rows[n++] = BRIGHTNESS + 6;      /* (without the text: Restore Defaults also at the end) */
 }

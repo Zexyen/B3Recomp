@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""The label of the "PC Settings" row of the game's Options screen (runtime/options_row.c): a RomFS mod made from YOUR dump.
+"""The text of the PC settings rows of the game's Options screen (runtime/options_row.c): a RomFS mod made from YOUR dump.
 
     python scripts/pc_settings_mod.py [--romfs <folder>] [--dump <folder>] [--out <mods folder>]
 
-The Options screen's labels are messages of ui/ui_menu[_<lang>].dat -> messmenu.mcd (PlatinumGames MCD, docs/RE_NOTES.md
-section 8). This adds one message, MENU_OPTION_LIST_PC_SETTINGS, to the 13 language files (spelled with each file's own
-glyphs), and writes <out>/b3recomp-pc-settings/romfs/ui_000.pkz: the dump's archive byte for byte, with those 13 entries
-appended stored ("None") and their entry records pointed at the copies. The decompressed entries come from --dump (a
-`b3-game --pkz-dump` folder), else from build/b3-game --pkz-dump into a temporary folder.
+The Options screen's labels are messages of ui/ui_menu[_<lang>].dat -> messmenu.mcd, the values of its list rows messages
+of a bank named by the row: the language names are in ui/ui_core[_<lang>].dat -> messcore.mcd (PlatinumGames MCD,
+docs/RE_NOTES.md section 8). This adds the rows' labels (MENU_OPTION_LIST_PC_*) to the 13 messmenu.mcd and their values
+(CORE_PC_*; messcore has the digits) to the 13 messcore.mcd, spelled with each file's own glyphs, and writes
+<out>/b3recomp-pc-settings/romfs/ui_000.pkz: the dump's archive byte for byte, with those 26 entries appended stored ("None")
+and their entry records pointed at the copies. The decompressed entries come from --dump (a `b3-game --pkz-dump` folder),
+else from build/b3-game --pkz-dump into a temporary folder.
 Defaults: --romfs targets/romfs, --out mods (beside build/, where the runtime looks). The output holds the game's files:
 it stays on your PC (git ignores mods/); never share it.
 """
@@ -24,12 +26,65 @@ sys.path.insert(0, os.path.join(REPO, 'scripts'))
 import pgdat  # noqa: E402
 import pkz    # noqa: E402
 
-NAME = 'MENU_OPTION_LIST_PC_SETTINGS'
-HASH = zlib.crc32(NAME.lower().encode()) & 0x7fffffff      # 0x1a9a646f: runtime/options_row.c PC_LABEL
 BRIGHTNESS = 0x5f236d04                                      # MENU_OPTION_LIST_016: its font is the list's
-LABELS = {'': 'PC設定', 'us': 'PC Settings', 'gb': 'PC Settings', 'nl': 'PC Settings', 'pt': 'PC Settings',
-          'de': 'PC-Einstellungen', 'fr': 'Paramètres PC', 'es': 'Ajustes de PC', 'it': 'Impostazioni PC',
-          'ru': 'Настройки ПК', 'cn': 'PC设置', 'tw': 'PC設定', 'kr': 'PC 설정'}
+ON = 0x39bcb833                                              # CORE_SETTING_003 ("ON"): the font of the values
+EN = ('us', 'gb', 'nl', 'pt')                                # nl and pt hold the English text
+
+
+def T(en, ja, de, fr, es, it, ru, cn, tw, kr):
+    return dict({'': ja, 'de': de, 'fr': fr, 'es': es, 'it': it, 'ru': ru, 'cn': cn, 'tw': tw, 'kr': kr}, **{l: en for l in EN})
+
+
+def ALL(*texts):                                             # the same in every language; the first a file can spell
+    return {l: texts for l in ('', 'de', 'fr', 'es', 'it', 'ru', 'cn', 'tw', 'kr') + EN}
+
+
+# Where a file has not the glyphs of a word (a file only has those its own text uses), another word or the English one;
+# the Chinese, Korean and Japanese files have Latin letters. Names: runtime/options_row.c k_pc.
+LA, VSYNC, ASPECT, FW = 'Anisotropic Filtering', 'VSync', 'Aspect Ratio', 'Fullscreen Window'
+MENU = [
+    ('MENU_OPTION_LIST_PC_SETTINGS', T('PC Settings', 'PC設定', 'PC-Einstellungen', 'Paramètres PC', 'Ajustes de PC', 'Impostazioni PC',
+                                       'Настройки ПК', 'PC设置', 'PC設定', 'PC 설정')),
+    ('MENU_OPTION_LIST_PC_RES', T('Internal Resolution (next start)', 'レンダリングサイズ (リスタートで切替)', 'Interne Auflösung (nach Neustart)',
+                                  'Résolution interne (au redémarrage)', 'Resolución interna (al reiniciar)', 'Risoluzione interna (al riavvio)',
+                                  'Внутреннее разрешение (после перезапуска)', '画面大小 (Restart)', '畫面大小 (Restart)',
+                                  ('내부 해상도 (다음 시작 시)', '해상도 (다음 시작 시)'))),     # applies at the next start
+    ('MENU_OPTION_LIST_PC_CUTSCENE', T('Cutscene Frame Rate', 'イベントシーンのFPS', ('Bildrate der Zwischensequenzen', 'Bildrate der Filmszenen', 'Bildrate in Filmen'), 'Fréquence des cinématiques',
+                                       'Fotogramas de las cinemáticas', 'Frame rate dei filmati', 'Частота кадров в роликах', '动画FPS',
+                                       '動畫FPS', '무비 프레임 레이트')),
+    ('MENU_OPTION_LIST_PC_VSYNC', T('Vertical Sync', 'Vシンク', 'Vertikale Synchronisation', 'Synchro verticale', 'Sincronización vertical',
+                                    'Sincronizzazione verticale', 'Вертикальная синхронизация', VSYNC, VSYNC, VSYNC)),
+    ('MENU_OPTION_LIST_PC_WINDOW', T('Display Mode', '表示モード', 'Anzeigemodus', "Mode d'affichage", 'Modo de pantalla', 'Modalità schermo',
+                                     'Режим экрана', '显示模式', '顯示模式', '화면 모드')),
+    ('MENU_OPTION_LIST_PC_ANISO', T(LA, LA, 'Anisotrope Filterung', 'Filtrage anisotrope', 'Filtrado anisótropo', 'Filtro anisotropico',
+                                    'Анизотропная фильтрация', LA, LA, LA)),
+    ('MENU_OPTION_LIST_PC_TEXTURE', T('Texture Detail', 'テクスチャ調整', 'Texturdetails', 'Détail des textures', 'Nivel de detalle',
+                                      ('Dettaglio texture', 'Livello di dettaglio'), 'Детализация текстур', 'LOD调整', 'LOD設定', 'LOD 조정')),
+    ('MENU_OPTION_LIST_PC_ASPECT', T(ASPECT, ASPECT, 'Seitenverhältnis', "Format d'image", 'Relación de aspecto', 'Proporzioni',
+                                     'Соотношение сторон', ASPECT, ASPECT, ASPECT)),
+]
+CORE = [
+    ('CORE_PC_AUTO', T('Auto', '自動', 'Automatisch', 'Auto', 'Automática', 'Automatica', 'Авто', ('自动', 'Auto'), ('自動', 'Auto'), '자동')),
+    ('CORE_PC_MONITOR', T('Monitor', ('モニター', 'Monitor'), 'Monitor', 'Moniteur', 'Monitor', 'Monitor', 'Монитор', ('显示器', 'Monitor'),
+                          ('顯示器', 'Monitor'), ('모니터', 'Monitor'))),           # vsync = display: frames at the display's refresh
+    ('CORE_PC_TIMER', T('Timer', ('タイマー', 'Timer'), 'Timer', 'Minuterie', 'Temporizador', 'Timer', 'Таймер', ('计时器', 'Timer'),
+                        ('計時器', 'Timer'), ('타이머', 'Timer'))),                  # vsync = clock: the program's 60 Hz clock
+    ('CORE_PC_WINDOWED', T('Windowed', 'ウィンドウ', 'Fenster', 'Fenêtré', 'Ventana', 'Finestra', 'Окно', 'Windowed', 'Windowed', 'Windowed')),
+    ('CORE_PC_BORDERLESS', T('Borderless', ('ボーダーレス', '画面サイズのウィンドウ', FW), 'Randlos', 'Sans bordure', 'Sin bordes', 'Senza bordi', 'Без рамки',
+                             ('Borderless', FW), ('Borderless', FW), ('테두리 없음', FW))),
+    ('CORE_PC_FULLSCREEN', T('Fullscreen', 'Fullscreen', 'Vollbild', 'Plein écran', 'Pantalla completa', 'Schermo intero', 'Полный экран',
+                             'Fullscreen', 'Fullscreen', '전체 화면')),
+    ('CORE_PC_DEFAULT', T('Default', '初期値', 'Standard', 'Par défaut', 'Predeterminado', 'Predefinito', 'По умолчанию', '标准', '標準', '기본')),
+    ('CORE_PC_KEEP', T('Original', 'オリジナル', 'Original', 'Original', 'Original', 'Originale', 'Исходное', '固定', '固定', '고정')),
+    ('CORE_PC_STRETCH', T('Stretch', 'ストレッチ', 'Strecken', 'Étirer', 'Estirar', 'Allunga', 'Растянуть', '缩放', '縮放', '확대')),
+    ('CORE_PC_CUSTOM', T('Custom', 'カスタム', 'Eigene', 'Personnalisé', 'Personalizado', 'Personalizzato', 'Свой', '其他', '其他', '사용자 지정')),
+    ('CORE_PC_FPS_30', ALL('30')), ('CORE_PC_FPS_60', ALL('60')),
+    ('CORE_PC_AF_2', ALL('2x', '2')), ('CORE_PC_AF_4', ALL('4x', '4')), ('CORE_PC_AF_8', ALL('8x', '8')), ('CORE_PC_AF_16', ALL('16x', '16')),
+    ('CORE_PC_LOD_M1', ALL('-1')), ('CORE_PC_LOD_M05', ALL('-0.5')), ('CORE_PC_LOD_0', ALL('0')), ('CORE_PC_LOD_P05', ALL('+0.5')),
+    ('CORE_PC_LOD_P1', ALL('+1')),
+]
+CORE += [('CORE_PC_RES_' + v.replace('.', ''), ALL(v)) for v in ('1.0', '1.2', '1.6', '2.4')]
+LANGS = list(MENU[0][1])
 MOD = 'b3recomp-pc-settings'
 
 
@@ -88,15 +143,13 @@ def mcd_write(m):
     return bytes(out)
 
 
-def add_label(d, text):
-    """d (a messmenu.mcd) with the message NAME = text, in the font of the list's labels"""
+def add_msgs(d, msgs, lang, font_of):
+    """d (a messmenu.mcd or messcore.mcd) with the messages msgs = [(name, {lang: text or (texts...)})], in the font of the
+    message font_of; returns (the file, [what could not be spelled])"""
     m = mcd_read(d)
-    assert mcd_write(m) == d, 'messmenu.mcd: this layout is not the one known (the file would not be rebuilt as it is)'
-    if any(e[0] == HASH for e in m['evs']):
-        return d
-    syms = m['syms']
-    msg = m['msgs'][next(i for h, i, _ in m['evs'] if h == BRIGHTNESS)]
-    font = msg[2][0][2]
+    assert mcd_write(m) == d, 'MCD: this layout is not the one known (the file would not be rebuilt as it is)'
+    syms, bad = m['syms'], []
+    font = m['msgs'][next(i for h, i, _ in m['evs'] if h == font_of)][2][0][2]
     kern, kern1, space = {}, {}, {}
     for _, _, pars in m['msgs']:                             # kerning after a symbol (before the next), space widths, in this font
         for _, _, f, ls in pars:
@@ -111,27 +164,33 @@ def add_label(d, text):
                         kern[a, b] = ka
                         kern1.setdefault(a, {}).setdefault(ka, 0)
                         kern1[a][ka] += 1
+    order = [font, 7] + sorted({f for f, _, _ in syms} - {font, 7})      # 7: the Latin font (the Chinese / Korean files' "PC")
 
     def sym(ch):
-        for f in (font, 7):                                  # 7: the Latin font, for "PC" in the Chinese / Korean files
-            s = next((i for i, (sf, c, _) in enumerate(syms) if sf == f and c == ord(ch)), None)
-            if s is not None:
-                return s
-        raise ValueError('no glyph for %r in this messmenu.mcd' % ch)
-    seq = [0x8001 if ch == ' ' else sym(ch) for ch in text] + [0x8000]
-    us = []
-    for a, b in zip(seq, seq[1:] + [None]):
-        if a == 0x8000:
-            us.append(a)
-        elif a == 0x8001:
-            us += [a, max(space, key=space.get) if space else 7]
-        else:
-            k = kern.get((a, b), max(kern1[a], key=kern1[a].get) if a in kern1 else 0)
-            us += [a, k]
-    m['msgs'].append([len(m['msgs']) + 1, HASH, [[0, 0, font, [[us, 0, 0, 0.0, 0.0, 1 << 40]]]]])
-    m['evs'].append((HASH, len(m['msgs']) - 1, NAME.encode()))
+        return next((i for f in order for i, (sf, c, _) in enumerate(syms) if sf == f and c == ord(ch)), None)
+    have = {h for h, _, _ in m['evs']}
+    for name, texts in msgs:
+        h = zlib.crc32(name.lower().encode()) & 0x7fffffff
+        if h in have:
+            continue
+        cands = texts[lang] if isinstance(texts[lang], tuple) else (texts[lang],)
+        text = next((t for t in cands if all(ch == ' ' or sym(ch) is not None for ch in t)), cands[0])
+        missing = ''.join(sorted({ch for ch in text if ch != ' ' and sym(ch) is None}))
+        if missing:                                          # (nl / pt messcore: no digits) spelled without them
+            bad.append('%s %r without %r' % (name, text, missing))
+        seq = [0x8001 if ch == ' ' else sym(ch) for ch in text if ch == ' ' or sym(ch) is not None] + [0x8000]
+        us = []
+        for a, b in zip(seq, seq[1:] + [None]):
+            if a == 0x8000:
+                us.append(a)
+            elif a == 0x8001:
+                us += [a, max(space, key=space.get) if space else 7]
+            else:
+                us += [a, kern.get((a, b), max(kern1[a], key=kern1[a].get) if a in kern1 else 0)]
+        m['msgs'].append([len(m['msgs']) + 1, h, [[0, 0, font, [[us, 0, 0, 0.0, 0.0, 1 << 40]]]]])
+        m['evs'].append((h, len(m['msgs']) - 1, name.encode()))
     m['evs'].sort(key=lambda e: e[0])
-    return mcd_write(m)
+    return mcd_write(m), bad
 
 
 def dat_replace(blob, member, data):
@@ -153,22 +212,26 @@ def main(argv):
     arc = os.path.join(romfs, 'ui_000.pkz')
     out = os.path.join(args.get('--out', os.path.join(REPO, 'mods')), MOD, 'romfs', 'ui_000.pkz')
     fsize, entries = pkz.read_pkz(arc)
-    names = ['ui/ui_menu%s.dat' % ('_' + t if t else '') for t in LABELS]
+    names = ['ui/ui_%s%s.dat' % (k, '_' + l if l else '') for l in LANGS for k in ('menu', 'core')]
     assert all(any(e[0] == n for e in entries) for n in names), 'ui_000.pkz: not the archive known'
     dump, tmp = args.get('--dump'), None
     if not dump:
         tmp = dump = tempfile.mkdtemp(prefix='b3pcmod_')
         exe = os.path.join(REPO, 'build', 'b3-game' + ('.exe' if os.name == 'nt' else ''))
-        r = subprocess.run([exe, os.path.join(REPO, 'targets', 'exefs', 'main.elf'), '--pkz-dump', tmp, 'ui/ui_menu'],
+        r = subprocess.run([exe, os.path.join(REPO, 'targets', 'exefs', 'main.elf'), '--pkz-dump', tmp, 'ui/ui_menu', 'ui/ui_core'],
                            cwd=os.path.join(REPO, 'build'), env=dict(os.environ, SSBU_ROMFS=romfs), capture_output=True, text=True)
         if r.returncode:
             sys.exit('b3-game --pkz-dump failed:\n' + r.stdout[-2000:] + r.stderr[-2000:])
     try:
-        new = {}
-        for n, t in zip(names, LABELS.values()):
+        new, bad = {}, []
+        for n in names:
+            lang, kind = n[len('ui/ui_menu_'):-4] if '_' in n[6:] else '', n[6:10]
             blob = open(os.path.join(dump, n), 'rb').read()
-            mcd = next(blob[o:o + s] for name, _, o, s in pgdat.entries(blob) if name == 'messmenu.mcd')
-            new[n] = dat_replace(blob, 'messmenu.mcd', add_label(mcd, t))
+            member = 'mess%s.mcd' % kind
+            mcd = next(blob[o:o + s] for name, _, o, s in pgdat.entries(blob) if name == member)
+            d, b = add_msgs(mcd, MENU if kind == 'menu' else CORE, lang, BRIGHTNESS if kind == 'menu' else ON)
+            new[n] = dat_replace(blob, member, d)
+            bad += ['%s: %s' % (n, x) for x in b]
     finally:
         if tmp:
             shutil.rmtree(tmp)
@@ -195,7 +258,9 @@ def main(argv):
         f.seek(0)
         f.write(struct.pack('<4sIQIIII', b'pkzl', 0x20000, pos, count, toff, nsize, align) + table)
     os.replace(out + '.tmp', out)
-    print('%s: %d bytes, %d language files with the "PC Settings" label (message %s, 0x%08x)' % (out, pos, len(new), NAME, HASH))
+    for x in bad:
+        print('  not spelled in full (the file has no glyph for it): ' + x)
+    print('%s: %d bytes, %d text files with the PC settings rows\' text (%d labels, %d values)' % (out, pos, len(new), len(MENU), len(CORE)))
 
 
 if __name__ == '__main__':

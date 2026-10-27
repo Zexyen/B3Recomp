@@ -92,6 +92,15 @@ int main(int argc, char **argv) {
     assert(pcmenu_gate(1, 1u << 10) == 1);                 /* player 1's release does not free player 2 */
     assert(pcmenu_gate(1, 0) == 0 && pcmenu_gate(1, 1u << 10) == 0);      /* let go, then a new press reaches the game */
     assert(pcmenu_gate(0, 1u << 0) == 0);
+    /* the game's Options rows (options_row.c): by key, through the same change path */
+    int pending;
+    pcmenu_key_set("aspect", "keep"); assert(gfx_options()->aspect_stretch == 0 && !strcmp(pcmenu_key_get("aspect", NULL), "keep"));
+    pcmenu_key_set("anisotropic_filtering", "16"); assert(gfx_options()->aniso == 16 && !strcmp(pcmenu_key_get("anisotropic_filtering", NULL), "16"));
+    pcmenu_key_set("resolution_scale", "1.6"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "1.6") && !pending);      /* the running one */
+    pcmenu_key_set("resolution_scale", "2.4"); assert(!strcmp(pcmenu_key_get("resolution_scale", &pending), "2.4") && pending);
+    pcmenu_key_set("resolution_scale", "7"); assert(!strcmp(pcmenu_key_get("resolution_scale", NULL), "2.4"));      /* none of the row's */
+    s = slurp(ini); assert(strstr(s, "resolution_scale = 2.4\n") && strstr(s, "anisotropic_filtering = 16\n")); free(s);
+    assert(!strcmp(pcmenu_key_get("no_such_key", NULL), ""));
     printf("pcmenu self-test: all checks passed\n");
     return 0;
 }
