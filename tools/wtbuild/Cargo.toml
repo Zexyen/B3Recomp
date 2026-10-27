@@ -1,0 +1,20 @@
+[package]
+name = "wtbuild"
+version = "0.1.0"
+edition = "2021"
+description = "Witch Time build pipeline: from your own dump to a runnable build (replaces scripts/setup.py on Linux)"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+crc32fast = "1.5.3"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["std", "safe-decode"] }
+rayon = "1.12.0"
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
