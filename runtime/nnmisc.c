@@ -307,7 +307,7 @@ static DWORD WINAPI oe_watch(LPVOID unused) {
             frozen_at = GetTickCount64(); polls_at = g_oe_poll_count;
             InterlockedExchange(&g_guest_frozen, 1);
             trace_printf("     nn::oe: application suspended (%s, handling mode %d)\n", minimised ? "background" : "obscured", g_oe_focus_mode);
-        } else if (runnable && g_guest_frozen && !pcmenu_holds()) {      /* [b3recomp] the PC menu (pcmenu.c) holds the game too */
+        } else if (runnable && g_guest_frozen && !pcmenu_holds()) {      /* [witchtime] the PC menu (pcmenu.c) holds the game too */
             LONG polls = g_oe_poll_count - polls_at;
             InterlockedExchange(&g_guest_frozen, 0);
             printf("nn::oe: application resumed after %llu ms of suspension; main-loop polls during it: %ld\n", (unsigned long long)(GetTickCount64() - frozen_at), (long)polls);

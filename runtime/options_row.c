@@ -1,4 +1,4 @@
-/* [b3recomp] PC settings in the game's own Options screen (page Screen Display): seven rows of the game's own kind that show
+/* [witchtime] PC settings in the game's own Options screen (page Screen Display): seven rows of the game's own kind that show
  * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
@@ -129,9 +129,9 @@ void options_row_install(void) {
         printf("options row: the Options screen's rows are not the ones known: no PC settings rows\n");
         return;
     }
-    g_text_mod = fs_rom_mod_serves("ui_000.pkz", "b3recomp-pc-settings");
+    g_text_mod = fs_rom_mod_serves("ui_000.pkz", "witchtime-pc-settings");
     if (!g_text_mod)
-        printf("options row: the rows' text is not there (mods/b3recomp-pc-settings: python scripts/setup.py --only text): "
+        printf("options row: the rows' text is not there (mods/witchtime-pc-settings: python scripts/setup.py --only text): "
                "only the \"PC Settings\" row (called \"Options\"), which opens the panel\n");
     uint64_t *mvt = (uint64_t *)(page + 0x310), *lmvt = (uint64_t *)(page + 0x370);      /* each after the table's two header words, 0 */
     for (int i = 0; i < 9; i++) mvt[i] = rd64(vt + 8 * (uint64_t)i);

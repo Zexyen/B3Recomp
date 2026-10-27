@@ -1,4 +1,4 @@
-/* [b3recomp] Imports of Bayonetta 3's main (nnSdk 13.3.2) that B2recomp's runtime had no handler for, reached at boot.
+/* [witchtime] Imports of Bayonetta 3's main (nnSdk 13.3.2) that B2recomp's runtime had no handler for, reached at boot.
  * Registered by boot.c after r2_imports.c (later registrations replace earlier ones). Each one says what it models;
  * the "no-op" ones are services whose answer cannot change what a PC build does (notifications, recording, mouse). */
 #include <stdio.h>

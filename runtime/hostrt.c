@@ -512,7 +512,7 @@ static void crash_signal(int sig, siginfo_t *si, void *uc) {
     for (int i = 0, shown = 0; i < n && shown < 40; i++) {
         uint64_t g = guest_function_of((uint64_t)(uintptr_t)pcs[i]);
         if (g && g != last) { printf("  f_%llx\n", (unsigned long long)g); shown++; last = g; }
-        if (!g && i < 16) printf("  host %p\n", pcs[i]);   /* addr2line -e b3-game / game.so */
+        if (!g && i < 16) printf("  host %p\n", pcs[i]);   /* addr2line -e witch-time-game / game.so */
     }
     report_and_exit(4);
 }

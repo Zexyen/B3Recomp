@@ -167,7 +167,7 @@ static void mods_ini_path(char *out) {                   /* beside controllers.i
         return;
     }
     GetModuleFileNameA(NULL, tmp, MAX_PATH);
-    char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');      /* [b3recomp] '/' on Linux, as graphics.ini (gfx_options.c) */
+    char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');      /* [witchtime] '/' on Linux, as graphics.ini (gfx_options.c) */
     if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(out, MAX_PATH, "%s\\..\\config\\mods.ini", tmp);
@@ -266,7 +266,7 @@ static void rom_mods_init(void) {
     if (env && env[0]) snprintf(tmp, sizeof tmp, "%s", env);
     else {
         GetModuleFileNameA(NULL, tmp, MAX_PATH);
-        char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');  /* [b3recomp] '/' on Linux: build/b3-game/../mods was no folder */
+        char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');  /* [witchtime] '/' on Linux: build/witch-time-game/../mods was no folder */
         if (s2 > s) s = s2;
         if (s) *s = 0;
         strncat(tmp, "\\..\\mods", sizeof tmp - strlen(tmp) - 1);
@@ -397,7 +397,7 @@ static int view_path(Mount *m, const char *rel, char *out) {
     join(out, m->root, rel);
     return exists(out);
 }
-/* [b3recomp] options_row.c: 1 when the RomFS file `rel` (e.g. "ui_000.pkz") the game reads is the one of the mod folder `mod` */
+/* [witchtime] options_row.c: 1 when the RomFS file `rel` (e.g. "ui_000.pkz") the game reads is the one of the mod folder `mod` */
 int fs_rom_mod_serves(const char *rel, const char *mod) {
     char out[MAX_PATH];
     fs_roots();
@@ -802,7 +802,7 @@ static void prompt_swap_close(HANDLE h) {
     ReleaseSRWLockExclusive(&g_pswap_lock);
 }
 
-/* [b3recomp] The PC menu's hint (pcmenu.c): B3's pause menu reads ui/ui_photomode.dat from ui_000.pkz each time it opens (the
+/* [witchtime] The PC menu's hint (pcmenu.c): B3's pause menu reads ui/ui_photomode.dat from ui_000.pkz each time it opens (the
  * Options screen itself is loaded once at the start). The entry's offset is read from the archive's table at its first open
  * (format: scripts/pkz.py); a read at that offset through a handle of that archive shows the hint. */
 void pcmenu_hint(void);
@@ -927,8 +927,8 @@ static void fs_WriteFile(Ctx *c) {                    /* (handle, offset, buffer
     if (A4 && (rd32(A4) & 1)) FlushFileBuffers((HANDLE)A0);                  /* WriteOption::Flush */
     RET(0);
 }
-static void fs_FlushFile(Ctx *c) { FlushFileBuffers((HANDLE)A0); RET(0); }   /* [b3recomp] (handle) */
-static void fs_SetFileSize(Ctx *c) {                  /* [b3recomp] (handle, size) */
+static void fs_FlushFile(Ctx *c) { FlushFileBuffers((HANDLE)A0); RET(0); }   /* [witchtime] (handle) */
+static void fs_SetFileSize(Ctx *c) {                  /* [witchtime] (handle, size) */
     LARGE_INTEGER to; to.QuadPart = (LONGLONG)A1;
     if (!(open_mode((HANDLE)A0, 0) & 2)) { RET(RESULT_WRITE_NOT_PERMITTED); return; }
     RET(SetFilePointerEx((HANDLE)A0, to, NULL, FILE_BEGIN) && SetEndOfFile((HANDLE)A0) ? 0 : RESULT_GENERIC_FAILURE);
@@ -1188,7 +1188,7 @@ static const ImportDef fs_imports[] = {
     {FS("8MountRomEPKcPvm"), fs_MountRom}, {FS("13MountSaveDataEPKcRKNS_7account3UidE"), fs_MountSaveData}, {FS("17MountCacheStorageEPKc"), fs_MountCacheStorage},
     {FS("7UnmountEPKc"), fs_Unmount}, {FS("22QueryMountRomCacheSizeEPm"), fs_QueryMountRomCacheSize}, {FS("6CommitEPKc"), fs_Commit}, {FS("14EnsureSaveDataERKNS_7account3UidE"), fs_EnsureSaveData},
     {FS("18IsSaveDataExistingERKNS_7account3UidE"), fs_IsSaveDataExisting},
-    /* [b3recomp] SDK 13: MountRom(name) without a cache buffer, IsSaveDataExisting(ApplicationId, Uid) of this program,
+    /* [witchtime] SDK 13: MountRom(name) without a cache buffer, IsSaveDataExisting(ApplicationId, Uid) of this program,
      * FlushFile, SetFileSize */
     {FS("8MountRomEPKc"), fs_MountRom}, {FS("18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE"), fs_IsSaveDataExisting},
     {FS("9FlushFileENS0_10FileHandleE"), fs_FlushFile}, {FS("11SetFileSizeENS0_10FileHandleEl"), fs_SetFileSize},

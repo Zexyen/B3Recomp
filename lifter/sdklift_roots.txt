@@ -1,4 +1,4 @@
-# [b3recomp] roots for sdklift.py on Bayonetta 3's sdk (nnSdk 13.3.2): only names B3's main imports. B2's roots for SDK 3.6.0
+# [witchtime] roots for sdklift.py on Bayonetta 3's sdk (nnSdk 13.3.2): only names B3's main imports. B2's roots for SDK 3.6.0
 # (NVN texture-storage functions and the GM200 HAL by address, nn::mem::NumberLineAllocator) are not carried over: B3's main
 # imports no NumberLineAllocator; the NVN ones are found by name below (`nvn`, `vmethod`: no addresses in this file).
 
@@ -9,7 +9,7 @@ div
 _ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE
 _ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE
 
-# [b3recomp] pure SDK code B3 imports that the runtime has no handler for
+# [witchtime] pure SDK code B3 imports that the runtime has no handler for
 _ZN2nn4util30ConvertStringUtf16NativeToUtf8EPciPKti
 _ZN2nn4util30ConvertStringUtf8ToUtf16NativeEPtiPKci
 _ZN2nn4util43GetLengthOfConvertedStringUtf16NativeToUtf8EPiPKti
@@ -17,7 +17,7 @@ _ZN2nn4lmem13CreateExpHeapEPvmi
 _ZN2nn4lmem13FreeToExpHeapEPNS0_6detail8HeapHeadEPv
 _ZN2nn4lmem19AllocateFromExpHeapEPNS0_6detail8HeapHeadEm
 
-# [b3recomp] reached at boot (static constructors, nnMain's input setup): pure SDK code. The Vibration node constructors
+# [witchtime] reached at boot (static constructors, nnMain's input setup): pure SDK code. The Vibration node constructors
 # lock the SDK's node list (host SdkMutexType, b3_imports.c); their svc is the contended-lock path (traps if reached).
 _ZN2nn3hid14VibrationMixerC1Ev
 _ZN2nn3hid14VibrationMixerD1Ev
@@ -35,7 +35,7 @@ _ZN2nn3hid23VibrationNodeConnectionD1Ev
 _ZN2nn7friends12UserPresence5ClearEv
 _ZN2nn2os21SdkRecursiveMutexType10InitializeEv
 
-# [b3recomp] NVN texture storage rules (runtime/nvn_sdk.c), by name from the sdk's proc table (scripts/nvn_procs.py), and the
+# [witchtime] NVN texture storage rules (runtime/nvn_sdk.c), by name from the sdk's proc table (scripts/nvn_procs.py), and the
 # GPU memory-kind chooser they end in: NvRmGpuDeviceChooseKind -> NvRmNvgpuDevice +0x30 (the HAL object) -> the GM200 HAL's
 # kind method +0x90 and the methods it calls (docs/RE_NOTES.md section 6).
 nvn nvnTextureBuilderGetStorageSize

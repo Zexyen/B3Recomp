@@ -81,7 +81,7 @@ static const char *const k_default_ini =
 "\r\n"
 "; resolution_scale = 1.0\r\n"
 /* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
-/* [b3recomp] Bayonetta 3's sizes (1600x900) and the measurements of 2026-10-25 (docs/STATUS.md, "Resolution scale") */
+/* [witchtime] Bayonetta 3's sizes (1600x900) and the measurements of 2026-10-25 (docs/STATUS.md, "Resolution scale") */
 ";   Internal resolution scale, 0.25 to 3.0 (Vulkan only; OpenGL ignores it). 1.0 = the game's own size: Bayonetta 3\r\n"
 ";   renders at 1600x900. 1.2 = 1920x1080, 1.6 = 2560x1440, 2.4 = 3840x2160 (4K): drawn larger, shown at the window's\r\n"
 ";   size (width / height above). Measured on an RX 9070 XT (2026-10-25): 59.6-59.9 fps in a fight at every one of\r\n"
@@ -185,7 +185,7 @@ static void opt_path(char *out) {
         return;
     }
     GetModuleFileNameA(NULL, exe, MAX_PATH);
-    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [b3recomp] '/' on Linux: build/b3-game/../config was not a folder, the file was never read */
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/witch-time-game/../config was not a folder, the file was never read */
     if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
@@ -193,7 +193,7 @@ static void opt_path(char *out) {
 }
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     (void)once; (void)ctx;
-    GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [b3recomp] arg: gfx_option_set reads the file again into a copy */
+    GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
@@ -234,24 +234,24 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
-        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [b3recomp] */
-        else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [b3recomp] */
+        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
+        else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
         else unknown++;
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 60;
-    {   /* [b3recomp] texture_lod_bias: SSBU_TEXTURE_LOD_BIAS wins; -3 .. 3 */
+    {   /* [witchtime] texture_lod_bias: SSBU_TEXTURE_LOD_BIAS wins; -3 .. 3 */
         const char *e = getenv("SSBU_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
         if (o->texture_lod_bias < -3.0f) o->texture_lod_bias = -3.0f;
         if (o->texture_lod_bias > 3.0f) o->texture_lod_bias = 3.0f;
         if (o->texture_lod_bias != 0.0f) printf("graphics options: texture_lod_bias=%.2f (%s): added to the mip level of every texture sampler that uses mip maps\n", o->texture_lod_bias, e ? "SSBU_TEXTURE_LOD_BIAS" : "graphics.ini");
     }
-    {   /* [b3recomp] SSBU_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
+    {   /* [witchtime] SSBU_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
         const char *e = getenv("SSBU_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
     }
-    {   /* [b3recomp] cutscene_fps: the game library (game_shim_eh.c) reads SSBU_CUTSCENE_FPS; a set variable (test runs) wins */
+    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads SSBU_CUTSCENE_FPS; a set variable (test runs) wins */
         const char *e = getenv("SSBU_CUTSCENE_FPS");
         if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
         else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("SSBU_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
@@ -307,7 +307,7 @@ int gfx_pace_rate(void) {
     return r;
 }
 
-/* [b3recomp] The PC settings menu (pcmenu.c) changes graphics.ini while the game runs. gfx_ini_get reads one key as the reader
+/* [witchtime] The PC settings menu (pcmenu.c) changes graphics.ini while the game runs. gfx_ini_get reads one key as the reader
  * above sees it (the last line with the key wins); gfx_option_set rewrites the value of every line with that key and keeps
  * everything else of the file byte for byte (comments, unknown keys, line endings), appends the key when it is missing,
  * writes through a temporary file, then reads the file again into a copy and takes over the keys that apply live. */

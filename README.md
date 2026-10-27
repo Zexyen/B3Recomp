@@ -1,4 +1,4 @@
-# b3recomp
+# Witch Time
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
 [B2recomp](../B2recomp): the game's AArch64 code is translated to C **on your PC from your own dump**, and runs on a

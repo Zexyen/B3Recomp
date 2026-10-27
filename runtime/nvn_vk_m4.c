@@ -24,7 +24,7 @@ typedef struct VStage {
     VkShaderModule mod; struct VStage *next, *next_h;
     VkPipeline lib, lib2; volatile LONG lib_state, lib2_state;      /* session 9 (SSBU_VK_GPL=2): the stage's pipeline library; lib2: a vertex stage with the empty fragment shader state */
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
-    uint16_t img_fmt[8]; uint8_t img_type[8];      /* [b3recomp] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
+    uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
 #define MX_VK_VERSION 10u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
@@ -116,8 +116,8 @@ static uint64_t ssrc_hb(const SSrc *o) {
     uint32_t ver = MX_VK_VERSION;
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
-    if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [b3recomp] the mode is part of the evaluation stage's text */
-    if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [b3recomp] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
+    if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
+    if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -352,7 +352,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
 
 /* ---------------------------------------------------------------- pipelines */
 typedef struct { uint32_t vs, fs, chanmask, sample_mask; int32_t cfmt[8], dfmt; uint8_t topo_class, ncolor, samples, poly, a2c, dclamp, logic, sshade, blend_on, pad[3]; uint8_t blend[8][8]; } PKey;
-typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; } Pipe;      /* tcs, tes, patch: [b3recomp] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
+typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; } Pipe;      /* tcs, tes, patch: [witchtime] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
 static Pipe *g_pipes[1024];
 static void pkey_targets(PKey *k);
 static int pkey_targets_of(PKey *k, int ncol, const TargetRef *col, const TargetRef *depth);
@@ -467,7 +467,7 @@ static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, 
     for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
-    for (unsigned k = 0; k < 8; k++) if (v->images >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[(*n1)++] = b; }      /* [b3recomp] */
+    for (unsigned k = 0; k < 8; k++) if (v->images >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[(*n1)++] = b; }      /* [witchtime] */
 }
 static Pipe *pipe_find(const PKey *k, uint64_t h) { for (Pipe *p = g_pipes[h & 1023]; p; p = p->next) if (!memcmp(&p->k, k, sizeof *k)) return p; return NULL; }      /* g_sh_lock held */
 static Pipe *pipe_new(const PKey *k, VStage *vs, VStage *fs, uint64_t h, int state) {                                                                                 /* g_sh_lock held */
@@ -518,7 +518,7 @@ static int g_nolib;
 static VkPipeline g_vilib[3];
 static LONG64 g_gpl_made, g_gpl_made_tk, g_gpl_draw, g_gpl_draw_tk, g_gpl_draw_max, g_gpl_wait, g_gpl_wait_tk, g_gpl_link, g_gpl_link_tk, g_gpl_link_max, g_gpl_dlink, g_gpl_dlink_tk, g_gpl_dlink_max, g_gpl_dlink_fight;
 static DWORD g_render_tid;
-/* [b3recomp] the depth bounds test is dynamic state in every pipeline of the draws (when the GPU has the feature) */
+/* [witchtime] the depth bounds test is dynamic state in every pipeline of the draws (when the GPU has the feature) */
 static uint32_t dyn_depth_bounds(VkDynamicState *d) {
     if (!D.f2.features.depthBounds) return 0;
     d[0] = VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE; d[1] = VK_DYNAMIC_STATE_DEPTH_BOUNDS;
@@ -719,7 +719,7 @@ static void gpl_universal(void) {
             for (unsigned n = 1; n < 18; n++) { VkDescriptorSetLayoutBinding b = {40u * s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned k = 0; k < 16; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[n0++] = b; }
             for (unsigned u = 0; u < 32; u++) { VkDescriptorSetLayoutBinding b = {40u * s + u, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[n1++] = b; b.binding += 240; b1[n1++] = b; }
-            for (unsigned k = 0; k < 8; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[n1++] = b; }      /* [b3recomp] storage images */
+            for (unsigned k = 0; k < 8; k++) { VkDescriptorSetLayoutBinding b = {40u * s + 32 + k, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, sf, NULL}; b1[n1++] = b; }      /* [witchtime] storage images */
         }
         for (int i = 0; i < 2; i++) {
             VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -927,7 +927,7 @@ whole:;
     if (fs) { st[nst].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[nst++].module = fs->mod; }
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = p->tcs ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : k->topo_class == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : k->topo_class == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    /* [b3recomp] the tessellator's domain origin as in OpenGL (the back end flips the viewport the OpenGL way), so GL_CCW keeps its meaning */
+    /* [witchtime] the tessellator's domain origin as in OpenGL (the back end flips the viewport the OpenGL way), so GL_CCW keeps its meaning */
     VkPipelineTessellationDomainOriginStateCreateInfo tdo = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO, NULL, VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT};
     VkPipelineTessellationStateCreateInfo ts = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, &tdo, 0, p->patch ? p->patch : 1};
     VkPipelineViewportStateCreateInfo vp = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
@@ -1129,7 +1129,7 @@ static void predict_pair(PairRec *pr, int i) {
     job_push(j);
 }
 /* Render thread, at a draw: the pipeline of the key; made here, or waited for, when it is not ready (the frame is late). */
-/* [b3recomp] Tessellated pipelines (B3: 29 control / evaluation pairs): made whole (no libraries) on the render thread at their
+/* [witchtime] Tessellated pipelines (B3: 29 control / evaluation pairs): made whole (no libraries) on the render thread at their
  * first draw and kept here, keyed by the draw's key, the two stages and the patch size; not in g_pipes, pipes.bin or the workers'
  * queues. shortcut: made at the draw (a hitch the first time; the driver's pipeline cache keeps it for the next run); upgrade to
  * the workers and pipes.bin if a game tessellates much more. */

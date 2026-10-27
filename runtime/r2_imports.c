@@ -29,7 +29,7 @@
  * the heap size directly). The heap is one host region, committed up front: guest code touches it directly. */
 #define MEMORY_BLOCK_UNIT 0x200000ull                    /* [doc] nn::os::MemoryBlockUnitSize */
 #define RESULT_OS_OUT_OF_MEMORY 0xca01ull                /* [doc] os module 1, description 101 (NOT VERIFIED against our sdk) */
-/* [b3recomp] 3285 MB, the application memory of a console in its default arrangement: Bayonetta 3 sizes its heap from this
+/* [witchtime] 3285 MB, the application memory of a console in its default arrangement: Bayonetta 3 sizes its heap from this
  * and then takes 3028 MB of blocks out of it (B2's 3 GB left the last one, the 262 MB frame-buffer heap, out)
  * shortcut: the documented figure, not read from a console; adjust if a later block does not fit */
 static uint64_t g_total_available = 0xcd500000ull;

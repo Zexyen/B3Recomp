@@ -235,7 +235,7 @@ static int seq_key(int vk) {
  * whole desktop, so without this check anything typed in another program (or another running copy of the game, or a
  * test that injects keys) steered the game. With SSBU_SEQ the keyboard is ignored altogether, unless SSBU_SEQ_KEYBOARD
  * is set, so a scripted run is not disturbed by a person at the machine. */
-static unsigned char g_kb_test[256];                     /* [b3recomp] self-test: keys held (by virtual key), instead of the real keyboard */
+static unsigned char g_kb_test[256];                     /* [witchtime] self-test: keys held (by virtual key), instead of the real keyboard */
 static int g_kb_test_on, g_mouse_test_dx, g_mouse_test_dy;
 static int keyboard_ours(void) {
     static int mode = -1;
@@ -610,9 +610,9 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         lx = (key_for(id, VK_RIGHT, 18) - key_for(id, VK_LEFT, 16)) * STICK_MAX;
         ly = (key_for(id, VK_UP, 17) - key_for(id, VK_DOWN, 19)) * STICK_MAX;
         if (sdl_on()) { rx = (key_for(id, 0, 22) - key_for(id, 0, 20)) * STICK_MAX; ry = (key_for(id, 0, 21) - key_for(id, 0, 23)) * STICK_MAX; }
-        if (lx && ly) { lx = lx * 23170 / STICK_MAX; ly = ly * 23170 / STICK_MAX; }       /* [b3recomp] a diagonal is as long as a straight push (round gate) */
+        if (lx && ly) { lx = lx * 23170 / STICK_MAX; ly = ly * 23170 / STICK_MAX; }       /* [witchtime] a diagonal is as long as a straight push (round gate) */
         if (rx && ry) { rx = rx * 23170 / STICK_MAX; ry = ry * 23170 / STICK_MAX; }
-        if ((lx || ly) && key_for(id, 0, 24)) { lx = lx * 2 / 5; ly = ly * 2 / 5; }      /* [b3recomp] WALK held: 0.4 of the travel, below the 0.5 of the stick-as-button bits */
+        if ((lx || ly) && key_for(id, 0, 24)) { lx = lx * 2 / 5; ly = ly * 2 / 5; }      /* [witchtime] WALK held: 0.4 of the travel, below the 0.5 of the stick-as-button bits */
         int mx, my;
         if (sdl_on() && (int)id == g_keyboard_player && mouse_stick(&mx, &my)) {      /* [Recomps#1] the mouse moves the camera */
             rx += mx; ry += my;
@@ -628,7 +628,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             if (devices_live()) {
                 buttons |= ps.buttons;
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
-                if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [b3recomp] was !rx: a vertical-only mouse move was lost */
+                if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [witchtime] was !rx: a vertical-only mouse move was lost */
             }
         }
     } else if (x_present(slot) && devices_live()) {
@@ -659,7 +659,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
     if (rx > STICK_MAX / 2) buttons |= 1ull << (BTN_SL_RIGHT + 4);
     if (ry < -STICK_MAX / 2) buttons |= 1ull << (BTN_SL_DOWN + 4);
     wr64(out + 8, buttons);
-    {   /* [b3recomp] test aid: with SSBU_KBM_SCRIPT the keyboard player's state is logged at every change */
+    {   /* [witchtime] test aid: with SSBU_KBM_SCRIPT the keyboard player's state is logged at every change */
         static int on = -1; static uint64_t lb = ~0ull; static int ls[4];
         if (on < 0) on = getenv("SSBU_KBM_SCRIPT") != NULL;
         if (on && (int)id == g_keyboard_player && (buttons != lb || lx != ls[0] || ly != ls[1] || rx != ls[2] || ry != ls[3])) {
@@ -693,7 +693,7 @@ static void hid_GetNpadStyleSet(Ctx *c) {   /* (const NpadIdType &) */
     }
     RET(r ? STYLE_FULLKEY : 0);
 }
-/* [b3recomp] The PC settings menu (pcmenu.c). pcmenu_gate sees every pad state the game reads (F1 or L3 + R3 open the menu) and
+/* [witchtime] The PC settings menu (pcmenu.c). pcmenu_gate sees every pad state the game reads (F1 or L3 + R3 open the menu) and
  * says when the game gets an idle pad: while the menu is open, and after it until the buttons that closed it are let go.
  * nnhid_menu_read is player 1 for the menu while the game is held (it polls nothing then): the test scripts, the keyboard
  * player's keys and the first controller, without the side effects of a game poll (input sequence, recording, statistics). */
@@ -1176,7 +1176,7 @@ static int th_six(uint32_t id, float accel[3], float gyro[3], int *rest) {
     return rd32((uint64_t)(uintptr_t)buf + 0x58) == 1;
 }
 static void th_test_mode(int on) { g_pad_test = on; if (on) { _putenv("SSBU_REC=NUL"); hid_setup(); } }
-static void th_kb(int on) {                                 /* [b3recomp] keyboard + mouse on player 1 from the test's keys, or back to none */
+static void th_kb(int on) {                                 /* [witchtime] keyboard + mouse on player 1 from the test's keys, or back to none */
     static int saved = -2;
     if (on && saved == -2) saved = g_keyboard_player;
     memset(g_kb_test, 0, sizeof g_kb_test); g_mouse_test_dx = g_mouse_test_dy = 0;

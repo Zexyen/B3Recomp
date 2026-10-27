@@ -127,7 +127,7 @@ typedef struct TexLayout {
     int lvl_w[TEX_MAX_LEVELS], lvl_h[TEX_MAX_LEVELS], lvl_d[TEX_MAX_LEVELS];          /* texels / slices */
     int lvl_wb[TEX_MAX_LEVELS], lvl_hb[TEX_MAX_LEVELS];                               /* blocks (compressed footprint) */
     int lvl_bh_log2[TEX_MAX_LEVELS], lvl_bd_log2[TEX_MAX_LEVELS];                     /* block height / depth of the level */
-    int lvl_gobs_x[TEX_MAX_LEVELS];                 /* [b3recomp] GOBs in a row of the level (its width padded to the block width), 0 = the width in GOBs */
+    int lvl_gobs_x[TEX_MAX_LEVELS];                 /* [witchtime] GOBs in a row of the level (its width padded to the block width), 0 = the width in GOBs */
     size_t lvl_offset[TEX_MAX_LEVELS], lvl_size[TEX_MAX_LEVELS];                       /* swizzled bytes */
     size_t lvl_linear_size[TEX_MAX_LEVELS];                                           /* wb * bpb * hb * d: output of tex_deswizzle_level */
     size_t layer_size;             /* sum of the level sizes of one layer (no padding) */

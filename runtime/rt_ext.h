@@ -102,7 +102,7 @@ static inline void v_fcvtz_fix(V128 *d, const V128 *n, int fbits, int dbl, int u
     *d = r;
 }
 
-/* ---- [b3recomp] forms Bayonetta 3's main uses that B2's did not (lifter/recomp.py marks them [b3recomp]) ---- */
+/* ---- [witchtime] forms Bayonetta 3's main uses that B2's did not (lifter/recomp.py marks them [witchtime]) ---- */
 
 static inline uint64_t sat128(__int128 r, int es) { return sat_s(r > INT64_MAX ? INT64_MAX : r < INT64_MIN ? INT64_MIN : (int64_t)r, es); }
 /* SSHL/USHL/SRSHL/URSHL/SQSHL/UQSHL shift by the signed low byte of each element of m: left if >= 0, else right. */

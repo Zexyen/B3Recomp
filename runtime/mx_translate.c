@@ -39,8 +39,8 @@ typedef struct {
     unsigned smem_words;
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
-    int uses_sg;                              /* [b3recomp] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
-    uint64_t gatom;                           /* [b3recomp] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
+    int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
+    uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
     uint32_t *jt;                             /* static jump target of SYNC / BRK / CONT */
@@ -247,7 +247,7 @@ static int mx_vk_clip(const MxIn *in) {
 }
 static void attr_out(Mx *e, unsigned a, const char *v) {
     unsigned c = (a >> 2) & 3, st = (unsigned)e->in->stage;
-    if (st == MX_TESS_CONTROL) {                    /* [b3recomp] the invocation's own output vertex (suyu: [gl_InvocationID]) */
+    if (st == MX_TESS_CONTROL) {                    /* [witchtime] the invocation's own output vertex (suyu: [gl_InvocationID]) */
         if (a >= 0x70 && a < 0x80) emit(e, " gl_out[gl_InvocationID].gl_Position[%u] = F(%s);", c, v);
         else if (a >= 0x80 && a < 0x280) { e->out_attr |= 1u << ((a - 0x80) >> 4); emit(e, " out_attr%u[gl_InvocationID][%u] = F(%s);", (a - 0x80) >> 4, c, v); }
         else fail(e, "attribute store", "tessellation control store to attribute 0x%x", a);
@@ -265,13 +265,13 @@ static void attr_out(Mx *e, unsigned a, const char *v) {
     else fail(e, "attribute store", "store to attribute 0x%x", a);
 }
 
-/* [b3recomp] a video instruction's operand (suyu ExtractVideoOperandValue): width 0 / 1 = byte sel, 2 = short sel, 3 = the word */
+/* [witchtime] a video instruction's operand (suyu ExtractVideoOperandValue): width 0 / 1 = byte sel, 2 = short sel, 3 = the word */
 static const char *vid_operand(Mx *e, const char *v, unsigned w, unsigned sel, int sg) {
     if (w == 3) return v;
     unsigned bits = w == 2 ? 16 : 8;
     return sg ? S(e, "uint(bitfieldExtract(int(%s), %u, %u))", v, sel * bits, bits) : S(e, "bitfieldExtract(%s, %u, %u)", v, sel * bits, bits);
 }
-/* [b3recomp] patch attribute p (address / 4; suyu's IR::Patch): 0..3 the outer tessellation levels, 4 / 5 the inner ones, 6 + 4k + c
+/* [witchtime] patch attribute p (address / 4; suyu's IR::Patch): 0..3 the outer tessellation levels, 4 / 5 the inner ones, 6 + 4k + c
  * component c of generic patch vector k (not supported). write: the lvalue (float) of the control stage, else the value as uint. */
 static const char *patch_attr(Mx *e, unsigned p, int write) {
     const char *lv;
@@ -341,7 +341,7 @@ static const char *tex_offset(Mx *e, unsigned t, const char *reg, int bits) {   
     return S(e, "ivec3(bitfieldExtract(int(%s), 0, %d), bitfieldExtract(int(%s), %d, %d), bitfieldExtract(int(%s), %d, %d))", reg, bits, reg, step, bits, reg, 2 * step, bits);
 }
 /* stores the components selected by mask into consecutive registers from rd */
-/* [b3recomp] Vulkan GLSL wants texel offsets that are constant expressions; Maxwell's come from a register. Lowered for target 1:
+/* [witchtime] Vulkan GLSL wants texel offsets that are constant expressions; Maxwell's come from a register. Lowered for target 1:
  * an integer fetch adds the offset to its coordinates (exact); a filtered sample moves its coordinates by offset / size of
  * level lvl (exact at that level). shortcut: implicit-LOD samples use level 0 (wrong by a factor 2^lod on mip levels
  * above 0); fine for unmipped screen-space textures, upgrade with a textureQueryLod-based size if mipmapped ones show it. */
@@ -674,7 +674,7 @@ static const char *img_qualifier(uint16_t fmt, int *cls) {
     return NULL;
 }
 
-/* [b3recomp] SULD / SUST with the image handle in a register: B3's shaders load that register from the bound image slot's
+/* [witchtime] SULD / SUST with the image handle in a register: B3's shaders load that register from the bound image slot's
  * handle word (MOV rN, c2[72 + 2k]) shortly before (all 799 such stores of B3's stages). The last instruction before pc,
  * in code order, that writes the register must be that load; the slot k, else -1 (the stage is not translated). */
 static int handle_slot(Mx *e, unsigned pc, unsigned reg) {
@@ -789,7 +789,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         break;
     }
     case MXOP_VOTE:
-        if (e->in->target == 1) {               /* [b3recomp] Vulkan: over the 32 lanes of the Maxwell warp inside a subgroup of 32 or 64 */
+        if (e->in->target == 1) {               /* [witchtime] Vulkan: over the 32 lanes of the Maxwell warp inside a subgroup of 32 or 64 */
             unsigned m = MXB(i, 48, 2);
             e->uses_sg = 1;
             emit(e, "uint vb = subgroupBallot(%s)[gl_SubgroupInvocationID >> 5], va = subgroupBallot(true)[gl_SubgroupInvocationID >> 5];", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)));
@@ -804,7 +804,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (MXB(i, 0, 8) != 255) emit(e, " %s = uint(ballotARB(vp));", DST);
         break;
         }
-    case MXOP_SHFL: {                           /* [b3recomp] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
+    case MXOP_SHFL: {                           /* [witchtime] warp shuffle, as suyu's recompiler: b = lane (bits 20..24 or Rb), c = clamp (bits 0..4)
                                                  * and segment mask (bits 8..12), immediate (bits 34..46) or Rc; Pd (48..50) = the source lane is in range.
                                                  * The 32-lane warp is emulated inside a subgroup of 32 or 64 (lanes 0..31 / 32..63). */
         static const char *const range[4] = {
@@ -821,7 +821,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (PD(e, MXB(i, 48, 3))) emit(e, " %s = ib;", PD(e, MXB(i, 48, 3)));
         break;
     }
-    case MXOP_FSWZADD: {                        /* [b3recomp] a * la[q] + b * lb[q], q = the 2-bit field of the swizzle (bits 28..35) for this lane of
+    case MXOP_FSWZADD: {                        /* [witchtime] a * la[q] + b * lb[q], q = the 2-bit field of the swizzle (bits 28..35) for this lane of
                                                  * its quad (suyu's tables: la = 1 -1 1 0, lb = 1 1 -1 1). NDV (bit 38, "no divergence") is a hint: the
                                                  * same arithmetic. CC is not modelled. */
         if (MXB(i, 47, 1)) { fail(e, "FSWZADD", "FSWZADD with CC"); break; }
@@ -830,12 +830,12 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         fres(e, i, S(e, "F(%s) * vec4(1.0, -1.0, 1.0, 0.0)[q] + F(%s) * vec4(1.0, 1.0, -1.0, 1.0)[q]", A8, R20), 0, 0);
         break;
     }
-    /* [b3recomp] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). shortcut: no-ops;
+    /* [witchtime] SAM / RAM: set / restore the active mask around hand-made quad derivatives (SHFL, FSWZADD, TEX). shortcut: no-ops;
      * correct where the driver keeps helper invocations active for subgroup shuffles (RADV, NVIDIA); upgrade with
      * VK_KHR_shader_quad_control if edge pixels of such textures look wrong elsewhere. */
     case MXOP_SAM: case MXOP_RAM:
         break;
-    case MXOP_VMNMX: {                          /* [b3recomp] as suyu: d = op(min/max(a, b), c); a word-wide, selectors 2; op 0 MRG_16H 1 MRG_16L
+    case MXOP_VMNMX: {                          /* [witchtime] as suyu: d = op(min/max(a, b), c); a word-wide, selectors 2; op 0 MRG_16H 1 MRG_16L
                                                  * 2 MRG_8B0 3 MRG_8B2 4 ACC 5 MIN 6 MAX; b = Rb (bit 50) or a 16-bit immediate read as a byte */
         unsigned bsel = MXB(i, 28, 2), bw = MXB(i, 29, 2), asel = MXB(i, 36, 2), aw = MXB(i, 37, 2), vop = MXB(i, 51, 3);
         int bsg = (int)MXB(i, 49, 1), dsg = (int)MXB(i, 54, 1), breg = (int)MXB(i, 50, 1);
@@ -856,11 +856,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         emit(e, "uint vl = %s; %s = vl;", res, DST);
         break;
     }
-    case MXOP_ISBERD:                           /* [b3recomp] as suyu: the default form only, a move (the vertex index of ALD / AST) */
+    case MXOP_ISBERD:                           /* [witchtime] as suyu: the default form only, a move (the vertex index of ALD / AST) */
         if (MXB(i, 31, 1) || MXB(i, 32, 1) || MXB(i, 33, 2) || MXB(i, 47, 2)) { fail(e, "ISBERD", "ISBERD form %016llx", (unsigned long long)i); break; }
         emit(e, "%s = %s;", DST, A8);
         break;
-    case MXOP_VMAD: case MXOP_VSETP: {          /* [b3recomp] as suyu: video operands (width 0/1 byte, 2 short, 3 word; immediates 16-bit, no selector
+    case MXOP_VMAD: case MXOP_VSETP: {          /* [witchtime] as suyu: video operands (width 0/1 byte, 2 short, 3 word; immediates 16-bit, no selector
                                                  * for VMAD). VMAD: d = a * b + c (no CC / SAT / scale / negation). VSETP: compare (its sign = b's), with
                                                  * the boolean op on Pa / !compare on Pb */
         unsigned asel = MXB(i, 36, 2), aw = MXB(i, 37, 2), bsel = MXB(i, 28, 2), bw = MXB(i, 29, 2);
@@ -1239,7 +1239,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned a = MXB(i, 20, 10), n = MXB(i, 47, 2) + 1, rd = MXB(i, 0, 8);
         if (MXB(i, 8, 8) != 255) { fail(e, "ALD.indexed", "indexed attribute load"); break; }
         if (e->in->stage == MX_GEOMETRY) { fail(e, "ALD (vertex array)", "attribute load in stage %d", e->in->stage); break; }
-        if (tess_stage(e)) {                     /* [b3recomp] as suyu: vertex register bits 39..46; .P (31) a patch attribute, .O (32) the
+        if (tess_stage(e)) {                     /* [witchtime] as suyu: vertex register bits 39..46; .P (31) a patch attribute, .O (32) the
                                                   * control stage's own outputs */
             const char *vx = X(e, MXB(i, 39, 8));
             for (unsigned k = 0; k < n && !e->fail; k++) {
@@ -1265,7 +1265,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_AST: {
         unsigned a = MXB(i, 20, 10), n = MXB(i, 47, 2) + 1, rs = MXB(i, 0, 8);
         if (MXB(i, 8, 8) != 255) { fail(e, "AST.indexed", "indexed attribute store"); break; }
-        if (MXB(i, 31, 1)) {                     /* [b3recomp] patch attribute (tessellation control) */
+        if (MXB(i, 31, 1)) {                     /* [witchtime] patch attribute (tessellation control) */
             if (e->in->stage != MX_TESS_CONTROL) { fail(e, "AST.P", "patch attribute store in stage %d", e->in->stage); break; }
             for (unsigned k = 0; k < n && !e->fail; k++) { const char *dst = patch_attr(e, (a >> 2) + k, 1); if (!e->fail) emit(e, " %s = F(%s);", dst, X(e, rs == 255 ? 255 : rs + k)); }
             break;
@@ -1289,14 +1289,14 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         emit(e, " %s = U(f);", DST);
         break;
     }
-    case MXOP_BAR: {                            /* [b3recomp] BAR.SYNC 0 with immediate zero operands (suyu: the only form it translates) */
+    case MXOP_BAR: {                            /* [witchtime] BAR.SYNC 0 with immediate zero operands (suyu: the only form it translates) */
         if ((i & 0x0000009b00000000ull) != 0x0000008000000000ull || !MXB(i, 43, 1) || !MXB(i, 44, 1) || MXB(i, 8, 8) || MXB(i, 20, 12) || e->in->stage != MX_COMPUTE) {
             fail(e, "BAR", "BAR form %016llx", (unsigned long long)i); break;
         }
         emit(e, "memoryBarrierShared(); memoryBarrierBuffer(); barrier();");
         break;
     }
-    case MXOP_ATOM: case MXOP_RED: {            /* [b3recomp] global atomics (suyu's fields): ATOM d 0..7, b 20..27, size 49..51, op 52..55; RED b 0..7, size
+    case MXOP_ATOM: case MXOP_RED: {            /* [witchtime] global atomics (suyu's fields): ATOM d 0..7, b 20..27, size 49..51, op 52..55; RED b 0..7, size
                                                  * 20..22, op 23..25; address register 8..15 + signed offset 28..47. Ops 0 add 1 min 2 max 3 inc 4 dec 5 and 6 or
                                                  * 7 xor 8 exch 10 safe add; sizes 0 u32 1 s32 3 f32 (add only). Result = the old value. */
         int red = op == MXOP_RED;
@@ -1311,7 +1311,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (rd != 255) emit(e, " %s = old;", D(e, rd));
         break;
     }
-    case MXOP_ATOMS: {                          /* [b3recomp] shared-memory atomics: d 0..7, address register 8..15, b 20..27, size 28..29 (0 u32, 1 s32),
+    case MXOP_ATOMS: {                          /* [witchtime] shared-memory atomics: d 0..7, address register 8..15, b 20..27, size 28..29 (0 u32, 1 s32),
                                                  * word offset 30..51 (signed, x 4), op 52..55 as ATOM */
         unsigned sz = MXB(i, 28, 2), aop = MXB(i, 52, 4), rd = MXB(i, 0, 8), words = e->smem_words;
         int rel = (int)(MXB(i, 30, 22) << 10) >> 10;
@@ -1785,7 +1785,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (vk && in->stage == MX_VERTEX) emit(&h, "float mx_psize;\n");
         for (int k = 0; vk && k < e->nsmp; k++) emit(&h, "layout(set = 1, binding = %u) uniform %s mx_t%u_%s;\n", (unsigned)e->smp[k].binding, e->smp[k].type, (unsigned)e->smp[k].unit, e->smp[k].type);
         for (unsigned n = 0; n < 18; n++) if (e->cbufs >> n & 1) emit(&h, "layout(std430, %sbinding = %u) readonly buffer CB%u { uint c%u[]; };\n", set0, in->binding_base + n, n, n);
-        if (tess_stage(e)) {                    /* [b3recomp] input arrays; the control stage's outputs are arrays too */
+        if (tess_stage(e)) {                    /* [witchtime] input arrays; the control stage's outputs are arrays too */
             if (in->stage == MX_TESS_CONTROL) emit(&h, "layout(vertices = %u) out;\n", in->code[0x0b] ? in->code[0x0b] : 1u);      /* program header: threads per input primitive */
             else emit(&h, "layout(%s, %s, %s%s) in;\n", in->tess_prim == 7 ? "quads" : in->tess_prim == 4 ? "triangles" : "isolines",
                       in->tess_spacing == 0x8e7b ? "fractional_odd_spacing" : in->tess_spacing == 0x8e7c ? "fractional_even_spacing" : "equal_spacing",
@@ -1859,7 +1859,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
             for (unsigned k = 0; k < 16; k++) if (e->ssbos >> k & 1) emit(&h, " case %uu: s%u[o] = v;%s break;\n", k + 1, k, in->track_writes ? S(e, " atomicOr(mx_wm, %uu);", 1u << k) : "");
             emit(&h, " } }\n");
         }
-        for (unsigned bit = 0; bit < 33; bit++) {               /* [b3recomp] global atomics: one function per op and class, the atomic on the block itself */
+        for (unsigned bit = 0; bit < 33; bit++) {               /* [witchtime] global atomics: one function per op and class, the atomic on the block itself */
             if (!(e->gatom >> bit & 1)) continue;
             unsigned aop = bit % 11, cls = bit / 11;
             static const char *const direct[9] = {"atomicAdd", "atomicMin", "atomicMax", NULL, NULL, "atomicAnd", "atomicOr", "atomicXor", "atomicExchange"};

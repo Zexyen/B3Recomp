@@ -56,7 +56,7 @@ static void nvn_generic(Ctx *c) {
  *   OPEN not sourced yet (notes/release-audit.md section 5) */
 #include "nvn_devinfo.h"                                /* gen/: nvn_devinfo_sdk[pname], -1 = no fixed answer in the sdk */
 static const int g_devinfo[0x58] = {
-    /* [b3recomp] API version, when the sdk table has no answer (B3's sdk 13.3.2): Bayonetta 3 accepts major 55 and minor 12
+    /* [witchtime] API version, when the sdk table has no answer (B3's sdk 13.3.2): Bayonetta 3 accepts major 55 and minor 12
      * or more ([game] 0x7100d176c8: cmp w8, #0x37 / cmp w8, #0xc, b.lt), the NVN its headers were built with */
     [0x00] = 55, [0x01] = 12,
     /* the sdk answers from its live device object: */
@@ -103,8 +103,8 @@ void print_devinfo_summary(FILE *out) {
 typedef struct NvnObj { uint64_t key, memory, size, pool, offset, flags; struct NvnObj *next; } NvnObj;
 static NvnObj *g_objs[4096];
 static SRWLOCK g_objs_lock = SRWLOCK_INIT;
-static NvnObj *g_objs_free;                                             /* [b3recomp] dropped entries, reused (never freed: see nobj) */
-/* [b3recomp] Lookups take no lock: B3's main thread and three job threads ask for buffers' pools, flags and addresses all the
+static NvnObj *g_objs_free;                                             /* [witchtime] dropped entries, reused (never freed: see nobj) */
+/* [witchtime] Lookups take no lock: B3's main thread and three job threads ask for buffers' pools, flags and addresses all the
  * time (nvnBufferGetMemoryPool / nvnMemoryPoolGetFlags / nvnBufferGetAddress from 7100d0b7d0), thousands at once in the frame a
  * scene comes back after a pause (85-90 ms in Tokyo, the threads waiting for each other at this lock). An entry is published
  * with a release store at its chain's head; a dropped one is unlinked and kept for reuse, never freed, so a reader on a chain

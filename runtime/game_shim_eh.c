@@ -20,7 +20,7 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-/* [b3recomp] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
+/* [witchtime] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
  * instructions). Outputs that overlap go to the lifted original (its order of stores decides there).

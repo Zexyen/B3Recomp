@@ -1,4 +1,4 @@
-# b3recomp status
+# Witch Time status
 
 Stage 5 (2026-10-24): the title, the cutscenes (VP9 movies through FFmpeg), the prologue and **the first fights** run, with
 sound and scripted pad input (punch, kick, dodge, jump, movement: Verse 1 cleared, Verse 2 reached), without a "not
@@ -15,7 +15,7 @@ implemented" stop in 1,500 s of the prologue and 1,100 s of chapter 1 (tessellat
 | tables | `runtime/gen/*` from the player's sdk/main: layout, 600 imports, 86 lifted SDK functions (NVN texture storage and the GPU kind chooser among them), 90 of 105 NVN device answers |
 | lift | 55,277 functions, 5.1 M instructions -> 407 C files, 5 s |
 | compile | all 409 files compile, 0 failures (about 12 min with 15 jobs on a loaded machine; 47 large functions fall back to lower optimisation) |
-| link | `build/game.so` (154 MB) + `build/b3-game` (4.4 MB) + `libssbu_glslang.so` |
+| link | `build/game.so` (154 MB) + `build/witch-time-game` (4.4 MB) + `libssbu_glslang.so` |
 | check | B2's lifter self-test (382 pair words, 25 SIMD words) and the B3 one (200 words, 4,000 cases) against Unicorn: 0 failures (needs `pip install unicorn`; `build/venv` is fine) |
 
 Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 archives; Kraken entries from a
@@ -27,13 +27,13 @@ Tools: `scripts/pkz.py` (list / check / extract `.pkz`; checked over all 72 arch
 ```
 cd build && mkdir -p run && cd run
 SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSBU_USERDATA=$PWD/userdata \
-    ../b3-game ../../targets/exefs/main.elf 240
+    ../witch-time-game ../../targets/exefs/main.elf 240
 ```
 
 (argument 2 = seconds before the runtime stops it; the log goes to the console, the first calls of every import to
-`boot_trace.txt`.) The process, its window and its audio stream are named **B3 Recomp** (app id `b3recomp`), so they do not
-clash with B2recomp: `pgrep -x "B3 Recomp"` finds it. The executable is `build/b3-game` (`b3-game.exe` on Windows; it was
-`game_native`, the same name as B2recomp's, until 2026-10-24).
+`boot_trace.txt`.) The process, its window and its audio stream are named **Witch Time** (app id `witchtime`), so they do not
+clash with B2recomp: `pgrep -x "Witch Time"` finds it. The executable is `build/witch-time-game` (`witch-time-game.exe` on Windows; it was
+`game_native`, the same name as B2recomp's, until 2026-10-24, then `b3-game` until 2026-10-27).
 
 - `SSBU_FOCUS_NOTIFY=0`: without it the applet model (nnmisc.c) **suspends the game whenever its window is not in the
   foreground** (mode 3, as on the console); a run on a desktop where the window loses the focus then looks hung.
@@ -257,7 +257,7 @@ from frame 22,800 to the end: taken as outside CPU load and left out.)
   (min 50-52 fps windows) were not looked into one by one.
 - **`SSBU_LPROF=<start s>,<seconds>[,<file>]`** (Linux, test only, `runtime/lprof.c`): every thread is sampled with a
   real-time signal (SDL3's threads block SIGPROF), PC + host call chain; `scripts/lprof_report.py <file>` lists the busy
-  threads (innermost frame not waiting in libc) with their self / inclusive functions (nm of b3-game, game.so: `f_<guest
+  threads (innermost frame not waiting in libc) with their self / inclusive functions (nm of witch-time-game, game.so: `f_<guest
   address>`). Lifted code has no unwind tables: its chains stop at the innermost lifted function.
 
 ## Tessellation (2026-10-24)
@@ -546,7 +546,7 @@ per-site hit counts while the frame rate alternates 60 / 120, then read one by o
 
 ## RomFS archives: the game's own Kraken decoder (2026-10-25)
 
-`build/b3-game targets/exefs/main.elf --pkz-dump <folder | -> [filter...]` (cwd `build/<run>`, `SSBU_ROMFS` as for a
+`build/witch-time-game targets/exefs/main.elf --pkz-dump <folder | -> [filter...]` (cwd `build/<run>`, `SSBU_ROMFS` as for a
 run; `runtime/pkz_dump.c`) writes every `.pkz` entry to `<folder>/<entry name>`: Kraken entries decompressed by main's
 own Oodle decoder (lifted), stored ones copied. No window, no audio, no game code but the decoder (image, relocations and
 import handlers only); 8 threads (`SSBU_PKZ_JOBS`); a filter keeps entries whose archive or entry name contains it; `-`
@@ -595,7 +595,7 @@ Bayonetta 2's. Now:
 
 Tests:
 
-- `SSBU_PAD_SELFTEST=1 build/b3-game`: 61/61 (was 49), new: every default key gives exactly its Pro bit, WASD,
+- `SSBU_PAD_SELFTEST=1 build/witch-time-game`: 61/61 (was 49), new: every default key gives exactly its Pro bit, WASD,
   diagonal, walk, mouse to right stick (both axes), pad + keyboard together, rebinding by editing the file while
   running, invert / sensitivity, the pinned-axis receiver.
 - **Game runs with synthetic events** (`SSBU_KBM_SCRIPT`, below; muted, hidden window, a copy of the save, no other
@@ -654,8 +654,8 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
   - **Text** (`scripts/pc_settings_mod.py`, setup step `text`): the message added to all 13 `messmenu.mcd` (spelled with
     each file's own glyphs: PC Settings / PC-Einstellungen / Paramètres PC / Ajustes de PC / Impostazioni PC /
     Настройки ПК / PC設定 / PC设置 / PC 설정; the Chinese and Korean "PC" from the files' Latin font), served as
-    `mods/b3recomp-pc-settings/romfs/ui_000.pkz`: the dump's archive byte for byte plus the 13 entries appended stored
-    and re-pointed (185 MB; made in 0.3 s here, through `b3-game --pkz-dump`). Without
+    `mods/witchtime-pc-settings/romfs/ui_000.pkz`: the dump's archive byte for byte plus the 13 entries appended stored
+    and re-pointed (185 MB; made in 0.3 s here, through `witch-time-game --pkz-dump`). Without
     the mod the row is named with the pause menu's "Options" and the log says how to make the text.
   The pause menu's hint (below) stays: it names F1 / L3 + R3, which work everywhere.
   Runs (muted, hidden window, copies of the save and graphics.ini; `/tmp/shots/optionshook_*`): r3 with the virtual pad
@@ -807,7 +807,7 @@ muted, the committed `config/graphics.ini` (`SSBU_GRAPHICS_CONFIG`), output 1600
 `SSBU_GPUTIMES`: the spans of the frame's command buffers), CPU ms a frame per thread from `/proc/self/task/*/stat` (the
 `nvn_perf` lines, now on Linux too). The run records the load average and GPU busy % before and after and the other
 processes with the GPU open (`meta.json`). It holds `/tmp/b3_bench.lock` while it runs and waits while someone
-else's lock or any "B3 Recomp" process is there. Scenes: *shibuya* (the street fight, fight pattern from 40 s, 330 s),
+else's lock or any "Witch Time" process is there. Scenes: *shibuya* (the street fight, fight pattern from 40 s, 330 s),
 *tokyo* (the earlier save, the heavy scenes, 700 s), *cutscene* (the Shibuya cutscene at `cutscene_fps = 60`, the frames
 between the game's two frame-rate mode changes around it).
 
@@ -863,7 +863,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
    80-86 ms frame at the game-over retry reload. Fights and Tokyo otherwise hold 60 (98 % of frames); the 4K cutscene at
    60 is partly GPU-bound (57 fps).
 3. **Picture correctness**: no reference images to compare with.
-4. **Windows build** of the movie changes and of the b3-game rename (not compiled here).
+4. **Windows build** of the movie changes and of the witch-time-game rename (not compiled here).
 5. **Barriers in the translator's dispatch loop** (`SharedMemoryDataRace-RaceOnLoadStoreVsAtomic`, program #7839):
    structured control flow for stages with `BAR`.
 6. **First-run warm-up**: minutes of held loading screens after a translator change.

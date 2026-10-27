@@ -114,7 +114,7 @@ entry (0x20 bytes)
 
 - Codec names are strings in the name table: `"OodleKraken"` (11,760 entries) and `"None"` (6,972: the Wwise banks,
   text). A Kraken entry is one Oodle stream (header bytes `8c 06`: no CRC flag). **Not zstd.** Oodle is closed source; main
-  contains its own Kraken decoder, so the recompiled game decompresses its files itself, and `b3-game --pkz-dump` runs it
+  contains its own Kraken decoder, so the recompiled game decompresses its files itself, and `witch-time-game --pkz-dump` runs it
   for the tools (STATUS.md, "RomFS archives"; `pkz.py --dump`).
 - **Codec in the loader**: `f_7100cbdf80` reads each entry and maps the codec name to an id: `"None"` 0, `"ZStandard"`
   0x65, `"OodleKraken"` 0xc9 (any other name: the entry is skipped). The id is kept per entry, so a stored entry can
@@ -228,7 +228,7 @@ What stopped boot, in order, and what fixed it:
 
 ## 8. The Options screen, its layouts and its text (2026-10-26)
 
-Found from the decompressed RomFS (`b3-game --pkz-dump`) and main's code; checked by the "PC Settings" row built on it
+Found from the decompressed RomFS (`witch-time-game --pkz-dump`) and main's code; checked by the "PC Settings" row built on it
 (STATUS.md, "PC settings menu").
 
 **Layouts (`ui/ui_option.dat`)**: 13 `option00xx.uid` plus `option.wta` / `.uvd` (the texture is in `ui_option.dtt`). A

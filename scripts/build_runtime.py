@@ -4,17 +4,17 @@
 
 TOOLCHAIN (scripts/toolchain.py): mingw (default) = llvm-mingw into the places below (game.dll.a instead of game.lib, plus
 COPYING.MinGW-w64-runtime.txt); msvc = clang 9 + MSVC link, game.dll from build/obj_msvc, everything into build/out_msvc
-(run it with cwd = build/ and the config variables, e.g. scripts/bench.py --exe build/out_msvc/b3-game.exe).
+(run it with cwd = build/ and the config variables, e.g. scripts/bench.py --exe build/out_msvc/witch-time-game.exe).
 ssbu_glslang.dll is built only by the msvc toolchain (step 4); the mingw build uses the one in build/ (MSVC-built, C
 interface: notes/toolchain-mingw.md 3.1).
 
 --obj: the lifted objects for game.dll (default build/obj); --host-opt: optimisation of the host sources (default O1);
---out: build game.dll, obj_host/ and b3-game.exe there instead of build/ (a variant beside the real build; SDL3.dll and
+--out: build game.dll, obj_host/ and witch-time-game.exe there instead of build/ (a variant beside the real build; SDL3.dll and
 ssbu_glslang.dll are copied from build/, run it with cwd = build/ and SSBU_GRAPHICS_CONFIG / SSBU_CONFIG set).
 
   1. build/game.dll (+ .lib): build/obj/*.obj (scripts/compile_main.py) + runtime/game_shim_eh.c (main has C++ exception tables: the landing-pad resume table goes in)
   2. build/obj_host/*.obj:    runtime host sources (their HOST_SOURCES minus the Smash-only files) + gamedll.c
-  3. build/b3-game.exe:   host objects + game.lib + SDL3 + Windows libraries (+ icon 1 = build/bayonetta2.ico when it exists,
+  3. build/witch-time-game.exe:   host objects + game.lib + SDL3 + Windows libraries (+ icon 1 = build/bayonetta2.ico when it exists,
                               scripts/make_icon_local.py); SDL3.dll copied beside it
   4. build/ssbu_glslang.dll:  runtime/build_glslang.bat (MSVC + glslang 16.6.0 release libraries)
 """
@@ -65,7 +65,7 @@ if LINUX:
     HOST_FLAGS = ['-I', os.path.join(RT, 'posix')] + HOST_FLAGS + ['-D_GNU_SOURCE', '-fPIC', '-D__declspec(x)=', '-D__stdcall=', '-D__cdecl=',
                   '-Werror=implicit-function-declaration', '-Werror=incompatible-function-pointer-types', '-Werror=int-conversion']
     LIBS = ['-lSDL3', '-lGL', '-lcrypto', '-ldl', '-lpthread', '-lm']
-    LIBS += ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil']   # [b3recomp] movies (nnmovie_mf.c's FFmpeg path)   # GL: the OpenGL back end is linked but Linux renders with Vulkan
+    LIBS += ['-lavformat', '-lavcodec', '-lswscale', '-lswresample', '-lavutil']   # [witchtime] movies (nnmovie_mf.c's FFmpeg path)   # GL: the OpenGL back end is linked but Linux renders with Vulkan
 if MINGW:
     HOST_FLAGS += ['-D_WIN32_WINNT=0x0A00']               # mingw-w64 defaults to 0x601 (Windows 7); the Windows SDK to 0x0A00
     # warning guard instead of a blanket -w (finding 100): -w hid "unknown attribute 'thread' ignored" (mingw-w64 turns
@@ -77,7 +77,7 @@ if MINGW:
                    '-Werror=incompatible-function-pointer-types']
     LIBS += ['-lopengl32', '-lws2_32', '-ladvapi32', '-luuid']   # #pragma comment(lib) (nvn_gl.c, nnnet.c, nnmisc.c) and MSVC's
                                                           # default uuid.lib (GUID_NULL): not applied in mingw mode
-DLL, EXE = os.path.join(toolchain.OUT, 'game.so' if LINUX else 'game.dll'), os.path.join(toolchain.OUT, 'b3-game' if LINUX else 'b3-game.exe')
+DLL, EXE = os.path.join(toolchain.OUT, 'game.so' if LINUX else 'game.dll'), os.path.join(toolchain.OUT, 'witch-time-game' if LINUX else 'witch-time-game.exe')
 IMPLIB = lambda dll: dll[:-4] + ('.dll.a' if MINGW else '.lib')     # game.dll's import library
 ICO = os.path.join(BUILD, 'bayonetta2.ico')
 
@@ -121,7 +121,7 @@ def main():
             HOST_FLAGS[0] = '-' + a[11:]
         elif a.startswith('--out='):
             out_dir = os.path.abspath(a[6:])
-            OBJH, DLL, EXE = os.path.join(out_dir, 'obj_host'), os.path.join(out_dir, 'game.dll'), os.path.join(out_dir, 'b3-game.exe')
+            OBJH, DLL, EXE = os.path.join(out_dir, 'obj_host'), os.path.join(out_dir, 'game.dll'), os.path.join(out_dir, 'witch-time-game.exe')
     os.makedirs(OBJH, exist_ok=True)
     if '--skip-dll' not in sys.argv and link_dll():
         return 1
@@ -164,13 +164,13 @@ def main():
         if code:
             print(out[-3000:])
             return code
-        # [b3recomp] the same host objects as a library: the Witch Time launcher (launcher/) loads it and runs the game in
-        # its own process and window (boot.c b3_host_main). Without it the launcher starts b3-game instead, so a failure
+        # [witchtime] the same host objects as a library: the Witch Time launcher (launcher/) loads it and runs the game in
+        # its own process and window (boot.c wt_host_main). Without it the launcher starts witch-time-game instead, so a failure
         # here does not fail the build.
-        host = os.path.join(os.path.dirname(EXE), 'libb3host.so')
+        host = os.path.join(os.path.dirname(EXE), 'libwitchtime.so')
         code, out = run([CLANG, '-shared', '-fuse-ld=lld', '-g', '-Xlinker', '--no-dependent-libraries'] + objs +
-                        [DLL, '-Xlinker', '-rpath=$ORIGIN', '-Xlinker', '-soname=libb3host.so'] + LIBS + ['-o', host])
-        print('libb3host.so: exit %d%s' % (code, '' if not code else ' (the launcher starts b3-game instead)'))
+                        [DLL, '-Xlinker', '-rpath=$ORIGIN', '-Xlinker', '-soname=libwitchtime.so'] + LIBS + ['-o', host])
+        print('libwitchtime.so: exit %d%s' % (code, '' if not code else ' (the launcher starts witch-time-game instead)'))
         if code:
             print(out[-3000:])
         print('%s: %.1f MB (TOOLCHAIN=linux)' % (EXE, os.path.getsize(EXE) / 2 ** 20))

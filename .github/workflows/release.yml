@@ -56,7 +56,7 @@ jobs:
           cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" -DWT_VERSION="${{ steps.version.outputs.version }}"
           cmake --build build/launcher
-          # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libb3host.so then shares
+          # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libwitchtime.so then shares
           patchelf --set-rpath '$ORIGIN' build/witch-time
 
       - name: Package

@@ -46,7 +46,7 @@ typedef struct {
     int slot, wireless, dropped, nbtn, naxes, nhats, gtype, has_accel, has_gyro, virt;
     char guid[40], name[80];
     Uint16 rl, rh; ULONGLONG rsent;
-    int armed;                          /* [b3recomp] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
+    int armed;                          /* [witchtime] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
 } Dev;
 
 static const char *const g_pro[16] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
@@ -56,7 +56,7 @@ static const char *const g_gpax[6] = {"leftx", "lefty", "rightx", "righty", "lef
 static const char *const g_stk[4] = {"LX", "LY", "RX", "RY"};
 static const char *const g_kbn[KB_N] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN",
     "LSTICK_LEFT", "LSTICK_UP", "LSTICK_RIGHT", "LSTICK_DOWN", "RSTICK_LEFT", "RSTICK_UP", "RSTICK_RIGHT", "RSTICK_DOWN", "WALK"};
-/* [b3recomp] the default layout for Bayonetta 3, by the game's own controller page (Options, Controller, Type A): X punch,
+/* [witchtime] the default layout for Bayonetta 3, by the game's own controller page (Options, Controller, Type A): X punch,
  * A kick / confirm, B jump / back, Y shoot, ZL Demon Slave, L weapon switch, ZR dodge, R stance change, right stick press
  * camera / lock-on, left stick press waypoint, D-pad left / up / right Demon Select, down taunt, Minus subscreen, Plus pause.
  * X = left mouse, A = right mouse or Enter, B = Space or Backspace, Y = E, ZL = Q or mouse 4, L = R, ZR = left Shift, R = F,
@@ -136,8 +136,8 @@ static const char *const g_default_ini =
 "; controllers.ini: pads and keyboard for the native build (read by nnpad_sdl.c; reloaded within a second of being saved).\r\n"
 "; Lines starting with ; or # are comments. Names are not case sensitive. Delete this file to get it written again.\r\n"
 ";\r\n"
-"; Find out what SDL sees:       b3-game --pad-test       (devices, GUIDs, live button names)\r\n"
-"; Map a pad by pressing keys:   b3-game --pad-map 1      (player 1; writes a [device <GUID>] section below)\r\n"
+"; Find out what SDL sees:       witch-time-game --pad-test       (devices, GUIDs, live button names)\r\n"
+"; Map a pad by pressing keys:   witch-time-game --pad-map 1      (player 1; writes a [device <GUID>] section below)\r\n"
 ";\r\n"
 "; Pro Controller buttons: A B X Y STICK_L STICK_R L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN\r\n"
 "; Sources on a pad SDL has a mapping for: south east west north back guide start leftstick rightstick leftshoulder\r\n"
@@ -254,7 +254,7 @@ static int parse_vk1(const char *t) {
     if (b[1] == 0) { char ch = b[0]; if (ch >= 'a' && ch <= 'z') ch -= 32; return ch; }
     if (!_stricmp(b, "LEFT")) return VK_LEFT; if (!_stricmp(b, "UP")) return VK_UP;
     if (!_stricmp(b, "RIGHT")) return VK_RIGHT; if (!_stricmp(b, "DOWN")) return VK_DOWN;
-    if (!_stricmp(b, "ENTER") || !_stricmp(b, "RETURN")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;      /* [b3recomp] RETURN, ESCAPE: SDL's names */
+    if (!_stricmp(b, "ENTER") || !_stricmp(b, "RETURN")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;      /* [witchtime] RETURN, ESCAPE: SDL's names */
     if (!_stricmp(b, "SPACE")) return VK_SPACE; if (!_stricmp(b, "TAB")) return VK_TAB; if (!_stricmp(b, "ESC") || !_stricmp(b, "ESCAPE")) return VK_ESCAPE;
     if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
     /* [Recomps#1] the mouse buttons and the left / right modifier keys */
@@ -375,7 +375,7 @@ static void cfg_path(char *out) {
     if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
     char exe[MAX_PATH], tmp[MAX_PATH];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
-    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [b3recomp] '/' on Linux too, as gfx_options.c opt_path */
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux too, as gfx_options.c opt_path */
     if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\controllers.ini", exe);
@@ -402,7 +402,7 @@ static void cfg_load(int first) {                 /* lock held */
     if (text) { cfg_parse(&n, text); free(text); }
     strcpy(n.path, g_cfg.path);
     n.mtime = mt;
-    for (int i = 0; i < KB_N; i++) for (int j = i + 1; j < KB_N; j++) for (int k = 0; k < 4; k++) {     /* [b3recomp] a key that does two things */
+    for (int i = 0; i < KB_N; i++) for (int j = i + 1; j < KB_N; j++) for (int k = 0; k < 4; k++) {     /* [witchtime] a key that does two things */
         int x = n.kb_vk[i] >> (k & 1) * 8 & 0xff;
         if (x && x == (n.kb_vk[j] >> (k >> 1) * 8 & 0xff)) say("nn::pad: [keyboard] key 0x%02x is bound to both %s and %s\n", x, g_kbn[i], g_kbn[j]);
     }
@@ -657,7 +657,7 @@ static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
     for (int i = 0; i < 4; i++) {
         Src s;
         v[i] = stick_src(d, i, &s) ? src_val(d, s) : 0;
-        /* [b3recomp] an unmapped joystick's axis drives a stick only once it has been near the centre: a mouse receiver that
+        /* [witchtime] an unmapped joystick's axis drives a stick only once it has been near the centre: a mouse receiver that
          * presents itself as a joystick (a Swiftpoint Z3: five axes resting at -32768) otherwise held both sticks pushed */
         if (!d->gp) { if (fabsf(v[i]) < 0.25f) d->armed |= 1 << i; if (!(d->armed >> i & 1)) v[i] = 0; }
         if (i & 1) v[i] = -v[i];                             /* SDL: down is positive; the Npad: up is positive */
@@ -1135,7 +1135,7 @@ int nnpad_selftest(const NnHidHooks *h) {
     }
     h->vibrate(0, 0, 0);
 
-    /* ---- [b3recomp] keyboard + mouse on player 1, merged with its pad; bindings from the default file, then rebound */
+    /* ---- [witchtime] keyboard + mouse on player 1, merged with its pad; bindings from the default file, then rebound */
     {
         int ok = 1;
         vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle();
@@ -1295,7 +1295,7 @@ int nnpad_selftest(const NnHidHooks *h) {
         fj = SDL_OpenJoystick(fill);                         /* fills the last free slot: 8 pads */
         rid = vj_make(10, 0x400, 0, 0);
         rj = SDL_OpenJoystick(rid);
-        for (int a = 0; a < 6; a++) SDL_SetJoystickVirtualAxis(rj, a, -32768);      /* [b3recomp] axes resting at one end, as a mouse receiver's */
+        for (int a = 0; a < 6; a++) SDL_SetJoystickVirtualAxis(rj, a, -32768);      /* [witchtime] axes resting at one end, as a mouse receiver's */
         settle();
         check(rid != 0 && !SDL_IsGamepad(rid), "a virtual joystick of unknown type has NO gamepad mapping");
         for (int i = 0; i < 8; i++) { lock(); Dev *d = dev_of(i); if (d && !d->gp) raw_has = 1; unlock(); }

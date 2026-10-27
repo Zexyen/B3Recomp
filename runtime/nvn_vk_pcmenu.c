@@ -1,4 +1,4 @@
-/* [b3recomp] The PC settings menu on the screen (Vulkan; included by nvn_vk.c after nvn_vk_draw.c). pcmenu.c draws the panel into
+/* [witchtime] The PC settings menu on the screen (Vulkan; included by nvn_vk.c after nvn_vk_draw.c). pcmenu.c draws the panel into
  * BGRA pixels on the CPU when its content changes; here they are copied over the presented picture (after the game's frame, the
  * bars and the first-run text: never into the game's textures), at the size of the window.
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:

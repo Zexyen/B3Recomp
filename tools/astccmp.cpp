@@ -1,4 +1,4 @@
-/* [b3recomp] Offline check of the ASTC decoder of runtime/tex_decode.c against ARM's reference codec (astc-encoder,
+/* [witchtime] Offline check of the ASTC decoder of runtime/tex_decode.c against ARM's reference codec (astc-encoder,
  * Apache 2.0; not part of this repository) on random 128-bit blocks of every 2D footprint.
  *   linear formats: the reference's HDR profile, float output (Tegra decodes HDR endpoints in the LDR formats too),
  *                   turned into 8 bits as tex_decode.c does;

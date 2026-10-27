@@ -1,4 +1,4 @@
-"""[b3recomp] Every NVN entry point of YOUR sdk (Bayonetta 3's nnSdk 13.3.2) by name, read from the sdk's own proc table.
+"""[witchtime] Every NVN entry point of YOUR sdk (Bayonetta 3's nnSdk 13.3.2) by name, read from the sdk's own proc table.
 
     python scripts/nvn_procs.py [targets/exefs/sdk.elf] [name ...]     prints "addr <hex> <name>" (sdklift_roots.txt lines)
 
@@ -93,7 +93,7 @@ def vtable(path, typeinfo_name):
 
 
 def gpu_model(path):
-    """[b3recomp] What nvn_sdk.c's device model points at, found by name or shape (docs/RE_NOTES.md section 6):
+    """[witchtime] What nvn_sdk.c's device model points at, found by name or shape (docs/RE_NOTES.md section 6):
     the NVN format table (the GOT slot nvnTextureBuilderGetStorageAlignment loads; 0x30-byte records up to the next
     table, which holds pointers), the texture layout function
     (nvnTextureBuilderGetStorageSize's first call, also called by nvnTextureInitialize), the chip descriptor of the

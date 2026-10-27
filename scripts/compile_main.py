@@ -115,7 +115,7 @@ def up_to_date(name, stamps, cfg, gone):
         s['size'], s['mtime'] = st.st_size, st.st_mtime_ns
     if gone:                                             # a prototype this file may use was removed or changed
         with open(src, encoding='latin-1') as f:
-            if not gone.isdisjoint(WORD.findall(f.read())):   # [b3recomp] a set, not a regex of every name: 442 s -> seconds
+            if not gone.isdisjoint(WORD.findall(f.read())):   # [witchtime] a set, not a regex of every name: 442 s -> seconds
                 return None
     return s
 

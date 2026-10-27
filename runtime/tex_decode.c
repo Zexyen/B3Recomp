@@ -191,7 +191,7 @@ int tex_rule_mip_block_depth_log2(int depth, int bd0) {
     return bd0;
 }
 
-/* [b3recomp] gobs_x: GOBs in a row (a texture with a block width wider than one GOB pads its rows: layout byte 1); 0 = the width's */
+/* [witchtime] gobs_x: GOBs in a row (a texture with a block width wider than one GOB pads its rows: layout byte 1); 0 = the width's */
 static size_t bl_size(int wbytes, int gobs_x, int hrows, int depth, int bh_log2, int bd_log2) {
     size_t pitch = gobs_x ? (size_t)gobs_x * 64 : ((size_t)wbytes + 63) / 64 * 64, rows = 8 << bh_log2, slices = (size_t)1 << bd_log2;
     rows = ((size_t)hrows + rows - 1) / rows * rows;
@@ -292,7 +292,7 @@ int tex_layout(TexLayout *L, int target, int nf, int width, int height, int dept
             L->lvl_w[l] = w; L->lvl_h[l] = h; L->lvl_d[l] = d; L->lvl_wb[l] = wb; L->lvl_hb[l] = hb;
             if (L->levels == 1) { L->lvl_bh_log2[l] = L->bh_log2; L->lvl_bd_log2[l] = L->bd_log2; }      /* a single level keeps the block as given */
             else { L->lvl_bh_log2[l] = tex_rule_mip_block_height_log2(hb, L->bh_log2); L->lvl_bd_log2[l] = tex_rule_mip_block_depth_log2(d, L->bd_log2); }
-            {   /* [b3recomp] block width (packaged layout byte 1, log2 GOBs): rows padded to a multiple of it; a mip level narrower
+            {   /* [witchtime] block width (packaged layout byte 1, log2 GOBs): rows padded to a multiple of it; a mip level narrower
                  * than one block is not padded at all (B3's ASTC 6x6 effect atlases, byte 1 = 4: 43 -> 48, 22 -> 32, then 11, 6, ...
                  * as the game's own mip chains lie in memory) */
                 int gobs = (wb * f->bpb + 63) / 64, bwl = packaged_bw_log2 > 0 && packaged_bw_log2 <= 5 ? packaged_bw_log2 : 0;
@@ -304,7 +304,7 @@ int tex_layout(TexLayout *L, int target, int nf, int width, int height, int dept
             off += L->lvl_size[l];
         }
         block = (size_t)512 << (tex_rule_mip_block_height_log2(L->lvl_hb[0], L->bh_log2) + tex_rule_mip_block_depth_log2(L->lvl_d[0], L->bd_log2));
-        if (L->lvl_gobs_x[0]) block <<= packaged_bw_log2;      /* [b3recomp] the block width too */
+        if (L->lvl_gobs_x[0]) block <<= packaged_bw_log2;      /* [witchtime] the block width too */
         L->layer_size = off;
         L->layer_stride = (off + block - 1) / block * block;
         L->alignment = block;
@@ -841,7 +841,7 @@ static void bit_transfer_signed(int *a, int *b) {
 }
 static void blue_contract(int *e) { e[0] = (e[0] + e[2]) >> 1; e[1] = (e[1] + e[2]) >> 1; }
 
-/* [b3recomp] HDR colour endpoint modes (Khronos Data Format Specification, "HDR endpoint decoding"): 12-bit values in the
+/* [witchtime] HDR colour endpoint modes (Khronos Data Format Specification, "HDR endpoint decoding"): 12-bit values in the
  * logarithmic (LNS) domain. Tegra's hardware decodes them in the LDR formats too (full profile); this decoder used to give
  * such blocks the error colour. (B3's chapter 1 has none: its magenta came from invalid blocks, see "bad:" below.) Checked
  * against ARM's astc-encoder on random blocks: tools/astccmp.cpp. */
@@ -1127,7 +1127,7 @@ static void astc_block(const uint8_t *blk, uint8_t *out, int pitch, int bw, int 
             }
         }
     return;
-bad:      /* [b3recomp] an invalid block (B3: all-zero blocks in a shared mask texture, 102,942 in chapter 1) is transparent black, as
+bad:      /* [witchtime] an invalid block (B3: all-zero blocks in a shared mask texture, 102,942 in chapter 1) is transparent black, as
           * on Tegra (yuzu PR #8910 made its decoders do the same), not the specification's magenta error colour */
     tex_astc_bad_blocks++;
     astc_fill(out, pitch, bw, bh, 0, 0, 0, 0);

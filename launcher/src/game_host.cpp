@@ -30,7 +30,7 @@ std::string main_elf(const Paths& paths) { return paths.repo + "/targets/exefs/m
 GameStart prepare_game(const Paths& paths)
 {
 	GameStart g;
-	if (!file_exists(main_elf(paths)) || !file_exists(paths.build + "/game.so") || !file_exists(paths.build + "/b3-game"))
+	if (!file_exists(main_elf(paths)) || !file_exists(paths.build + "/game.so") || !file_exists(paths.build + "/witch-time-game"))
 	{
 		g.error = "The game is not built yet.";
 		return g;
@@ -45,27 +45,27 @@ GameStart prepare_game(const Paths& paths)
 		g.error = "Cannot open " + paths.run + ".";
 		return g;
 	}
-	const std::string lib = paths.build + "/libb3host.so";
+	const std::string lib = paths.build + "/libwitchtime.so";
 	if (file_exists(lib))
 	{
 		g.host = dlopen(lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
 		if (!g.host)
-			std::fprintf(stderr, "witch-time: %s; starting b3-game instead\n", dlerror());
+			std::fprintf(stderr, "witch-time: %s; starting witch-time-game instead\n", dlerror());
 	}
-	g.in_process = g.host && dlsym(g.host, "b3_host_main") && dlsym(g.host, "plat_exit_hook");
+	g.in_process = g.host && dlsym(g.host, "wt_host_main") && dlsym(g.host, "plat_exit_hook");
 	return g;
 }
 
 void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window)
 {
 	using HostMain = int (*)(int, char**);
-	auto host_main = reinterpret_cast<HostMain>(dlsym(start.host, "b3_host_main"));
+	auto host_main = reinterpret_cast<HostMain>(dlsym(start.host, "wt_host_main"));
 	auto exit_hook = static_cast<void (**)(int)>(dlsym(start.host, "plat_exit_hook"));
 	g_display_close = static_cast<volatile int32_t*>(dlsym(start.host, "g_display_close"));
 	g_self = paths.self;
 	*exit_hook = on_game_exit;
 	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", window);
-	std::string exe = paths.build + "/b3-game", elf = main_elf(paths);
+	std::string exe = paths.build + "/witch-time-game", elf = main_elf(paths);
 	char* argv[] = {exe.data(), elf.data(), nullptr};
 	int code = host_main(2, argv);
 	on_game_exit(code);
@@ -76,7 +76,7 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window)
 int run_child(const Paths& paths, SDL_Window* window)
 {
 	SDL_HideWindow(window);
-	std::string exe = paths.build + "/b3-game", elf = main_elf(paths);
+	std::string exe = paths.build + "/witch-time-game", elf = main_elf(paths);
 	pid_t pid = fork();
 	if (pid == 0)
 	{

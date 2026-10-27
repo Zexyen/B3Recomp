@@ -20,10 +20,10 @@ Further changes (2026-10-15):
 - `recomp_eh.py`: every `.eh_frame` FDE start is a function entry; generated files include `rt_ext.h`.
 - `test_ext.py` (new): decoder + semantics check of the added forms against Unicorn (`pip install unicorn capstone`).
 
-## b3recomp changes (2026-10-23)
+## Witch Time changes (2026-10-23)
 - `recomp.py`: layout (`TEXT_SIZE`, `RELA`, `JMPREL`, `SYMTAB`, `STRTAB`) read from the ELF's first PT_LOAD and DYNAMIC
   (`_layout`), so the same lifter runs on Bayonetta 3's main.
-- `recomp.py` + `rt_ext.h`, marked `[b3recomp]`: the AdvSIMD forms B3's main uses and B2's did not: `{s,u}{max,min}`,
+- `recomp.py` + `rt_ext.h`, marked `[witchtime]`: the AdvSIMD forms B3's main uses and B2's did not: `{s,u}{max,min}`,
   `{s,u}{r,q}shl` by register, `{s,u}q{add,sub}`, `mla`/`mls`, `addp` (vector and scalar), `{s,u}{addl,addw,subl,subw}{2}`,
   `addv`/`{s,u}{max,min}v`/`{s,u}addlv`, `frint{n,m,p,z,a}`, `fcvta{s,u}`, `{s,u}addlp`/`{s,u}adalp`, `{s,u}sra`,
   `{r}shrn{2}`, `orr`/`bic` (vector, immediate), integer `mul`/`mla`/`mls`/`sq{r}dmulh` by element, one-lane

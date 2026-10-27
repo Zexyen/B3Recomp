@@ -1,4 +1,4 @@
-"""[b3recomp] Check the SIMD forms added for Bayonetta 3 (lifter/recomp.py, marked [b3recomp]) against Unicorn.
+"""[witchtime] Check the SIMD forms added for Bayonetta 3 (lifter/recomp.py, marked [witchtime]) against Unicorn.
 
 Finds every instruction of the player's own main.elf whose lifted statement uses one of the new forms, runs each one in
 Unicorn on random registers (and a memory buffer for the one-lane structure loads / stores), and writes a C program that
@@ -29,7 +29,7 @@ def is_simd(w):
 
 
 def lane_ldst(w):
-    """One-lane / replicate structure load-store with 2..4 registers (the [b3recomp] part of the ldN decoder)."""
+    """One-lane / replicate structure load-store with 2..4 registers (the [witchtime] part of the ldN decoder)."""
     return (w >> 24) & 0xbf == 0x0d and ((w >> 21) & 1 or (w >> 13) & 1)
 
 
@@ -102,7 +102,7 @@ def main(path, trials):
                 '    if (buf != (uint8_t *)0x%xULL) { puts("cannot map the test buffer"); return 2; }\n' % (BUF, BUFSZ, BUF))
         f.writelines(lines)
         f.write('    printf("%d words, %d cases, %d failures\\n", ' + str(len(words)) + ', cases, fails);\n    return fails != 0;\n}\n')
-    print('%d words using the [b3recomp] forms, %d cases -> %s' % (len(words), len(lines), path))
+    print('%d words using the [witchtime] forms, %d cases -> %s' % (len(words), len(lines), path))
 
 
 if __name__ == '__main__':

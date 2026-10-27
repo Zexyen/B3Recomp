@@ -475,7 +475,7 @@ void App::go(const Rml::String& to)
 
 void App::refresh_title()
 {
-	built = file_exists(paths.build + "/b3-game") && file_exists(paths.build + "/game.so") &&
+	built = file_exists(paths.build + "/witch-time-game") && file_exists(paths.build + "/game.so") &&
 		file_exists(paths.repo + "/targets/exefs/main.elf");
 	status_bad = false;
 	if (returned_code > 0)

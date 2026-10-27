@@ -33,7 +33,7 @@ for path in glob.glob(os.path.join(rt_dir, 'nvn*.c')):
 
 img = open(elf, 'rb').read()
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lifter'))
-from recomp import _layout                               # [b3recomp] symtab from DYNAMIC
+from recomp import _layout                               # [witchtime] symtab from DYNAMIC
 _, _dt = _layout(img)
 FILE_OFF, SYMTAB, STRTAB = 0x1000, _dt[6], _dt[5]
 imports = []
