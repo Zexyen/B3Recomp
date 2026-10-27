@@ -1,9 +1,9 @@
-/* [b3recomp] Linux sampling profiler of every thread. TEST ONLY; nothing runs without the variable.
+/* [witchtime] Linux sampling profiler of every thread. TEST ONLY; nothing runs without the variable.
  *   SSBU_LPROF=<seconds from start>,<seconds sampled>[,<output file>]   (default output: lprof.txt in the working folder)
  * A thread of its own sends a real-time signal to each thread of the process in turn (about 4,000 samples a second in all); the
  * handler stores the interrupted PC and a short host call chain (backtrace(); it ends where unwind tables end, e.g. in
  * lifted code). The file lists per sample: thread id, the thread's guest name or "-", the PCs innermost first; then the
- * presented frame ("@<frame>", last), and the mappings (/proc/self/maps), so scripts/lprof_report.py can turn addresses into function names (nm of b3-game and
+ * presented frame ("@<frame>", last), and the mappings (/proc/self/maps), so scripts/lprof_report.py can turn addresses into function names (nm of witch-time-game and
  * game.so; lifted functions are f_<guest address>). Included by boot.c (Linux only), like prof15.c. */
 #include <execinfo.h>
 #include <signal.h>

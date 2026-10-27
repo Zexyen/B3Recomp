@@ -1,4 +1,4 @@
-/* [b3recomp] `b3-game <main.elf> --pkz-dump <out folder | -> [filter...]`: every entry of the RomFS .pkz archives
+/* [witchtime] `witch-time-game <main.elf> --pkz-dump <out folder | -> [filter...]`: every entry of the RomFS .pkz archives
  * (%SSBU_ROMFS%, else ../romfs) written to <out folder>/<entry name> (entry names are unique across the 72 archives),
  * Kraken entries decompressed by the game's own Oodle decoder (lifted main), stored ones copied. "-" decodes and checks
  * without writing. A filter keeps entries whose archive file name or entry name contains it. No window, no game loop:

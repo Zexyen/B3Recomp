@@ -232,7 +232,7 @@ static void pace_options(void) {
            g_pace_hz, g_pace_want ? " within 1.1 % (vsync = display / auto), else our own clock" : " (vsync = clock)", g_hold_on ? "at the next tick (steady cadence)" : "as soon as it is ready",
            g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz" : "", 10);
 }
-/* [b3recomp] vsync changed in the PC menu (pcmenu.c): the pacing is chosen again (nvn_vk makes the swapchain again for the present
+/* [witchtime] vsync changed in the PC menu (pcmenu.c): the pacing is chosen again (nvn_vk makes the swapchain again for the present
  * mode). A display lock is let go when it is no longer wanted; one is taken while the game runs only if none was tried yet. */
 void display_vsync_apply(void) { g_pace_want = -1; pace_options(); if (!g_pace_want) InterlockedExchange(&g_lock_k, 0); }
 /* vsync thread, once the refresh is measured: lock or not */
@@ -390,7 +390,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
-    wc.lpszClassName = "b3recomp_window";   /* [b3recomp] */
+    wc.lpszClassName = "witchtime_window";   /* [witchtime] */
     wc.style = CS_OWNDC;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0);   /* [Recomps#1] the game's icon (scripts/make_icon.py), NULL without it */
@@ -417,8 +417,8 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     char exe[MAX_PATH] = "";
     GetModuleFileNameA(NULL, exe, sizeof exe);
     const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *show = getenv("SSBU_SHOW");
-    int visible = show ? atoi(show) != 0 : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "b3-game.exe"));   /* [Recomps#1] our exe: on screen (SSBU_SHOW=0 hides) */
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B3 Recomp");   /* [b3recomp] window title */
+    int visible = show ? atoi(show) != 0 : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "witch-time-game.exe"));   /* [Recomps#1] our exe: on screen (SSBU_SHOW=0 hides) */
+    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "Witch Time");   /* [witchtime] window title */
     if (visible)
         g_hwnd = CreateWindowExA(go->window_mode == 2 ? WS_EX_TOPMOST : 0, wc.lpszClassName, g_title, style | WS_VISIBLE, px, py, r.right - r.left,
                                  r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
@@ -440,7 +440,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     return 0;
 }
 
-int display_window_apply(void) { return 0; }      /* [b3recomp] Windows: the PC menu's window changes apply at the next start (pcmenu.c says so) */
+int display_window_apply(void) { return 0; }      /* [witchtime] Windows: the PC menu's window changes apply at the next start (pcmenu.c says so) */
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
  * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
@@ -580,7 +580,7 @@ static DWORD WINAPI kbm_script_thread(LPVOID arg) {
     }
     return 0;
 }
-/* [b3recomp] window / width / height changed in the PC menu (pcmenu.c): SDL's window calls are made on the window's thread, at
+/* [witchtime] window / width / height changed in the PC menu (pcmenu.c): SDL's window calls are made on the window's thread, at
  * the event pushed here (borderless and fullscreen are both SDL's desktop fullscreen, as at the start). 1 = it will be done. */
 static Uint32 g_apply_ev;
 int display_window_apply(void) {
@@ -614,9 +614,9 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     const GfxOptions *go = gfx_options();
     const char *show = getenv("SSBU_SHOW");
     int visible = show ? atoi(show) != 0 : 1;
-    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B3 Recomp");
+    snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "Witch Time");
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (go->window_mode ? SDL_WINDOW_FULLSCREEN : 0) | (visible ? 0 : SDL_WINDOW_HIDDEN);
-    /* [b3recomp] started by the Witch Time launcher (launcher/, through libb3host.so): the game takes over the launcher's
+    /* [witchtime] started by the Witch Time launcher (launcher/, through libwitchtime.so): the game takes over the launcher's
      * window, so building and playing happen in one window. The launcher has let go of it (no renderer of its own left). */
     SDL_Window *w = (SDL_Window *)SDL_GetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", NULL);
     if (w) {

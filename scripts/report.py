@@ -26,7 +26,7 @@ LOGS = ['build/logs', 'build/setup_state.json', 'build/play/stdout.txt', 'build/
         'build-linux/play/stdout.txt', 'build-linux/boot_trace.txt', 'build-linux/*_freeze.txt', 'build-linux/*_flash.txt',
         'build-linux/*_stalls.txt']
 MAX_LOG = 50 << 20
-OUR_EXES = ('b3-game.exe', 'launcher.exe', 'b2recomp.exe')
+OUR_EXES = ('witch-time-game.exe', 'launcher.exe', 'b2recomp.exe')
 ERROR_DAYS = 30
 CODES = {'c0000005': 'access violation', 'c00000fd': 'stack overflow', 'c0000409': 'fast-fail: ended at once by the program '
          'or a driver in it', 'c0000374': 'heap corruption', 'c000001d': 'illegal instruction', 'c000041d': 'crash inside a '

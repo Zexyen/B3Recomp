@@ -12,7 +12,7 @@ Scales: 1.0 (1600x900), 1.6 (2560x1440), 2.4 (3840x2160); the window is the outp
 scaling, 1.25 here).
 
 A run takes /tmp/b3_bench.lock (another session sharing the PC starts no game run while it is there) and waits while
-the lock of someone else is there or any "B3 Recomp" process runs (it never stops one). It records the load average
+the lock of someone else is there or any "Witch Time" process runs (it never stops one). It records the load average
 and the other processes that have the GPU open, before and after. Results: build/perf/<scene>_<scale>[_<tag>]/:
 log.txt, frametimes.txt (SSBU_FRAMETIMES), gputimes.txt (SSBU_VK_GPUTIME + SSBU_GPUTIMES), meta.json.
 """
@@ -29,7 +29,7 @@ SCENES = {'shibuya': dict(secs=330, fight_from=40, first=1500),
 
 
 DESKTOP = {'kwin_wayland', 'Xwayland', 'plasmashell', 'WebKitWebProces', 'monocode', 'xdg-desktop-por', 'kded6', 'krunner',
-           'kwin_wayland_wr', 'ksmserver', 'polkit-kde-auth', 'xembedsniproxy', 'kaccess', 'org_kde_powerde', 'B3 Recomp', 'b3-game'}   # the desktop's own
+           'kwin_wayland_wr', 'ksmserver', 'polkit-kde-auth', 'xembedsniproxy', 'kaccess', 'org_kde_powerde', 'Witch Time', 'witch-time-game'}   # the desktop's own
 
 
 def fight_script(start, end):
@@ -43,7 +43,7 @@ def fight_script(start, end):
 
 
 def game_pids():
-    r = subprocess.run(['pgrep', '-x', 'B3 Recomp'], capture_output=True, text=True)
+    r = subprocess.run(['pgrep', '-x', 'Witch Time'], capture_output=True, text=True)
     return [int(p) for p in r.stdout.split()]
 
 
@@ -106,15 +106,15 @@ def cmd_run(argv):
     while True:                                     # wait for the PC: someone else's lock, or any game running
         if not os.path.exists(LOCK) and not game_pids():
             break
-        print('perf_bench: waiting (%s)' % ('lock: ' + open(LOCK).read().strip() if os.path.exists(LOCK) else 'a B3 Recomp process runs'), flush=True)
+        print('perf_bench: waiting (%s)' % ('lock: ' + open(LOCK).read().strip() if os.path.exists(LOCK) else 'a Witch Time process runs'), flush=True)
         time.sleep(15)
     with open(LOCK, 'w') as f:
-        f.write('b3recomp perf_bench.py run %s %s (pid %d): benchmark, please start no game run until this file is gone\n' % (scene, scale, os.getpid()))
+        f.write('witchtime perf_bench.py run %s %s (pid %d): benchmark, please start no game run until this file is gone\n' % (scene, scale, os.getpid()))
     meta = dict(scene=scene, scale=scale, tag=tag, extra=extra, start=time.strftime('%Y-%m-%d %H:%M:%S'),
                 load_before=open('/proc/loadavg').read().split()[:3], gpu_users_before=gpu_users(), gpu_busy_before=gpu_busy())
     try:
         with open(os.path.join(out, 'log.txt'), 'w') as log:
-            subprocess.run(['timeout', str(sc['secs'] + 90), '../b3-game', '../../targets/exefs/main.elf', str(sc['secs'])], cwd=RUN, env=env, stdout=log, stderr=subprocess.STDOUT)
+            subprocess.run(['timeout', str(sc['secs'] + 90), '../witch-time-game', '../../targets/exefs/main.elf', str(sc['secs'])], cwd=RUN, env=env, stdout=log, stderr=subprocess.STDOUT)
         while game_pids():                          # our process may still be closing
             time.sleep(1)
     finally:

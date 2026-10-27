@@ -23,9 +23,9 @@ ignored by git; never upload them). Steps, resumable (a finished step is skipped
     tables   runtime/gen/* from YOUR sdk and main (layout, imports, lifted SDK functions, SDK constants, test vectors)
     lift     lifter/recomp_eh.py: your main.elf -> build/gen_eh (C)
     compile  scripts/compile_main.py: build/gen_eh -> build/obj (clang -O2; the longest step)
-    link     scripts/build_runtime.py: build/game.so + build/b3-game (Linux)
+    link     scripts/build_runtime.py: build/game.so + build/witch-time-game (Linux)
     text     scripts/pc_settings_mod.py: the label of the Options screen's "PC Settings" row in the game's own text,
-             mods/b3recomp-pc-settings/ (from your dump's ui_000.pkz, through build/b3-game --pkz-dump)
+             mods/witchtime-pc-settings/ (from your dump's ui_000.pkz, through build/witch-time-game --pkz-dump)
     check    lifter/test_ext.py (needs unicorn; skipped without it)
 
 Tools and libraries: the option, else the environment variable, else <repo>/deps/<name>, else what an earlier run found
@@ -53,7 +53,7 @@ STEPS = ['deps', 'verify', 'convert', 'mods', 'tables', 'lift', 'compile', 'link
 ALWAYS = {'deps', 'mods'}                # cheap: deps fills the tool locations every later step passes on, mods notices
                                          # a changed mods folder
 
-# ---- the one version this port handles: the dump b3recomp was started from (2026-10-23). Bayonetta 3, program id
+# ---- the one version this port handles: the dump Witch Time was started from (2026-10-23). Bayonetta 3, program id
 # 01004A4010FEA000, nnSdk 13.3.2. Which update this is is not known yet (the dump has no control/NACP): main's build id names it.
 VERSION = 'the build with main build ID b47cc79b88b7091e'
 EXEFS = {   # name: (size, sha256, NSO build id or None)
@@ -207,7 +207,7 @@ def step_deps(cx):
     say('  python %s, packages lz4 Pillow: ok' % sys.version.split()[0])
 
     saved = cx.state.get('tools', {})                    # what an earlier run found (its options need not be given again)
-    name = a.toolchain or os.environ.get('TOOLCHAIN') or saved.get('TOOLCHAIN') or 'linux'   # [b3recomp] Linux first
+    name = a.toolchain or os.environ.get('TOOLCHAIN') or saved.get('TOOLCHAIN') or 'linux'   # [witchtime] Linux first
     if name not in ('mingw', 'msvc', 'linux'):
         raise Fail('--toolchain must be mingw, msvc or linux, not %r' % name)
     cx.tools['TOOLCHAIN'] = name
@@ -446,22 +446,22 @@ def step_compile(cx):
 
 
 def step_link(cx):
-    if cx.tools.get('TOOLCHAIN') == 'linux':                 # build/b3-game, build/game.so, build/libb3host.so (the launcher's)
+    if cx.tools.get('TOOLCHAIN') == 'linux':                 # build/witch-time-game, build/game.so, build/libwitchtime.so (the launcher's)
         cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
-        for f in ('game.so', 'b3-game'):
+        for f in ('game.so', 'witch-time-game'):
             if not os.path.isfile(os.path.join(cx.build, f)):
                 raise Fail('build/%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
-        say('  build/b3-game %.1f MB, game.so %.0f MB, %s'
-            % (os.path.getsize(os.path.join(cx.build, 'b3-game')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20,
-               'libb3host.so (the launcher plays in its own window)' if os.path.isfile(os.path.join(cx.build, 'libb3host.so'))
-               else 'no libb3host.so (the launcher starts b3-game)'))
+        say('  build/witch-time-game %.1f MB, game.so %.0f MB, %s'
+            % (os.path.getsize(os.path.join(cx.build, 'witch-time-game')) / 2 ** 20, os.path.getsize(os.path.join(cx.build, 'game.so')) / 2 ** 20,
+               'libwitchtime.so (the launcher plays in its own window)' if os.path.isfile(os.path.join(cx.build, 'libwitchtime.so'))
+               else 'no libwitchtime.so (the launcher starts witch-time-game)'))
         return
     cx.run('link', [sys.executable, os.path.join(REPO, 'scripts', 'build_runtime.py')])
-    for f in ('game.dll', 'b3-game.exe', 'SDL3.dll', 'ssbu_glslang.dll'):
+    for f in ('game.dll', 'witch-time-game.exe', 'SDL3.dll', 'ssbu_glslang.dll'):
         if not os.path.isfile(os.path.join(cx.build, f)):
             raise Fail('build\\%s is missing after the link step (see %s)' % (f, os.path.join(cx.logs, 'link.log')))
-    say('  build\\b3-game.exe %.1f MB, game.dll %.0f MB, launcher.exe'
-        % (os.path.getsize(os.path.join(cx.build, 'b3-game.exe')) / 2 ** 20,
+    say('  build\\witch-time-game.exe %.1f MB, game.dll %.0f MB, launcher.exe'
+        % (os.path.getsize(os.path.join(cx.build, 'witch-time-game.exe')) / 2 ** 20,
            os.path.getsize(os.path.join(cx.build, 'game.dll')) / 2 ** 20))
 
 
@@ -477,7 +477,7 @@ def step_check(cx):
         return
     tail = cx.run('check', [sys.executable, 'test_ext.py'], cwd=os.path.join(REPO, 'lifter'))
     say('  ' + (tail.strip().splitlines() or ['ok'])[-1])
-    # [b3recomp] the forms added for Bayonetta 3, in C with the real helpers against Unicorn (lifter/test_b3.py)
+    # [witchtime] the forms added for Bayonetta 3, in C with the real helpers against Unicorn (lifter/test_b3.py)
     c_file, exe = os.path.join(cx.build, 'test_b3.c'), os.path.join(cx.build, 'test_b3')
     cx.run('check', [sys.executable, 'test_b3.py', c_file], cwd=os.path.join(REPO, 'lifter'))
     cx.run('check', ['clang', '-O1', '-w', '-mcx16', '-I', os.path.join(REPO, 'runtime'), c_file, '-lm', '-o', exe])
@@ -545,7 +545,7 @@ def main():
         redo = [s for s in REDO_ON_UPDATE if s in done]
         for s in redo:
             done.pop(s)
-        say('b3recomp itself changed since the last build (an update): %s run again; compile redoes only the files '
+        say('Witch Time itself changed since the last build (an update): %s run again; compile redoes only the files '
             'that changed' % ', '.join(redo))
     if a.from_step:
         for s in STEPS[STEPS.index(a.from_step):]:
@@ -571,7 +571,7 @@ def main():
         if package_version():
             cx.state['version'] = package_version()
         cx.save()
-        say('Start the game: build/b3-game targets/exefs/main.elf (docs/STATUS.md)')
+        say('Start the game: build/witch-time-game targets/exefs/main.elf (docs/STATUS.md)')
     return 0
 
 

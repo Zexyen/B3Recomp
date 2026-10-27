@@ -1,5 +1,5 @@
 # Witch Time: the launcher. Builds the game from the player's dump (scripts/setup.py) and plays it in the same window
-# (build/libb3host.so). SDL3 + RmlUi on SDL's GPU API; Linux first.
+# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux first.
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
 #     cmake --build build/launcher                      -> build/witch-time
@@ -48,7 +48,7 @@ target_include_directories(witch-time PRIVATE src src/shim "${RMLUI_BACKENDS}")
 set(WT_VERSION "dev build" CACHE STRING "The version shown in the launcher (release builds pass the tag, e.g. v0.1.0)")
 target_compile_definitions(witch-time PRIVATE RMLUI_SDL_VERSION_MAJOR=3 WT_VERSION="${WT_VERSION}")
 target_link_libraries(witch-time PRIVATE RmlUi::Core SDL3::SDL3 ${CMAKE_DL_LIBS})
-# beside b3-game, game.so and libb3host.so: the launcher finds the repository from its own place (build/..)
-# $ORIGIN: a release ships libSDL3.so.0 beside it, which libb3host.so (also $ORIGIN) then shares
+# beside witch-time-game, game.so and libwitchtime.so: the launcher finds the repository from its own place (build/..)
+# $ORIGIN: a release ships libSDL3.so.0 beside it, which libwitchtime.so (also $ORIGIN) then shares
 set_target_properties(witch-time PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
 	BUILD_RPATH "$ORIGIN")

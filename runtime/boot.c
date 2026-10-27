@@ -200,7 +200,7 @@ static DWORD WINAPI profiler(LPVOID arg) {
 }
 
 #ifndef _WIN32
-#include "lprof.c"        /* [b3recomp] SSBU_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
+#include "lprof.c"        /* [witchtime] SSBU_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
 #endif
 #include "prof15.c"       /* SSBU_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
                            * every link that has boot.c has it (build.py's source list is not changed): do NOT name prof15.c as a source of its own. */
@@ -262,7 +262,7 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     g_main_stack_base = (uint64_t)stack;
     g_main_stack_size = stack_size;
 
-    /* [b3recomp] main's DT_INIT first, as the loader runs it: its __nnmusl_init_dso registers main's TLS (b3_imports.c) */
+    /* [witchtime] main's DT_INIT first, as the loader runs it: its __nnmusl_init_dso registers main's TLS (b3_imports.c) */
     printf("\n[phase 0] DT_INIT\n");
     call_guest(&c, GUEST_BASE + DT_INIT_OFF);
 
@@ -295,9 +295,9 @@ static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef __linux__
-    prctl(PR_SET_NAME, "B3 Recomp");          /* [b3recomp] process name (B2recomp's is also game_native); threads made later inherit it */
+    prctl(PR_SET_NAME, "Witch Time");          /* [witchtime] process name (B2recomp's is also game_native); threads made later inherit it */
 #endif
-    SDL_SetAppMetadata("B3 Recomp", NULL, "b3recomp");   /* [b3recomp] window / audio stream / taskbar name; app id b3recomp */
+    SDL_SetAppMetadata("Witch Time", NULL, "witchtime");   /* [witchtime] window / audio stream / taskbar name; app id witchtime */
     {   /* pad tools and their self-test (nnpad_sdl.c): no game is started */
         int nnhid_pad_selftest(void), nnpad_tool(int, char **);
         int tool;
@@ -337,11 +337,11 @@ static int b3_main(int argc, char **argv) {
     register_cxxrt_imports();                /* C / C++ runtime: everything still without a handler (keep last) */
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
     { void register_r2_imports(void); register_r2_imports(); }   /* [Recomps#1] R2: our SDK 3.6.0 imports (r2_imports.c); register_sdk2 below only fills gaps */
-    { void register_b3_imports(void); register_b3_imports(); }   /* [b3recomp] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
-    { void options_row_install(void); options_row_install(); }   /* [b3recomp] the PC Settings row of the game's Options screen */
+    { void register_b3_imports(void); register_b3_imports(); }   /* [witchtime] Bayonetta 3's SDK 13.3.2 imports (b3_imports.c) */
+    { void options_row_install(void); options_row_install(); }   /* [witchtime] the PC Settings row of the game's Options screen */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / SSBU_STRICT (plan\FAKE_AUDIT.md) */
-    /* [b3recomp] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
+    /* [witchtime] `<main.elf> --pkz-dump <folder | -> [filter...]`: the RomFS archives through the game's own Kraken decoder, no window (pkz_dump.c) */
     if (argc > 3 && !strcmp(argv[2], "--pkz-dump")) { int pkz_dump(const char *, char **, int); return pkz_dump(argv[3], argv + 4, argc - 4); }
     display_init();
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
@@ -442,6 +442,6 @@ static int b3_main(int argc, char **argv) {
 
 int main(int argc, char **argv) { return b3_main(argc, argv); }
 
-/* [b3recomp] the same entry in libb3host.so (scripts/build_runtime.py, Linux): the Witch Time launcher (launcher/) loads it
+/* [witchtime] the same entry in libwitchtime.so (scripts/build_runtime.py, Linux): the Witch Time launcher (launcher/) loads it
  * and calls this to run the game in its own process and window (display.c takes the launcher's window) */
-int b3_host_main(int argc, char **argv) { return b3_main(argc, argv); }
+int wt_host_main(int argc, char **argv) { return b3_main(argc, argv); }

@@ -273,10 +273,10 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
             GetModuleFileNameA(NULL, exe, sizeof exe);
             const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *vol = getenv("SSBU_VOLUME");
 #ifndef _WIN32
-            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: b3-game, a / path */
-            int percent = vol ? atoi(vol) : !strcmp(base, "b3-game") ? 100 : 0;
+            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: witch-time-game, a / path */
+            int percent = vol ? atoi(vol) : !strcmp(base, "witch-time-game") ? 100 : 0;
 #else
-            int percent = vol ? atoi(vol) : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "b3-game.exe")) ? 100 : 0;   /* [Recomps#1] our exe is audible */
+            int percent = vol ? atoi(vol) : (!_stricmp(base, "ssbu_native.exe") || !_stricmp(base, "ssbu_user.exe") || !_stricmp(base, "witch-time-game.exe")) ? 100 : 0;   /* [Recomps#1] our exe is audible */
 #endif
             if (percent < 0) percent = 0;
             if (percent > 100) percent = 100;
@@ -299,7 +299,7 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     RET(0);
 }
 
-/* [b3recomp] SDK 13's OpenDefaultAudioOut(AudioOut *, const AudioOutParameter &): no event (the game polls for released
+/* [witchtime] SDK 13's OpenDefaultAudioOut(AudioOut *, const AudioOutParameter &): no event (the game polls for released
  * buffers); the event the older form signals is a private one here. */
 static uint8_t g_own_event[0x40];
 static void audio_OpenDefaultAudioOut13(Ctx *c) { c->x[2] = c->x[1]; c->x[1] = (uint64_t)(uintptr_t)g_own_event; audio_OpenDefaultAudioOut(c); }
@@ -714,8 +714,8 @@ static void opus_constructor(Ctx *c) {                /* HardwareOpusDecoder(int
 static const ImportDef audio_imports[] = {
     {AU("27InitializeAudioOutParameterEPNS0_17AudioOutParameterE"), audio_InitializeAudioOutParameter},
     {AU("19OpenDefaultAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut},
-    {AU("19OpenDefaultAudioOutEPNS0_8AudioOutERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut13},      /* [b3recomp] */
-    {AU("16GetAudioOutStateEPKNS0_8AudioOutE"), audio_GetAudioOutState},                                         /* [b3recomp] */
+    {AU("19OpenDefaultAudioOutEPNS0_8AudioOutERKNS0_17AudioOutParameterE"), audio_OpenDefaultAudioOut13},      /* [witchtime] */
+    {AU("16GetAudioOutStateEPKNS0_8AudioOutE"), audio_GetAudioOutState},                                         /* [witchtime] */
     {AU("23GetAudioOutChannelCountEPKNS0_8AudioOutE"), audio_GetAudioOutChannelCount},
     {AU("21GetAudioOutSampleRateEPKNS0_8AudioOutE"), audio_GetAudioOutSampleRate},
     {AU("23GetAudioOutSampleFormatEPKNS0_8AudioOutE"), audio_GetAudioOutSampleFormat},

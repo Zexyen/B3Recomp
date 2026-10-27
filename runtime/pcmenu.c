@@ -1,4 +1,4 @@
-/* [b3recomp] PC settings menu: a panel drawn by the runtime over the game, for the keys of graphics.ini.
+/* [witchtime] PC settings menu: a panel drawn by the runtime over the game, for the keys of graphics.ini.
  *
  * Open: F1 on the keyboard, or L3 + R3 (both sticks pressed) on player 1's controller; seen at the game's own pad reads
  * (pcmenu_gate, nnhid.c), so nothing runs while it is closed but one key and one mask test per read. While it is open:

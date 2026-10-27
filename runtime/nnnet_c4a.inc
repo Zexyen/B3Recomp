@@ -190,7 +190,7 @@ static void nifm_HandleNetworkRequestResult(Ctx *c) {
     printf("nn::nifm::HandleNetworkRequestResult: no network: 0x1906e, caller 0x%llx\n", (unsigned long long)c->x[30] - 4);
     if (!((off && off[0] == '0') || getenv("SSBU_SEQ") || getenv("SSBU_PLAY") || getenv("SSBU_PRESS") || getenv("SSBU_SCRIPT")) && !InterlockedExchange(&said, 1))
         MessageBoxA(NULL, "Online play is not available.\n\nB2recomp cannot connect to Nintendo's online services, so Quick Match and "
-                          "other online modes do not work.", "B3 Recomp", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TASKMODAL);
+                          "other online modes do not work.", "Witch Time", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TASKMODAL);
     RET(0x1906eu);
 }
 

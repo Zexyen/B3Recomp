@@ -20,7 +20,7 @@
 #include <sys/syscall.h>
 #include <ucontext.h>
 
-/* [b3recomp] the start of this module: the program, or libb3host.so when the launcher runs the game in its process */
+/* [witchtime] the start of this module: the program, or libwitchtime.so when the launcher runs the game in its process */
 extern const char __ehdr_start __attribute__((visibility("hidden")));
 
 static int64_t mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; }
@@ -506,7 +506,7 @@ DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     out[len] = 0;
     return (DWORD)len;
 }
-/* [b3recomp] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libb3host.so) sets
+/* [witchtime] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libwitchtime.so) sets
  * the hook to see the exit first: it goes back to its own screens instead of ending with the game. */
 void (*plat_exit_hook)(int code);
 void plat_exit_process(int code) {

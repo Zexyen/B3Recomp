@@ -43,7 +43,7 @@ from the player's own dump and is never committed or published.
 
 ## Build
 `python scripts/compile_main.py 16` (lifted main → `build/obj`), then `python scripts/build_runtime.py`
-→ `build/game.dll`, `build/b3-game.exe`, `build/SDL3.dll`, `build/ssbu_glslang.dll`.
+→ `build/game.dll`, `build/witch-time-game.exe`, `build/SDL3.dll`, `build/ssbu_glslang.dll`.
 Dependencies (2026-10-16: found through an environment variable or `deps/<name>`, `scripts/toolchain.py`; no fixed paths): SDL3 3.4.18 VC, Vulkan-Headers vulkan-sdk-1.4.341.0, glslang 16.6.0 (+ MSVC for `ssbu_glslang.dll`), llvm-mingw 20260922 (default) or clang 9 + MSVC 14.51. One entry point: `python scripts/setup.py --dump <dump>`.
 
 ## R1 changes (2026-10-16)
@@ -93,12 +93,12 @@ Dependencies (2026-10-16: found through an environment variable or `deps/<name>`
   idle), so a report never stalls the CPU and lands before any later sync is seen as signalled. vk_sync_wait now lands
   through slot_wait. Other counter types still stop the game (named).
 - `display.c`: window title "Bayonetta 2 (Study Build)" (SSBU_TITLE still overrides), class `bayonetta2_study_window`;
-  `b3-game.exe` gets an on-screen window with a taskbar button by default (SSBU_SHOW=0 hides it, as for test copies).
+  `witch-time-game.exe` gets an on-screen window with a taskbar button by default (SSBU_SHOW=0 hides it, as for test copies).
 - `nnapplet.c`: software keyboard dialog title "Software keyboard (Bayonetta 2 Study Build)".
 - `nvn_gl.c`: nvnWindowSetPresentInterval changes are logged.
 - `os_threads.c`: sleep_ns yields until the deadline for sleeps ≤ 200 µs (SSBU_SHORT_SLEEP_US; 0 = timer always): the
   game's job join sleeps 1 ns per check, which took 2–3.5 ms on the waitable timer.
-- `nnaudio.c`: b3-game.exe is audible by default (test copies under other names stay silent).
+- `nnaudio.c`: witch-time-game.exe is audible by default (test copies under other names stay silent).
 - `nvn_vk_draw.c`: read-back buffers (usage TRANSFER_DST only) prefer HOST_CACHED memory; the first 4 large read-backs
   are timed in the log; save_bmp_vk writes the BMP on a worker thread (the screenshot no longer costs the frame ~19 ms).
 - `nvn_vk_draw.c`: resolution scale: the screen-class size comes from the game's window texture (nvn_vk_rs_base,
@@ -195,16 +195,16 @@ Both are marked `[Recomps#1]` in the code; the values the game sees are unchange
   dualshock, dualsense, playstation, ps4, ps5 / xbox (or the word ps), so the DS4Prompts / XBOXPrompts folders of the
   GameBanana prompt mod 360121 need no [prompts] line.
 
-## b3recomp (2026-10-23)
-Copied from B2recomp @7725c57. Changes for Bayonetta 3 (nnSdk 13.3.2) are marked `[b3recomp]`: `b3_imports.c` (new:
+## Witch Time, first called b3recomp (2026-10-23)
+Copied from B2recomp @7725c57. Changes for Bayonetta 3 (nnSdk 13.3.2) are marked `[witchtime]`: `b3_imports.c` (new:
 nnmusl TLS registration, pthread / libc++ once and thread id, SdkMutexType, pmr resources, fs contexts, oe / hid
 no-ops), `boot.c` (phase 0: main's DT_INIT), `os_threads.c` (TLS image in every thread block), `nnfs.c` (SDK 13 fs
 variants), `nvn_stub.c` (API 55.12 default), `r2_imports.c` (3,285 MB application memory), `nnsdk2.c` (empty install
 list), `gen/make_gen.py` (layout from DYNAMIC, DT_INIT, NVN 13.3.2 device answers). `nvn_sdk.c` still holds B2's SDK
 3.6.0 addresses (docs/STATUS.md, next step 1).
 
-## b3recomp
-- `boot.c`, `display.c`, `nnapplet.c`, `nnnet_c4a.inc`: name **B3 Recomp** (2026-10-23), so it does not clash with B2recomp's:
-  process name (`prctl(PR_SET_NAME)`, Linux; threads inherit it), SDL app metadata (name "B3 Recomp", app id `b3recomp`),
-  window title "B3 Recomp" (SSBU_TITLE still overrides), class `b3recomp_window`, software keyboard dialog
-  "Software keyboard (B3 Recomp)", the online-mode message box.
+## Witch Time
+- `boot.c`, `display.c`, `nnapplet.c`, `nnnet_c4a.inc`: name **Witch Time** (B3 Recomp from 2026-10-23, renamed 2026-10-27), so it does not clash with B2recomp's:
+  process name (`prctl(PR_SET_NAME)`, Linux; threads inherit it), SDL app metadata (name "Witch Time", app id `witchtime`),
+  window title "Witch Time" (SSBU_TITLE still overrides), class `witchtime_window`, software keyboard dialog
+  "Software keyboard (Witch Time)", the online-mode message box.

@@ -1,4 +1,4 @@
-/* [b3recomp] NVN texture storage rules answered by the SDK's own code, ported to Bayonetta 3's sdk (nnSdk / NVN 13.3.2,
+/* [witchtime] NVN texture storage rules answered by the SDK's own code, ported to Bayonetta 3's sdk (nnSdk / NVN 13.3.2,
  * API 55.12). Same API as B2recomp's port (nvn_sdk.h); the SDK code is lifted from targets/exefs/sdk.elf by
  * lifter/sdklift.py. Every address comes from runtime/gen/nvn_sdk_addrs.h, which sdklift.py writes from the player's
  * own sdk: NVN entry points by name from the proc table, the vtables by their typeinfo names, the format table and

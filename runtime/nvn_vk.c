@@ -174,7 +174,7 @@ void nvn_vk_missing(const char *what) {
 
 /* [Recomps#1] parameter types as in PFN_vkDebugUtilsMessengerCallbackEXT (was VkFlags, VkFlags): clang >= 16 rejects the
  * assignment below as incompatible function pointer types when the enum's type is int (MSVC target) */
-/* [b3recomp] messages counted per VUID (message id name): the first 3 of each are printed, all of them in the summary at
+/* [witchtime] messages counted per VUID (message id name): the first 3 of each are printed, all of them in the summary at
  * shutdown (vk_validation_summary), most frequent first */
 static struct { char name[96]; LONG64 n; int error; } g_vuid[512];
 static int g_nvuid;
@@ -221,7 +221,7 @@ static void swapchain_destroy(void) {
     V.swapchain = NULL; V.image_count = 0;
 }
 /* Returns 0 when there is nothing to present to (a minimised window has a zero-sized surface). */
-static int g_sc_src;                                  /* [b3recomp] the swapchain images can be read (TRANSFER_SRC): SSBU_PCMENU_SHOT */
+static int g_sc_src;                                  /* [witchtime] the swapchain images can be read (TRANSFER_SRC): SSBU_PCMENU_SHOT */
 static int swapchain_create(void) {
     VkSurfaceCapabilitiesKHR caps;
     VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.gpu, V.surface, &caps);
@@ -245,7 +245,7 @@ static int swapchain_create(void) {
     ci.imageFormat = sf.format; ci.imageColorSpace = sf.colorSpace;
     ci.imageExtent = ext;
     ci.imageArrayLayers = 1;
-    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);      /* [b3recomp] SRC: SSBU_PCMENU_SHOT reads the presented picture */
+    ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);      /* [witchtime] SRC: SSBU_PCMENU_SHOT reads the presented picture */
     g_sc_src = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ci.preTransform = caps.currentTransform;
@@ -263,7 +263,7 @@ static int swapchain_create(void) {
     return 1;
 }
 
-/* present mode from graphics.ini vsync (the environment switch wins); [b3recomp] also when the PC menu changes vsync (pcmenu.c,
+/* present mode from graphics.ini vsync (the environment switch wins); [witchtime] also when the PC menu changes vsync (pcmenu.c,
  * the swapchain is made again after it) */
 static const char *const k_mode[4] = {"immediate", "mailbox", "fifo", "fifo_relaxed"};
 static void present_mode_pick(void) {
@@ -639,4 +639,4 @@ void nvn_vk_selftest_hook(void) {
 }
 
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
-#include "nvn_vk_pcmenu.c"                                 /* [b3recomp] the PC settings menu on the screen */
+#include "nvn_vk_pcmenu.c"                                 /* [witchtime] the PC settings menu on the screen */

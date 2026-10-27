@@ -11,7 +11,7 @@ Layout (little endian; docs/RE_NOTES.md "pkz"):
     entry (0x20 bytes): u32 name offset, u32 codec name offset (both into the name table), u64 size, u64 data offset,
                         u64 stored size
 Codec names seen: "None" (stored) and "OodleKraken" (one Oodle stream per entry). Oodle is not open source: the game has
-its own decoder linked into main. `build/b3-game targets/exefs/main.elf --pkz-dump <folder> [filter...]` runs it (no window;
+its own decoder linked into main. `build/witch-time-game targets/exefs/main.elf --pkz-dump <folder> [filter...]` runs it (no window;
 runtime/pkz_dump.c) and writes every entry, decompressed, to <folder>/<entry name> (names are unique across the archives);
 --dump <folder> takes the Kraken entries from there. --oodle <liboo2corelinux64.so / oo2core_*_win64.dll> uses an Oodle
 library you have instead. With neither, extract writes the stored entries and says which ones it skipped.

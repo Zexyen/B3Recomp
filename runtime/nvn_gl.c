@@ -837,7 +837,7 @@ static uint64_t ww_tex_newest(const uint8_t *p, size_t n, uint64_t seen, uint64_
     return newest;
 }
 
-/* [b3recomp] A texture level decoded on the CPU (ASTC: the GPU here has none) is split into bands of block rows that a few
+/* [witchtime] A texture level decoded on the CPU (ASTC: the GPU here has none) is split into bands of block rows that a few
  * worker threads decode with this one: a 1024x1024 ASTC 10x10 level took 15-20 ms on the render thread, and a new area or
  * effect brings several at once (frames of 60-170 ms in Tokyo). A band of block rows is itself an image tex_decode_rgba8
  * decodes. The caller waits until every woken worker has left the job, so no worker reads the next job half written.
@@ -3684,7 +3684,7 @@ static int pf_cmp_d(const void *a, const void *b) { double x = *(const double *)
 #define printf rpt_printf                  /* [Recomps#1] to the #undef below: the reports go out in one write each (hostrt.c rpt_begin) */
 static void pf_threads(double frames) {
 #ifndef _WIN32
-    {   /* [b3recomp] Linux: the threads' CPU time from /proc/self/task/<tid>/stat (user + system, clock ticks) in 100 ns units as on Windows */
+    {   /* [witchtime] Linux: the threads' CPU time from /proc/self/task/<tid>/stat (user + system, clock ticks) in 100 ns units as on Windows */
         struct { DWORD tid; double ms; } top[512];
         int n = 0;
         double total = 0, tick = 1e7 / (double)sysconf(_SC_CLK_TCK);
@@ -3768,7 +3768,7 @@ static void pf_frame_mark(LONG64 frame) {
     if (!freq) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); freq = f.QuadPart; }
     if (last) g_pf_ft[frame % 300] = (double)(now - last) * 1000.0 / (double)freq;
     if (last && g_hitch_ms) hitch_frame((long long)frame, (double)(now - last) * 1000.0 / (double)freq, g_frame_dispatch > 0);
-    {   /* [b3recomp] TEST ONLY: SSBU_FRAMETIMES=<file>: a line per frame "<frame> <ms since the previous one> <present interval the game asked for> <wall clock s>" */
+    {   /* [witchtime] TEST ONLY: SSBU_FRAMETIMES=<file>: a line per frame "<frame> <ms since the previous one> <present interval the game asked for> <wall clock s>" */
         static FILE *ftf; static int fto;
         if (!fto) { const char *e = getenv("SSBU_FRAMETIMES"); fto = 1; if (e) ftf = fopen(e, "w"); }
         int display_interval(void);
@@ -4246,7 +4246,7 @@ static void prog_finalize(Ctx *c) {
 /* Debug aid SSBU_SHADERDUMP_ALL=<dir>: every shader stage handed to nvnProgramSetShaders, whole, as <dir>/s<program>_<i>.mxd for the
  * offline harness (mxtest.exe). File: "MXD1", u32 program serial, u32 index in the call, u32 control bytes, u32 data bytes, then the
  * control section (at least up to +0x720, plus the assembly text if any) and the code section (header + code + constants). */
-/* [b3recomp] A compute stage's machine code starts at data + control +0x708: 0 for bare code, 0x100 behind B3's 0x12345679
+/* [witchtime] A compute stage's machine code starts at data + control +0x708: 0 for bare code, 0x100 behind B3's 0x12345679
  * header (graphics stages: 0x30, behind 0x12345678 and the program header). The constants' offset (control +0x700) is from
  * the data's start; it is kept relative to the code, which is what the compute paths add it to. */
 static void compute_code(Stage *st, uint64_t control, uint64_t data) {
@@ -4411,7 +4411,7 @@ static void prog_set_shaders_(Ctx *c) {
         int s = stage_of_type[(rd32(data + 0x30) >> 10) & 15], len = (int)rd32(control + 0x6f8);
         if (s < 0 || len <= 0 || len > (4 << 20)) { logf_limited(&nlog2, 10, "nvn_gl: program #%d shader %d: unexpected program header %08x, code size %d\n", p->serial, i, rd32(data + 0x30), len); continue; }
         p->st[s].code = P(data + 0x30); p->st[s].code_len = len; p->st[s].state = 4; p->st[s].dumped = 0; p->st[s].glsl_state = 0; memcpy(p->st[s].ctl, P(control + 0x6f0), 32);
-        if (s == 4) memcpy(p->st[4].tess, P(control + 0x738), 16);      /* [b3recomp] GLSLC tessellation info: primitive mode, spacing, point mode, vertex order (mx_translate.h) */
+        if (s == 4) memcpy(p->st[4].tess, P(control + 0x738), 16);      /* [witchtime] GLSLC tessellation info: primitive mode, spacing, point mode, vertex order (mx_translate.h) */
     }
     if (g_rb == &rb_vk) { LONG64 tb = pf_now(); nvn_vk_program_set(p); nvn_setsh_part[4] += pf_now() - tb; RET(1); return; }       /* V1 M4: the stages go to the Vulkan workers at once (nvn_vk_m4.c) */
     if (!pw_queue_prog(p))
@@ -5041,7 +5041,7 @@ unsigned long nvn_front_present_tid(void) { return g_pf_main_tid; }      /* the 
  * render thread (in order with the other jobs; nobody waits for it). */
 void nvn_vk_present_flush_job(void *arg);              /* nvn_vk_draw.c */
 void nvn_front_post_present_flush(void) { if (g_vk) gl_post(nvn_vk_present_flush_job, NULL, 0); }
-/* [b3recomp] the PC settings menu (pcmenu.c, its own thread): its picture once more, as a job of the render thread */
+/* [witchtime] the PC settings menu (pcmenu.c, its own thread): its picture once more, as a job of the render thread */
 void nvn_vk_pcmenu_job(void *arg);                    /* nvn_vk_pcmenu.c */
 int nvn_front_post_pcmenu(void) { if (g_vk) gl_post(nvn_vk_pcmenu_job, NULL, 0); return g_vk; }
 /* ---- Track L1 (input latency), early present. The game submits the commands of a frame's picture BEFORE it waits for the
@@ -6019,7 +6019,7 @@ static void vk_shutdown_at_exit(void) {
 
 /* nvnBufferFlushMappedRange / nvnMemoryPoolFlushMappedRange (nvn_stub.c): the CPU wrote this memory. Textures stored there are read again. */
 Tex *nvn_front_tex_first(void) { return g_all_tex; }
-/* [b3recomp] The game flushes many ranges a frame from two threads (B3: 83-96 % of MainDraw's and Flush's busy time went
+/* [witchtime] The game flushes many ranges a frame from two threads (B3: 83-96 % of MainDraw's and Flush's busy time went
  * into walking every texture ever made). The live textures with memory, sorted by address (lo), with the running
  * maximum of their ends: a flush finds the last span starting before its end and walks back while that maximum still
  * reaches its start. Rebuilt when a texture is made (the list head moved) or finalized (g_tex_dead_gen).
@@ -6065,7 +6065,7 @@ void nvn_gl_memory_written(uint64_t addr, uint64_t size) {
     }
 }
 
-/* [b3recomp] NVN 55 entry points that B2's NVN 3.6.0 did not have. Each one logs its first calls (nvn55: ...).
+/* [witchtime] NVN 55 entry points that B2's NVN 3.6.0 did not have. Each one logs its first calls (nvn55: ...).
  * Deferred binds take the same arguments as the plain ones; recorded the same way.
  * shortcut: a deferred bind is read when recorded, not when the command buffer runs; upgrade if a game rewrites the array
  * between recording and submit. */
@@ -6243,7 +6243,7 @@ static const struct { const char *name; ImportFn fn; } k_nvn[] = {
     {"nvnMemoryPoolInvalidateMappedRange", n_nop}, {"nvnDeviceRegisterFastClearColor", n_true}, {"nvnDeviceRegisterFastClearColori", n_true},
     {"nvnDeviceRegisterFastClearColorui", n_true}, {"nvnDeviceRegisterFastClearDepth", n_true}, {"nvnTextureBuilderGetZCullStorageSize", n_zero},
     {"nvnTextureGetZCullStorageSize", n_zero},
-    /* [b3recomp] NVN 55 (see above) */
+    /* [witchtime] NVN 55 (see above) */
     {"nvnTextureBuilderGetViewOffset", texb_view_offset},
     {"nvnCommandBufferBindUniformBuffersDeferred", n55_ubos}, {"nvnCommandBufferBindStorageBuffersDeferred", n55_ssbos},
     {"nvnCommandBufferBindTexturesDeferred", n55_textures}, {"nvnCommandBufferBindImagesDeferred", n55_images},

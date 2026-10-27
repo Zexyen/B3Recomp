@@ -218,7 +218,7 @@ static Ctx *new_ctx(uint64_t stack_top) {
     memset(c, 0, sizeof *c);
     c->x[31] = stack_top & ~15ull;
     c->tpidr = (uint64_t)VirtualAlloc(NULL, 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    { void tls_init_block(uint64_t tp); tls_init_block(c->tpidr); }   /* [b3recomp] main's static TLS (b3_imports.c) */
+    { void tls_init_block(uint64_t tp); tls_init_block(c->tpidr); }   /* [witchtime] main's static TLS (b3_imports.c) */
     return c;
 }
 
@@ -785,7 +785,7 @@ static const ImportDef thread_imports[] = {
     {OS("15InitializeEventEPNS0_9EventTypeEbNS0_14EventClearModeE"), ev_init}, {OS("13FinalizeEventEPNS0_9EventTypeE"), nothing},
     {OS("11SignalEventEPNS0_9EventTypeE"), ev_signal}, {OS("10ClearEventEPNS0_9EventTypeE"), ev_clear}, {OS("9WaitEventEPNS0_9EventTypeE"), ev_wait},
     {OS("14TimedWaitEventEPNS0_9EventTypeENS_8TimeSpanE"), ev_timedwait},
-    {OS("12TryWaitEventEPNS0_9EventTypeE"), ev_trywait},      /* [b3recomp] B3's movie player polls its decoder events with it */
+    {OS("12TryWaitEventEPNS0_9EventTypeE"), ev_trywait},      /* [witchtime] B3's movie player polls its decoder events with it */
     {OS("20InitializeLightEventEPNS0_14LightEventTypeEbNS0_14EventClearModeE"), ev_init}, {OS("18FinalizeLightEventEPNS0_14LightEventTypeE"), nothing},
     {OS("16SignalLightEventEPNS0_14LightEventTypeE"), ev_signal}, {OS("15ClearLightEventEPNS0_14LightEventTypeE"), ev_clear},
     {OS("14WaitLightEventEPNS0_14LightEventTypeE"), ev_wait},

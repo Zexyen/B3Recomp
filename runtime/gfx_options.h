@@ -23,13 +23,13 @@ typedef struct {
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */
     float hdr_paper_white;  /* [Recomps#1] hdr_paper_white: the game's white in nits (80 .. 1000); 0 = auto: Windows' SDR content brightness */
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
-    int cutscene_fps;       /* [b3recomp] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
+    int cutscene_fps;       /* [witchtime] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
                              * env SSBU_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
-    float texture_lod_bias; /* [b3recomp] texture_lod_bias = 0 (the game's own) .. -3 (sharper: finer mip levels) .. +3; added to every sampler that uses
+    float texture_lod_bias; /* [witchtime] texture_lod_bias = 0 (the game's own) .. -3 (sharper: finer mip levels) .. +3; added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env SSBU_TEXTURE_LOD_BIAS wins */
 } GfxOptions;
 const GfxOptions *gfx_options(void);      /* any thread; read once (the file is written with defaults when it does not exist) */
 int gfx_pace_rate(void);                  /* [Recomps#1] the rate display.c paces the game at: 60, or frame_rate above 60 (SSBU_PACE_120=0: 60 and the lifted limiter) */
-int gfx_ini_get(const char *key, char *out, size_t n);      /* [b3recomp] graphics.ini's value of a key as the reader sees it; 0 = not in the file */
-int gfx_option_set(const char *key, const char *val);     /* [b3recomp] rewrite the key in graphics.ini (comments and other keys kept), take over the live keys; 0 = not written */
+int gfx_ini_get(const char *key, char *out, size_t n);      /* [witchtime] graphics.ini's value of a key as the reader sees it; 0 = not in the file */
+int gfx_option_set(const char *key, const char *val);     /* [witchtime] rewrite the key in graphics.ini (comments and other keys kept), take over the live keys; 0 = not written */
 #endif

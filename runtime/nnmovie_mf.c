@@ -1,4 +1,4 @@
-/* movie:: (the SDK's video player library) on Windows Media Foundation, and on FFmpeg on Linux ([b3recomp], see the FFmpeg section).
+/* movie:: (the SDK's video player library) on Windows Media Foundation, and on FFmpeg on Linux ([witchtime], see the FFmpeg section).
  *
  * The SDK library is a port of Android's stagefright (NuMediaExtractor / MediaCodec); the game's own
  * copy lives in subsdk0, whose exported symbols (movie::NnExtractor, movie::DecoderImpl, movie::NnMediaData,
@@ -81,7 +81,7 @@ STDAPI MFCreateMFByteStreamOnStream(IStream *pStream, IMFByteStream **ppByteStre
 #define MOVIE_BACKEND "Media Foundation"
 #else
 #define MOVIE_BACKEND "FFmpeg"
-/* [b3recomp] Linux: the same protocol on FFmpeg (libavformat demuxes, libavcodec decodes, swscale / swresample make the
+/* [witchtime] Linux: the same protocol on FFmpeg (libavformat demuxes, libavcodec decodes, swscale / swresample make the
  * NV12 frames and 16-bit PCM the game takes). A "sample" is a decoded block in host memory; see the FFmpeg section below. */
 #include <windows.h>
 #include <libavformat/avformat.h>
@@ -125,7 +125,7 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 #define SLOT_BYTES 64
 #include "image_layout.h"
 #define GAME_FREE (GUEST_BASE + GAME_FREE_OFF)        /* [Recomps#1] our main's exported free, as in libcxx.c */
-/* [b3recomp] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new [game 0x7100cd50f0], which free()
+/* [witchtime] B3 allocates the 16-byte Extractor / Decoder objects with its heap-aware operator new [game 0x7100cd50f0], which free()
  * does not know ("not a live block" at the end of the opening movie): the deleting destructors release them with operator delete. */
 #define GAME_DELETE (GUEST_BASE + GAME_OPDELETE_OFF)
 #define TOKEN_MAGIC 0x4d4f564945544f4bULL             /* "MOVIETOK" */
@@ -774,7 +774,7 @@ static int ext_fill(Ext *e) {
         if (!tr->selected) continue;
         for (int guard = 0; !e->ahead[i].have && !tr->eos && guard < 256; guard++) {
             IMFSample *s = NULL; int64_t us = 0;
-            int r = src_read(e, i, &s, &us);              /* [b3recomp] Media Foundation or FFmpeg (above) */
+            int r = src_read(e, i, &s, &us);              /* [witchtime] Media Foundation or FFmpeg (above) */
             {   /* test: SSBU_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
                 static int fail_at = -1;
                 if (fail_at < 0) { const char *v = getenv("SSBU_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
@@ -1311,7 +1311,7 @@ static void dec_AcquireOutputBufferIndex(Ctx *c) {    /* (int *index, int64 *tim
 
 /* Copies the decoded sample of slot i into the game's buffer; returns the number of bytes written. */
 #ifndef _WIN32
-static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {      /* [b3recomp] FFmpeg: already in the game's layout */
+static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {      /* [witchtime] FFmpeg: already in the game's layout */
     if (!s->s || !s->s->data) return 0;
     size_t n = s->s->len < cap ? s->s->len : cap;
     if (s->s->len > cap && !d->warned_small) { d->warned_small = 1; printf("movie: game buffer of %zu bytes is smaller than a decoded %s (%zu)\n", cap, d->is_video ? "frame" : "block", s->s->len); }
@@ -1472,7 +1472,7 @@ static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, De
     d->type = (int)A1; d->fmt = (int)A2; d->mode = (int)A3;
     d->is_video = d->type >= 1 && d->type <= 3;
     d->nin = 8;                                       /* compressed-data buffers: only bound how far the feed runs ahead of the codec */
-    /* [b3recomp] decoded frames the game may hold before the codec stalls. B3's player [game 0x7100cd6cb4] keeps them in a
+    /* [witchtime] decoded frames the game may hold before the codec stalls. B3's player [game 0x7100cd6cb4] keeps them in a
      * pool of 16 nodes; a frame acquired while the pool is empty [0x7100cd7244] is neither queued nor released, so the
      * picture stops (ev0011, which is pre-rolled while ev0010 plays and then taken in one burst: this decoder has no
      * decoding time). 16 = the pool: the codec stalls first. (SSBU's player wanted 48: over a second before its first frame.) */
@@ -1578,7 +1578,7 @@ static void movie_CreateH264DecoderConfigurationData(Ctx *c) {   /* (sps, spsLen
 static const ImportDef movie_mf_imports[] = {
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", extractor_ctor},
     {"_ZN5movie9ExtractorC2ENS_13ContainerTypeE", extractor_ctor},
-    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [b3recomp] SDK 13's form (x2 = cache size) */
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [witchtime] SDK 13's form (x2 = cache size) */
     {"_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie7DecoderC2ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", movie_SetAllocator},

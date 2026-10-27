@@ -7,9 +7,9 @@ The Options screen's labels are messages of ui/ui_menu[_<lang>].dat -> messmenu.
 of a bank named by the row: the language names are in ui/ui_core[_<lang>].dat -> messcore.mcd (PlatinumGames MCD,
 docs/RE_NOTES.md section 8). This adds the rows' labels (MENU_OPTION_LIST_PC_*) to the 13 messmenu.mcd and their values
 (CORE_PC_*; messcore has the digits) to the 13 messcore.mcd, spelled with each file's own glyphs, and writes
-<out>/b3recomp-pc-settings/romfs/ui_000.pkz: the dump's archive byte for byte, with those 26 entries appended stored ("None")
-and their entry records pointed at the copies. The decompressed entries come from --dump (a `b3-game --pkz-dump` folder),
-else from build/b3-game --pkz-dump into a temporary folder.
+<out>/witchtime-pc-settings/romfs/ui_000.pkz: the dump's archive byte for byte, with those 26 entries appended stored ("None")
+and their entry records pointed at the copies. The decompressed entries come from --dump (a `witch-time-game --pkz-dump` folder),
+else from build/witch-time-game --pkz-dump into a temporary folder.
 Defaults: --romfs targets/romfs, --out mods (beside build/, where the runtime looks). The output holds the game's files:
 it stays on your PC (git ignores mods/); never share it.
 """
@@ -86,7 +86,8 @@ CORE = [
 ]
 CORE += [('CORE_PC_RES_' + v.replace('.', ''), ALL(v)) for v in ('1.0', '1.2', '1.6', '2.4')]
 LANGS = list(MENU[0][1])
-MOD = 'b3recomp-pc-settings'
+MOD = 'witchtime-pc-settings'
+OLD_MOD = 'b3recomp-pc-settings'                 # its name before the rename to Witch Time (2026-10-27)
 
 
 # ---- MCD: header {u32 offset, count} x 5 (messages, symbols, glyphs, fonts, events); message {paragraphs, count, seq,
@@ -220,12 +221,12 @@ def main(argv):
     assert all(any(e[0] == n for e in entries) for n in names), 'ui_000.pkz: not the archive known'
     dump, tmp = args.get('--dump'), None
     if not dump:
-        tmp = dump = tempfile.mkdtemp(prefix='b3pcmod_')
-        exe = os.path.join(REPO, 'build', 'b3-game' + ('.exe' if os.name == 'nt' else ''))
+        tmp = dump = tempfile.mkdtemp(prefix='wtpcmod_')
+        exe = os.path.join(REPO, 'build', 'witch-time-game' + ('.exe' if os.name == 'nt' else ''))
         r = subprocess.run([exe, os.path.join(REPO, 'targets', 'exefs', 'main.elf'), '--pkz-dump', tmp, 'ui/ui_menu', 'ui/ui_core'],
                            cwd=os.path.join(REPO, 'build'), env=dict(os.environ, SSBU_ROMFS=romfs), capture_output=True, text=True)
         if r.returncode:
-            sys.exit('b3-game --pkz-dump failed:\n' + r.stdout[-2000:] + r.stderr[-2000:])
+            sys.exit('witch-time-game --pkz-dump failed:\n' + r.stdout[-2000:] + r.stderr[-2000:])
     try:
         new, bad = {}, []
         for n in names:
@@ -246,6 +247,8 @@ def main(argv):
         table = bytearray(f.read(count * 0x20 + nsize))
     none = bytes(table[count * 0x20:]).index(b'None\0')
     assert none == 0 or table[count * 0x20 + none - 1] == 0
+    # the same mod under its old name would serve ui_000.pkz first (mods sort by name), and options_row.c looks for MOD
+    shutil.rmtree(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(out))), OLD_MOD), ignore_errors=True)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     shutil.copyfile(arc, out + '.tmp')
     pos = (fsize + align - 1) // align * align

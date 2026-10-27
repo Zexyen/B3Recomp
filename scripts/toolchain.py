@@ -3,9 +3,9 @@ variable, or --toolchain=<name> on the command line of compile_main.py / build_r
 
   mingw  llvm-mingw 20260922 (clang 23.1.2, UCRT, x86_64-w64-mingw32; folder: LLVM_MINGW or deps/llvm-mingw): clang + lld +
          mingw-w64 import libraries, all redistributable; the programs need only Windows 10/11 (notes/toolchain-mingw.md,
-         findings 95-101). Outputs: build/obj, build/game.dll, build/b3-game.exe (+ COPYING.MinGW-w64-runtime.txt).
+         findings 95-101). Outputs: build/obj, build/game.dll, build/witch-time-game.exe (+ COPYING.MinGW-w64-runtime.txt).
   linux  the system's clang + lld (folder: LLVM_ROOT or deps/llvm, else clang on PATH), ELF objects built with -fPIC for a
-         game.so (Linux port, in progress). Outputs: build/obj_linux, and build/game.so, build/b3-game, build/obj_host/.
+         game.so (Linux port, in progress). Outputs: build/obj_linux, and build/game.so, build/witch-time-game, build/obj_host/.
   msvc   clang 9.0.0 (folder: LLVM_ROOT or deps/llvm) for the MSVC target: links with MSVC's link.exe, CRT and Windows SDK libraries
          (needs the Visual Studio Build Tools). Outputs beside the default build: build/obj_msvc, build/out_msvc/.
 The default toolchain's outputs live in the standard places, which every run script, the launcher and bench.py use; an
@@ -21,7 +21,7 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 BUILD = os.path.join(ROOT, 'build')
 DEPS = os.path.join(ROOT, 'deps')
 NAMES = ('mingw', 'msvc', 'linux')
-DEFAULT = 'linux'                                     # [b3recomp] Linux first
+DEFAULT = 'linux'                                     # [witchtime] Linux first
 
 
 def _name():
@@ -54,7 +54,7 @@ if NAME not in NAMES:
 MINGW = NAME == 'mingw'
 # the default toolchain builds into the standard places; the other one beside them, in folders named after it
 OBJ = os.path.join(BUILD, 'obj' if NAME == DEFAULT else 'obj_' + NAME)        # lifted objects (compile_main.py)
-OUT = BUILD if NAME in (DEFAULT, 'linux') else os.path.join(BUILD, 'out_' + NAME)   # game.dll, obj_host/, b3-game.exe (Linux: no Windows build beside it)
+OUT = BUILD if NAME in (DEFAULT, 'linux') else os.path.join(BUILD, 'out_' + NAME)   # game.dll, obj_host/, witch-time-game.exe (Linux: no Windows build beside it)
 
 if MINGW:
     LLVM_MINGW = need('LLVM_MINGW', 'llvm-mingw', 'bin/x86_64-w64-mingw32-clang.exe', 'llvm-mingw (TOOLCHAIN=mingw)')
