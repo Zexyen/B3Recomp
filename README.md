@@ -23,20 +23,25 @@ Details: [docs/STATUS.md](docs/STATUS.md); findings: [docs/RE_NOTES.md](docs/RE_
 
 ## Build (Linux)
 
-Needs Python 3.10+ with `lz4` and `Pillow` (`unicorn` for the self-test), clang + lld, SDL3, Vulkan headers and loader,
-glslang. Your dump: one folder with `exefs/` (`main`, `sdk`, `subsdk0`, `rtld`, `main.npdm`, plain NSO files) and
-`romfs/` (the `.pkz` archives and `movie/`), extracted with your own tools from your own console and game; this project
-decrypts nothing.
+Needs clang + lld and the development files of SDL3, Vulkan (headers and loader), glslang, FFmpeg, OpenSSL and OpenGL
+(the `deps` step checks them and names what is missing). No Python. Your dump: one folder with `exefs/` (`main`, `sdk`,
+`subsdk0`, `rtld`, `main.npdm`, plain NSO files) and `romfs/` (the `.pkz` archives and `movie/`), extracted with your
+own tools from your own console and game; this project decrypts nothing.
+
+The build is one program, `wtbuild` (`tools/wtbuild`, Rust). A release ships it built as `build/wtbuild`; in a checkout,
+build it once with cargo:
 
 ```
-python scripts/setup.py --dump <your dump folder>
+cargo build --release --manifest-path tools/wtbuild/Cargo.toml
+tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
 ```
 
 Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which does the same with progress on screen
 and then plays in its own window.
 
-Steps and options are as in B2recomp's [BUILDING.md](../B2recomp/BUILDING.md) (minus the Windows launcher, icon and
-game-specific patches). The `verify` step accepts only the build named in `scripts/setup.py`.
+The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
+are those of `scripts/setup.py`, which stays for the Windows toolchains and as the reference the Rust port is checked
+against (`tools/wtbuild/README.md`). The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
 
 ## Credits
 

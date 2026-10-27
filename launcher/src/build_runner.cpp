@@ -1,4 +1,5 @@
 #include "build_runner.h"
+#include "config.h"
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
@@ -42,7 +43,7 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 	pid = fork();
 	if (pid == 0)
 	{
-		setpgid(0, 0);                       // its own group: stop() ends setup.py and the compilers it started
+		setpgid(0, 0);                       // its own group: stop() ends the build and the compilers it started
 		dup2(p[1], 1);
 		dup2(p[1], 2);
 		close(p[0]);
@@ -50,14 +51,14 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 		if (chdir(repo.c_str()))
 			_exit(127);
 		setenv("PYTHONUNBUFFERED", "1", 1);
-		std::vector<std::string> argv = {"python3", repo + "/scripts/setup.py"};
+		std::vector<std::string> argv = build_command(repo, "setup");
 		argv.insert(argv.end(), args.begin(), args.end());
 		std::vector<char*> a;
 		for (std::string& s : argv)
 			a.push_back(s.data());
 		a.push_back(nullptr);
 		execvp(a[0], a.data());
-		std::printf("python3 cannot be started: %s\n", std::strerror(errno));
+		std::printf("%s cannot be started: %s\n", a[0], std::strerror(errno));
 		_exit(127);
 	}
 	close(p[1]);

@@ -15,7 +15,10 @@ impl Rel {
     pub fn read(d: &[u8]) -> Rel {
         let (_, dt) = layout(d);
         let (rela, relasz) = (*dt.get(&7).unwrap_or(&0) as usize, *dt.get(&8).unwrap_or(&0) as usize);
-        let mut r = Rel { order: Vec::new(), map: HashMap::new() };
+        let mut r = Rel {
+            order: Vec::new(),
+            map: HashMap::new(),
+        };
         for i in 0..relasz / 24 {
             let o = 0x1000 + rela + i * 24;
             let (off, info, add) = (u64_at(d, o), u64_at(d, o + 8), i64_at(d, o + 16));
@@ -55,7 +58,10 @@ fn refs(ws: &[u32], lo: i64, hi: i64) -> Vec<(Kind, i64)> {
     let (lo, hi) = (lo.max(0) as usize, (hi.max(0) as usize).min(ws.len()));
     for (k, &w) in ws.iter().enumerate().take(hi).skip(lo) {
         if w & 0x9f000000 == 0x90000000 {
-            page.insert(w & 31, ((k as i64 * 4) & !0xfff) + (sext(((((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3)) as i64, 21) << 12));
+            page.insert(
+                w & 31,
+                ((k as i64 * 4) & !0xfff) + (sext(((((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3)) as i64, 21) << 12),
+            );
         } else if w & 0xffc00000 == 0x91000000 && page.contains_key(&((w >> 5) & 31)) {
             out.push((Kind::Add, page[&((w >> 5) & 31)] + ((w >> 10) & 0xfff) as i64));
         } else if w & 0xffc00000 == 0xf9400000 && page.contains_key(&((w >> 5) & 31)) {
@@ -174,7 +180,10 @@ pub fn gpu_model(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
         let (w, w2) = (ws[k], ws[k + 1]);
         if w & 0x9f000000 == 0x90000000 && w2 & 0xffc00000 == 0xf9400000 && (w2 >> 5) & 31 == w & 31 {
             let page = ((func + 4 * k as i64) & !0xfff) + (sext(((((w >> 5) & 0x7ffff) << 2) | ((w >> 29) & 3)) as i64, 21) << 12);
-            fmt = Some(rel.get(page + ((w2 >> 10) & 0xfff) as i64 * 8).ok_or("NVN format table slot is not relocated")?);
+            fmt = Some(
+                rel.get(page + ((w2 >> 10) & 0xfff) as i64 * 8)
+                    .ok_or("NVN format table slot is not relocated")?,
+            );
             break;
         }
     }

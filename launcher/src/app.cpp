@@ -14,7 +14,7 @@ namespace {
 // the layout size of every screen, in dp; the window scales it (rescale)
 constexpr float LAYOUT_W = 1280, LAYOUT_H = 800;
 
-// setup.py's steps as five rows a player follows, and how much of the whole build each step is (about)
+// the build's steps as five rows a player follows, and how much of the whole build each step is (about)
 struct Group { const char *num, *name, *note; std::vector<std::string> steps; };
 const std::vector<Group>& groups()
 {
@@ -301,7 +301,7 @@ int App::run()
 		draw();
 	}
 	if (runner.running())
-		runner.stop();                       // setup.py resumes from this step next time
+		runner.stop();                       // the build resumes from this step next time
 	release_window();
 	SDL_DestroyWindow(window);
 	SDL_Quit();
@@ -671,7 +671,7 @@ void App::check_dump()
 		checking = true;
 	}
 	else
-		checks = {{"python3 cannot be started", "", "fail"}};
+		checks = {{"The build tool cannot be started", "", "fail"}};
 	for (const char* v : {"checks", "checking", "verified"})
 		model.DirtyVariable(v);
 }
@@ -688,7 +688,7 @@ void App::start_build()
 	if (runner.start(paths.repo, args))
 		job = Job::build;
 	else
-		build_error = "python3 cannot be started.";
+		build_error = "The build tool cannot be started.";
 	go("build");
 }
 
@@ -741,7 +741,7 @@ void App::tick()
 		{
 			build_error.clear();
 			bool after = false;
-			for (const std::string& l : runner.lines)       // what setup.py printed after FAILED
+			for (const std::string& l : runner.lines)       // what the build printed after FAILED
 			{
 				if (after && build_error.size() < 600)
 					build_error += (build_error.empty() ? "" : " ") + l.substr(std::min(l.size(), l.find_first_not_of(' ')));

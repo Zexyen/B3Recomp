@@ -3,8 +3,9 @@
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with the archive attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archive is kept as a workflow artifact
 #
-# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with build/witch-time and the
-# libSDL3.so.0 it was built with. Nothing derived from the game is in it: the player builds that from their own dump.
+# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with build/witch-time, the
+# libSDL3.so.0 it was built with and build/wtbuild (the build tool, tools/wtbuild: no Python needed to build the game).
+# Nothing derived from the game is in it: the player builds that from their own dump.
 name: Release
 
 on:
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
   # a pull request that changes the launcher builds the archive too, as a check
   pull_request:
-    paths: ['launcher/**', '.github/workflows/release.yml']
+    paths: ['launcher/**', 'tools/wtbuild/**', '.github/workflows/release.yml']
 
 permissions:
   contents: write
@@ -34,6 +35,11 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "name=WitchTime-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+
+      - name: wtbuild
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
 
       - name: Packages
         run: |
@@ -59,6 +65,11 @@ jobs:
           # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libwitchtime.so then shares
           patchelf --set-rpath '$ORIGIN' build/witch-time
 
+      - name: wtbuild
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
       - name: Package
         run: |
           name="${{ steps.version.outputs.name }}"
@@ -66,6 +77,7 @@ jobs:
           git archive HEAD | tar -x -C "dist/$name"
           rm -rf "dist/$name/.github"
           cp build/witch-time "dist/$name/build/"
+          cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
           strip "dist/$name/build/witch-time" "dist/$name/build/libSDL3.so.0"
           ln -s build/witch-time "dist/$name/witch-time"

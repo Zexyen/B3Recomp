@@ -79,6 +79,16 @@ bool file_exists(const std::string& path)
 	return stat(path.c_str(), &st) == 0;
 }
 
+std::vector<std::string> build_command(const std::string& repo, const std::string& command)
+{
+	for (const std::string& exe : {repo + "/build/wtbuild", repo + "/tools/wtbuild/target/release/wtbuild"})
+		if (access(exe.c_str(), X_OK) == 0)
+			return {exe, command, "--repo", repo};
+	if (command == "mods-tree")
+		return {"python3", repo + "/scripts/pchtxt.py", "tree"};
+	return {"python3", repo + "/scripts/setup.py"};
+}
+
 Paths Paths::find(const char* argv0)
 {
 	Paths p;
@@ -217,7 +227,9 @@ std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir,
 	if (!file_exists(mods_dir))
 		return mods;
 	int code = 0;
-	std::string out = run_capture({"python3", paths.repo + "/scripts/pchtxt.py", "tree", mods_dir}, paths.repo, &code);
+	std::vector<std::string> argv = build_command(paths.repo, "mods-tree");
+	argv.push_back(mods_dir);
+	std::string out = run_capture(argv, paths.repo, &code);
 	if (code)
 	{
 		error = trim(out.substr(out.size() > 400 ? out.size() - 400 : 0));

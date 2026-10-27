@@ -19,7 +19,9 @@ const OLD_MOD: &str = "b3recomp-pc-settings"; // its name before the rename (202
 type R<T> = Result<T, String>;
 
 fn rd32(d: &[u8], o: usize) -> R<u32> {
-    d.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).ok_or_else(|| "MCD: an offset past the end of the file".into())
+    d.get(o..o + 4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        .ok_or_else(|| "MCD: an offset past the end of the file".into())
 }
 
 // ---- pkz / DAT
@@ -28,7 +30,11 @@ fn rd32(d: &[u8], o: usize) -> R<u32> {
 pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
     let d = fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     if d.len() < 0x20 || &d[..4] != b"pkzl" {
-        return Err(format!("{}: not a pkz archive (magic {})", path.display(), py::repr_bytes(&d[..d.len().min(4)])));
+        return Err(format!(
+            "{}: not a pkz archive (magic {})",
+            path.display(),
+            py::repr_bytes(&d[..d.len().min(4)])
+        ));
     }
     if u32_at(&d, 4) != 0x20000 {
         return Err(format!("{}: unknown pkz version 0x{:x}", path.display(), u32_at(&d, 4)));
@@ -43,7 +49,13 @@ pub fn read_pkz(path: &Path) -> R<(u64, Vec<(String, String, u64, u64, u64)>)> {
     let mut out = Vec::new();
     for i in 0..count {
         let t = &table[i * 0x20..];
-        out.push((name(u32_at(t, 0) as usize)?, name(u32_at(t, 4) as usize)?, u64_at(t, 8), u64_at(t, 16), u64_at(t, 24)));
+        out.push((
+            name(u32_at(t, 0) as usize)?,
+            name(u32_at(t, 4) as usize)?,
+            u64_at(t, 8),
+            u64_at(t, 16),
+            u64_at(t, 24),
+        ));
     }
     Ok((fsize, out))
 }
@@ -53,7 +65,13 @@ fn dat_entries(b: &[u8]) -> R<Vec<(String, String, usize, usize)>> {
     if b.len() < 0x1c || &b[..4] != b"DAT\0" {
         return Err("DAT: bad magic".into());
     }
-    let (count, off_t, ext_t, name_t, size_t) = (u32_at(b, 4) as usize, u32_at(b, 8) as usize, u32_at(b, 12) as usize, u32_at(b, 16) as usize, u32_at(b, 20) as usize);
+    let (count, off_t, ext_t, name_t, size_t) = (
+        u32_at(b, 4) as usize,
+        u32_at(b, 8) as usize,
+        u32_at(b, 12) as usize,
+        u32_at(b, 16) as usize,
+        u32_at(b, 20) as usize,
+    );
     let width = rd32(b, name_t)? as usize;
     let latin1 = |s: &[u8]| s.split(|&c| c == 0).next().unwrap_or(&[]).iter().map(|&c| c as char).collect::<String>();
     let mut out = Vec::new();
@@ -117,7 +135,12 @@ fn mcd_read(d: &[u8]) -> R<Mcd> {
     let (mo, mc, so, sc, go, gc, fo, fc, eo, ec) = (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9]);
     let mut msgs = Vec::new();
     for i in 0..mc {
-        let (po, pc, seq, ev) = (rd32(d, mo + 16 * i)? as usize, rd32(d, mo + 16 * i + 4)? as usize, rd32(d, mo + 16 * i + 8)?, rd32(d, mo + 16 * i + 12)?);
+        let (po, pc, seq, ev) = (
+            rd32(d, mo + 16 * i)? as usize,
+            rd32(d, mo + 16 * i + 4)? as usize,
+            rd32(d, mo + 16 * i + 8)?,
+            rd32(d, mo + 16 * i + 12)?,
+        );
         let mut pars = Vec::new();
         for j in 0..pc {
             let p = po + 20 * j;
@@ -126,20 +149,47 @@ fn mcd_read(d: &[u8]) -> R<Mcd> {
             for k in 0..lc {
                 let l = lo + 24 * k;
                 let (off, pad, n, n2) = (rd32(d, l)? as usize, rd32(d, l + 4)?, rd32(d, l + 8)? as usize, rd32(d, l + 12)?);
-                let us = d.get(off..off + 2 * n).ok_or("MCD: text past the end")?.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-                lines.push(Line { us, pad, extra: n2 as i64 - n as i64, below: rd32(d, l + 16)?, horiz: rd32(d, l + 20)?, off: off as u64 });
+                let us = d
+                    .get(off..off + 2 * n)
+                    .ok_or("MCD: text past the end")?
+                    .chunks(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                lines.push(Line {
+                    us,
+                    pad,
+                    extra: n2 as i64 - n as i64,
+                    below: rd32(d, l + 16)?,
+                    horiz: rd32(d, l + 20)?,
+                    off: off as u64,
+                });
             }
-            pars.push(Par { vp: rd32(d, p + 8)?, hp: rd32(d, p + 12)?, font: rd32(d, p + 16)?, lines });
+            pars.push(Par {
+                vp: rd32(d, p + 8)?,
+                hp: rd32(d, p + 12)?,
+                font: rd32(d, p + 16)?,
+                lines,
+            });
         }
         msgs.push(Msg { seq, ev, pars });
     }
     let slice = |o: usize, n: usize| d.get(o..o + n).map(|s| s.to_vec()).ok_or_else(|| "MCD: a table past the end".to_string());
     Ok(Mcd {
         msgs,
-        syms: (0..sc).map(|i| Ok((u16_at(&slice(so + 8 * i, 8)?, 0), u16_at(d, so + 8 * i + 2), u32_at(d, so + 8 * i + 4)))).collect::<R<_>>()?,
+        syms: (0..sc)
+            .map(|i| Ok((u16_at(&slice(so + 8 * i, 8)?, 0), u16_at(d, so + 8 * i + 2), u32_at(d, so + 8 * i + 4))))
+            .collect::<R<_>>()?,
         glyphs: (0..gc).map(|i| slice(go + 40 * i, 40)).collect::<R<_>>()?,
         fonts: (0..fc).map(|i| slice(fo + 20 * i, 20)).collect::<R<_>>()?,
-        evs: (0..ec).map(|i| Ok((rd32(d, eo + 40 * i)?, rd32(d, eo + 40 * i + 4)?, slice(eo + 40 * i + 8, 32)?.try_into().unwrap()))).collect::<R<_>>()?,
+        evs: (0..ec)
+            .map(|i| {
+                Ok((
+                    rd32(d, eo + 40 * i)?,
+                    rd32(d, eo + 40 * i + 4)?,
+                    slice(eo + 40 * i + 8, 32)?.try_into().unwrap(),
+                ))
+            })
+            .collect::<R<_>>()?,
     })
 }
 
@@ -176,7 +226,18 @@ fn mcd_write(m: &Mcd) -> Vec<u8> {
             put(&mut out, po + 20 * pi, &[(lo + 24 * li) as u32, p.lines.len() as u32, p.vp, p.hp, p.font]);
             pi += 1;
             for l in &p.lines {
-                put(&mut out, lo + 24 * li, &[toff[li] as u32, l.pad, l.us.len() as u32, (l.us.len() as i64 + l.extra) as u32, l.below, l.horiz]);
+                put(
+                    &mut out,
+                    lo + 24 * li,
+                    &[
+                        toff[li] as u32,
+                        l.pad,
+                        l.us.len() as u32,
+                        (l.us.len() as i64 + l.extra) as u32,
+                        l.below,
+                        l.horiz,
+                    ],
+                );
                 li += 1;
             }
         }
@@ -233,7 +294,12 @@ fn add_msgs(d: &[u8], msgs: &[(&str, &[(&str, &[&str])])], lang: &str, font_of: 
         return Err("MCD: this layout is not the one known (the file would not be rebuilt as it is)".into());
     }
     let mut bad = Vec::new();
-    let fi = m.evs.iter().find(|e| e.0 == font_of).ok_or("MCD: the message whose font the rows take is not there")?.1 as usize;
+    let fi = m
+        .evs
+        .iter()
+        .find(|e| e.0 == font_of)
+        .ok_or("MCD: the message whose font the rows take is not there")?
+        .1 as usize;
     let font = m.msgs.get(fi).and_then(|x| x.pars.first()).ok_or("MCD: that message has no text")?.font;
     let mut kern: HashMap<(u16, u16), u16> = HashMap::new();
     let mut kern1: HashMap<u16, Vec<(u16, u32)>> = HashMap::new();
@@ -273,16 +339,32 @@ fn add_msgs(d: &[u8], msgs: &[(&str, &[(&str, &[&str])])], lang: &str, font_of: 
         }
         let cands = texts.iter().find(|t| t.0 == lang).ok_or("text: no such language")?.1;
         let spell = |t: &str, k: &[u32]| t.chars().all(|ch| ch == ' ' || sym(ch, k).is_some());
-        let text = [&order[..2], &order[..]].iter().find_map(|k| cands.iter().find(|t| spell(t, k))).unwrap_or(&cands[0]);
-        let missing: String = text.chars().filter(|&ch| ch != ' ' && sym(ch, &order).is_none()).collect::<BTreeSet<_>>().into_iter().collect();
-        let other: String = text.chars().filter(|&ch| ch != ' ' && sym(ch, &order).is_some() && sym(ch, &order[..2]).is_none()).collect::<BTreeSet<_>>().into_iter().collect();
+        let text = [&order[..2], &order[..]]
+            .iter()
+            .find_map(|k| cands.iter().find(|t| spell(t, k)))
+            .unwrap_or(&cands[0]);
+        let missing: String = text
+            .chars()
+            .filter(|&ch| ch != ' ' && sym(ch, &order).is_none())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let other: String = text
+            .chars()
+            .filter(|&ch| ch != ' ' && sym(ch, &order).is_some() && sym(ch, &order[..2]).is_none())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         if !missing.is_empty() {
             bad.push(format!("{} {} without {}", name, py::repr_str(text), py::repr_str(&missing)));
         }
         if !other.is_empty() {
             bad.push(format!("{} {}: {} in another font", name, py::repr_str(text), py::repr_str(&other)));
         }
-        let mut seq: Vec<u32> = text.chars().filter_map(|ch| if ch == ' ' { Some(0x8001) } else { sym(ch, &order).map(|i| i as u32) }).collect();
+        let mut seq: Vec<u32> = text
+            .chars()
+            .filter_map(|ch| if ch == ' ' { Some(0x8001) } else { sym(ch, &order).map(|i| i as u32) })
+            .collect();
         seq.push(0x8000);
         let mut us: Vec<u16> = Vec::new();
         for (k, &a) in seq.iter().enumerate() {
@@ -298,7 +380,23 @@ fn add_msgs(d: &[u8], msgs: &[(&str, &[(&str, &[&str])])], lang: &str, font_of: 
             }
         }
         let seqno = m.msgs.len() as u32 + 1;
-        m.msgs.push(Msg { seq: seqno, ev: h, pars: vec![Par { vp: 0, hp: 0, font, lines: vec![Line { us, pad: 0, extra: 0, below: 0, horiz: 0, off: 1 << 40 }] }] });
+        m.msgs.push(Msg {
+            seq: seqno,
+            ev: h,
+            pars: vec![Par {
+                vp: 0,
+                hp: 0,
+                font,
+                lines: vec![Line {
+                    us,
+                    pad: 0,
+                    extra: 0,
+                    below: 0,
+                    horiz: 0,
+                    off: 1 << 40,
+                }],
+            }],
+        });
         let mut nm = [0u8; 32];
         let nb = name.as_bytes();
         nm[..nb.len().min(32)].copy_from_slice(&nb[..nb.len().min(32)]);
@@ -338,7 +436,11 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dy
             let member = format!("mess{}.mcd", kind);
             let (_, _, o, s) = dat_entries(&blob)?.into_iter().find(|e| e.0 == member).ok_or("DAT: no message file")?;
             let mcd = blob.get(o..o + s).ok_or("DAT: member past the end")?;
-            let (d, b) = if kind == "menu" { add_msgs(mcd, MENU, lang, BRIGHTNESS)? } else { add_msgs(mcd, CORE, lang, ON)? };
+            let (d, b) = if kind == "menu" {
+                add_msgs(mcd, MENU, lang, BRIGHTNESS)?
+            } else {
+                add_msgs(mcd, CORE, lang, ON)?
+            };
             new.insert(n.clone(), dat_replace(&blob, &member, &d)?);
             bad.extend(b.into_iter().map(|x| format!("{}: {}", n, x)));
         }
@@ -347,7 +449,12 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dy
     let _ = fs::remove_dir_all(&tmp);
     let (new, bad) = result?;
     let a = fs::read(&arc).map_err(|e| e.to_string())?;
-    let (count, toff, nsize, align) = (u32_at(&a, 0x10) as usize, u32_at(&a, 0x14) as usize, u32_at(&a, 0x18) as usize, u32_at(&a, 0x1c) as u64);
+    let (count, toff, nsize, align) = (
+        u32_at(&a, 0x10) as usize,
+        u32_at(&a, 0x14) as usize,
+        u32_at(&a, 0x18) as usize,
+        u32_at(&a, 0x1c) as u64,
+    );
     let mut table = a[toff..toff + count * 0x20 + nsize].to_vec();
     let names_t = &table[count * 0x20..];
     let none = names_t.windows(5).position(|w| w == b"None\0").ok_or("pkz: no codec None")?;
@@ -392,7 +499,11 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dy
     fs::rename(&tmp_out, &out).map_err(|e| e.to_string())?;
     let files: BTreeSet<&str> = bad.iter().map(|x| x.split(':').next().unwrap()).collect();
     for n in files {
-        let xs: Vec<&str> = bad.iter().filter(|x| x.starts_with(&format!("{}:", n))).map(|x| x.split_once(": ").unwrap().1).collect();
+        let xs: Vec<&str> = bad
+            .iter()
+            .filter(|x| x.starts_with(&format!("{}:", n)))
+            .map(|x| x.split_once(": ").unwrap().1)
+            .collect();
         log(format!(
             "  {}: {} texts not as written (glyphs the file has not, or of another font): {}",
             n,
@@ -400,27 +511,36 @@ pub fn run(repo: &Path, romfs: &Path, dump: Option<&Path>, mods: &Path, env: &dy
             if xs.len() < 4 { xs.join("; ") } else { format!("{}; ...", xs[0]) }
         ));
     }
-    log(format!("{}: {} bytes, {} text files with the PC settings rows' text ({} labels, {} values)", out.display(), pos, new.len(), MENU.len(), CORE.len()));
+    log(format!(
+        "{}: {} bytes, {} text files with the PC settings rows' text ({} labels, {} values)",
+        out.display(),
+        pos,
+        new.len(),
+        MENU.len(),
+        CORE.len()
+    ));
     Ok(())
 }
 
 /// build/witch-time-game --pkz-dump of the text files into `tmp`
 fn dump_texts(repo: &Path, romfs: &Path, tmp: &Path, env: &dyn Fn(&mut Command)) -> R<std::path::PathBuf> {
-        let _ = fs::remove_dir_all(tmp);
-        fs::create_dir_all(tmp).map_err(|e| e.to_string())?;
-        let exe = repo.join("build").join("witch-time-game");
-        let mut c = Command::new(&exe);
-        env(&mut c);
-        c.arg(repo.join("targets").join("exefs").join("main.elf")).arg("--pkz-dump").arg(tmp).args(["ui/ui_menu", "ui/ui_core"]);
-        c.current_dir(repo.join("build")).env("SSBU_ROMFS", romfs);
-        let r = c.output().map_err(|e| format!("{}: {}", exe.display(), e))?;
-        if !r.status.success() {
-            let tail = |b: &[u8]| {
-                let s = String::from_utf8_lossy(b).into_owned();
-                s.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect::<String>()
-            };
-            return Err(format!("witch-time-game --pkz-dump failed:\n{}{}", tail(&r.stdout), tail(&r.stderr)));
-        }
-        Ok(tmp.to_path_buf())
+    let _ = fs::remove_dir_all(tmp);
+    fs::create_dir_all(tmp).map_err(|e| e.to_string())?;
+    let exe = repo.join("build").join("witch-time-game");
+    let mut c = Command::new(&exe);
+    env(&mut c);
+    c.arg(repo.join("targets").join("exefs").join("main.elf"))
+        .arg("--pkz-dump")
+        .arg(tmp)
+        .args(["ui/ui_menu", "ui/ui_core"]);
+    c.current_dir(repo.join("build")).env("SSBU_ROMFS", romfs);
+    let r = c.output().map_err(|e| format!("{}: {}", exe.display(), e))?;
+    if !r.status.success() {
+        let tail = |b: &[u8]| {
+            let s = String::from_utf8_lossy(b).into_owned();
+            s.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+        };
+        return Err(format!("witch-time-game --pkz-dump failed:\n{}{}", tail(&r.stdout), tail(&r.stderr)));
+    }
+    Ok(tmp.to_path_buf())
 }
-

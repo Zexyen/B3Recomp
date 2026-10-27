@@ -137,11 +137,7 @@ impl Image {
                 if (w >> 25) & 7 == 7 || ((w >> 25) & 5 == 4 && (w >> 26) & 1 != 0) {
                     continue;
                 }
-                if w & 31 == r
-                    || w & 0x7c000000 == 0x14000000
-                    || w & 0xff000010 == 0x54000000
-                    || w & 0xfffffc1f == 0xd65f0000
-                {
+                if w & 31 == r || w & 0x7c000000 == 0x14000000 || w & 0xff000010 == 0x54000000 || w & 0xfffffc1f == 0xd65f0000 {
                     return false;
                 }
             }
@@ -201,7 +197,11 @@ pub struct Plt {
 
 impl Plt {
     pub fn new() -> Plt {
-        Plt { cache: HashMap::new(), slot: HashMap::new(), syms: None }
+        Plt {
+            cache: HashMap::new(),
+            slot: HashMap::new(),
+            syms: None,
+        }
     }
 
     fn load(im: &Image) -> (HashMap<i64, String>, HashMap<i64, (i64, u16, u64)>) {
@@ -500,7 +500,11 @@ impl Fn {
                 if lsb == 0 {
                     return Ok(set(rd, sf, &r(rm, sf)));
                 }
-                Ok(set(rd, sf, &format!("({} >> {}) | ({} << {})", r(rm, sf), lsb, r(rn, sf), size as i64 - lsb as i64)))
+                Ok(set(
+                    rd,
+                    sf,
+                    &format!("({} >> {}) | ({} << {})", r(rm, sf), lsb, r(rn, sf), size as i64 - lsb as i64),
+                ))
             }
             _ => un(format!("dpimm{}", g)),
         }
@@ -605,7 +609,11 @@ impl Fn {
             if !matches!(option, 2 | 3 | 6 | 7) {
                 return un("ldst-ext");
             }
-            return Ok((String::new(), format!("{} + {}", base, extended(rm, option, if s != 0 { scale } else { 0 })), String::new()));
+            return Ok((
+                String::new(),
+                format!("{} + {}", base, extended(rm, option, if s != 0 { scale } else { 0 })),
+                String::new(),
+            ));
         }
         un("ldst-atomic")
     }
@@ -632,8 +640,16 @@ impl Fn {
             };
             let imm = sext(bits(w, 21, 15) as i64, 7) * size;
             let base = xs(rn);
-            let pre = if mode == 3 { format!("{} += (uint64_t){}LL;", base, imm) } else { String::new() };
-            let post = if mode == 1 { format!("{} += (uint64_t){}LL;", base, imm) } else { String::new() };
+            let pre = if mode == 3 {
+                format!("{} += (uint64_t){}LL;", base, imm)
+            } else {
+                String::new()
+            };
+            let post = if mode == 1 {
+                format!("{} += (uint64_t){}LL;", base, imm)
+            } else {
+                String::new()
+            };
             let off = if mode == 2 || mode == 0 { imm } else { 0 };
             let mut body = format!("uint64_t a = {} + (uint64_t){}LL; ", base, off);
             if v {
@@ -654,14 +670,7 @@ impl Fn {
                 }
                 body += &format!("{} {}", set(rt, true, "t1"), set(rt2, true, "t2"));
             } else {
-                body += &format!(
-                    "wr{}(a, {}); wr{}(a + {}, {});",
-                    size * 8,
-                    r(rt, size == 8),
-                    size * 8,
-                    size,
-                    r(rt2, size == 8)
-                );
+                body += &format!("wr{}(a, {}); wr{}(a + {}, {});", size * 8, r(rt, size == 8), size * 8, size, r(rt2, size == 8));
             }
             return Ok(format!("{{ {} {} {} }}", pre, body, post));
         }
@@ -791,8 +800,7 @@ impl Fn {
                         let c: Vec<String> = (0..nreg).map(|i| format!("c->v[{}] = t{};", (rt + i) & 31, i)).collect();
                         body = format!("{} {}", a.join(" "), c.join(" "));
                     } else {
-                        let a: Vec<String> =
-                            (0..nreg).map(|i| format!("wrv(a + {}, &c->v[{}], {});", i * nb, (rt + i) & 31, nb)).collect();
+                        let a: Vec<String> = (0..nreg).map(|i| format!("wrv(a + {}, &c->v[{}], {});", i * nb, (rt + i) & 31, nb)).collect();
                         body = a.join(" ");
                     }
                     total = nb * nreg;
@@ -930,7 +938,11 @@ impl Fn {
             // ccmn / ccmp
             let (sub, cc, nzcv) = (bits(w, 30, 30), bits(w, 15, 12), bits(w, 3, 0));
             let bb = if b(bits(w, 11, 11)) { format!("{}ULL", rm) } else { r(rm, sf) };
-            let bb = if sub != 0 { format!("~({}){}", t(sf), bb) } else { format!("({}){}", t(sf), bb) };
+            let bb = if sub != 0 {
+                format!("~({}){}", t(sf), bb)
+            } else {
+                format!("({}){}", t(sf), bb)
+            };
             return Ok(format!(
                 "if (cond(c, {})) (void)adds{}(c, {}, {}, {}); else set_nzcv(c, {});",
                 cc,
@@ -1032,9 +1044,7 @@ impl Fn {
             }
             return un("fcvt");
         }
-        if (bits(w, 31, 24) == 0x1e && bits(w, 21, 21) == 1)
-            || (bits(w, 30, 24) == 0x1e && bits(w, 21, 21) == 1 && bits(w, 15, 10) == 0)
-        {
+        if (bits(w, 31, 24) == 0x1e && bits(w, 21, 21) == 1) || (bits(w, 30, 24) == 0x1e && bits(w, 21, 21) == 1 && bits(w, 15, 10) == 0) {
             let ty = bits(w, 23, 22);
             if bits(w, 15, 10) == 0 {
                 // int <-> fp
@@ -1098,7 +1108,11 @@ impl Fn {
                     ));
                 }
                 if ty == 3 && matches!(op, 4 | 5) {
-                    let (tf, tt, fname) = if op == 5 { ("df[0]", "double", "half_to_f64") } else { ("f[0]", "float", "half_to_f32") };
+                    let (tf, tt, fname) = if op == 5 {
+                        ("df[0]", "double", "half_to_f64")
+                    } else {
+                        ("f[0]", "float", "half_to_f32")
+                    };
                     return Ok(format!(
                         "{{ {} t = {}(c->v[{}].h[0]); vzero(&c->v[{}]); c->v[{}].{} = t; }}",
                         tt, fname, rn, rd, rd, tf
@@ -1112,8 +1126,7 @@ impl Fn {
             let ft = if ty != 0 { "double" } else { "float" };
             let sfx = if ty != 0 { "" } else { "f" };
             let nb = if ty != 0 { 64 } else { 32 };
-            let setf =
-                |expr: &str| format!("{{ {} t = fnan{}({}); vzero(&c->v[{}]); c->v[{}].{} = t; }}", ft, nb, expr, rd, rd, f);
+            let setf = |expr: &str| format!("{{ {} t = fnan{}({}); vzero(&c->v[{}]); c->v[{}].{} = t; }}", ft, nb, expr, rd, rd, f);
             let (a, bb) = (format!("c->v[{}].{}", rn, f), format!("c->v[{}].{}", rm, f));
             if bits(w, 11, 10) == 2 {
                 let op = bits(w, 15, 12);
@@ -1194,7 +1207,11 @@ impl Fn {
             }
             let f = if ty != 0 { "df[0]" } else { "f[0]" };
             let ft = if ty != 0 { "double" } else { "float" };
-            let (a, bb, ra) = (format!("c->v[{}].{}", rn, f), format!("c->v[{}].{}", rm, f), format!("c->v[{}].{}", bits(w, 14, 10), f));
+            let (a, bb, ra) = (
+                format!("c->v[{}].{}", rn, f),
+                format!("c->v[{}].{}", rm, f),
+                format!("c->v[{}].{}", bits(w, 14, 10), f),
+            );
             let (o1, o0) = (bits(w, 21, 21), bits(w, 15, 15));
             let fma = if ty != 0 { "fma" } else { "fmaf" };
             let expr = match o1 * 2 + o0 {
@@ -1256,7 +1273,11 @@ impl Fn {
                     ((imm8 as u64) << (8 * ((cmode >> 1) & 1))) * 0x0001000100010001
                 };
                 let opn = if op != 0 { "&= ~" } else { "|=" };
-                let hi = if q != 0 { format!("c->v[{}].d[1] {} 0x{:x}ULL;", rd, opn, v) } else { format!("c->v[{}].d[1] = 0;", rd) };
+                let hi = if q != 0 {
+                    format!("c->v[{}].d[1] {} 0x{:x}ULL;", rd, opn, v)
+                } else {
+                    format!("c->v[{}].d[1] = 0;", rd)
+                };
                 return Ok(format!("{{ c->v[{}].d[0] {} 0x{:x}ULL; {} }}", rd, opn, v, hi));
             } else {
                 return un("simd-imm");
@@ -1267,7 +1288,12 @@ impl Fn {
         if w & 0xbfe0fc00 == 0x0ea01c00 && rn == rm {
             // mov vD.16b, vN.16b (orr)
             let q = bits(w, 30, 30);
-            return Ok(format!("{{ V128 t = c->v[{}]; {} c->v[{}] = t; }}", rn, if q != 0 { "" } else { "t.d[1] = 0;" }, rd));
+            return Ok(format!(
+                "{{ V128 t = c->v[{}]; {} c->v[{}] = t; }}",
+                rn,
+                if q != 0 { "" } else { "t.d[1] = 0;" },
+                rd
+            ));
         }
         let bitwise = match w & 0xbfe0fc00 {
             0x0e201c00 => Some("a & b"),
@@ -1440,15 +1466,7 @@ impl Fn {
                     return Ok(format!("v_fcvta({}, {}, {}, {}, {});", v(rd), v(rn), szb, u, fcount()));
                 }
                 if matches!(opc, 0x02 | 0x06) && !scalar && size < 3 {
-                    return Ok(format!(
-                        "v_addlp({}, {}, {}, {}, {}, {});",
-                        v(rd),
-                        v(rn),
-                        size,
-                        u,
-                        q,
-                        (opc == 0x06) as u32
-                    ));
+                    return Ok(format!("v_addlp({}, {}, {}, {}, {}, {});", v(rd), v(rn), size, u, q, (opc == 0x06) as u32));
                 }
                 let op = match (u, opc) {
                     (1, 0x05) => "I1_NOT",
@@ -1576,7 +1594,15 @@ impl Fn {
                         bits(w, 12, 12)
                     ));
                 }
-                return Ok(format!("v_perm({}, {}, {}, {}, {}, {});", v(rd), v(rn), v(rm), bits(w, 14, 12), size, icount(size)));
+                return Ok(format!(
+                    "v_perm({}, {}, {}, {}, {}, {});",
+                    v(rd),
+                    v(rn),
+                    v(rm),
+                    bits(w, 14, 12),
+                    size,
+                    icount(size)
+                ));
             }
             return un("simd-e");
         }
@@ -1594,8 +1620,11 @@ impl Fn {
                 if matches!(size, 1 | 2) {
                     // [witchtime] rt_ext.h v_ielem
                     let (h, l, m) = (bits(w, 11, 11), bits(w, 21, 21), bits(w, 20, 20));
-                    let (idx, rm_) =
-                        if size == 1 { ((h << 2) | (l << 1) | m, bits(w, 19, 16)) } else { ((h << 1) | l, bits(w, 20, 16)) };
+                    let (idx, rm_) = if size == 1 {
+                        ((h << 2) | (l << 1) | m, bits(w, 19, 16))
+                    } else {
+                        ((h << 1) | l, bits(w, 20, 16))
+                    };
                     return Ok(format!(
                         "v_ielem({}, {}, vget({}, {}, {}), {}, {}, {});",
                         v(rd),
@@ -1618,7 +1647,11 @@ impl Fn {
             if u != 0 || a == 0 {
                 return un("simd-elem");
             }
-            let idx = if szb != 0 { bits(w, 11, 11) } else { (bits(w, 11, 11) << 1) | bits(w, 21, 21) };
+            let idx = if szb != 0 {
+                bits(w, 11, 11)
+            } else {
+                (bits(w, 11, 11) << 1) | bits(w, 21, 21)
+            };
             let n = if scalar {
                 1
             } else if q != 0 {
@@ -1646,7 +1679,15 @@ impl Fn {
             return Ok(format!("v_shift({}, {}, {}, {}, 0, {});", v(rd), v(rn), left, es, icount(es)));
         }
         if opc == 0 {
-            return Ok(format!("v_shift({}, {}, {}, {}, {}, {});", v(rd), v(rn), right, es, if u != 0 { 2 } else { 1 }, icount(es)));
+            return Ok(format!(
+                "v_shift({}, {}, {}, {}, {}, {});",
+                v(rd),
+                v(rn),
+                right,
+                es,
+                if u != 0 { 2 } else { 1 },
+                icount(es)
+            ));
         }
         // [Recomps#1] helpers in rt_ext.h
         if opc == 0x04 && !scalar {

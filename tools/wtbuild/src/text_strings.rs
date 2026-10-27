@@ -1,7 +1,5 @@
 /// generated from scripts/pc_settings_mod.py MENU / CORE: message name -> language -> candidate texts (the first a file can spell)
-pub const LANGS: [&str; 13] = [
-    "", "de", "fr", "es", "it", "ru", "cn", "tw", "kr", "us", "gb", "nl", "pt",
-];
+pub const LANGS: [&str; 13] = ["", "de", "fr", "es", "it", "ru", "cn", "tw", "kr", "us", "gb", "nl", "pt"];
 pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
     (
         "MENU_OPTION_LIST_PC_SETTINGS",
@@ -32,10 +30,7 @@ pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
             ("ru", &["Разрешение (после перезапуска)"]),
             ("cn", &["画面大小 (Restart)"]),
             ("tw", &["畫面大小 (Restart)"]),
-            (
-                "kr",
-                &["내부 해상도 (다음 시작 시)", "해상도 (다음 시작 시)"],
-            ),
+            ("kr", &["내부 해상도 (다음 시작 시)", "해상도 (다음 시작 시)"]),
             ("us", &["Internal Resolution (next start)"]),
             ("gb", &["Internal Resolution (next start)"]),
             ("nl", &["Internal Resolution (next start)"]),
@@ -46,14 +41,7 @@ pub const MENU: &[(&str, &[(&str, &[&str])])] = &[
         "MENU_OPTION_LIST_PC_CUTSCENE",
         &[
             ("", &["イベントシーンのFPS"]),
-            (
-                "de",
-                &[
-                    "Bildrate der Zwischensequenzen",
-                    "Bildrate der Filmszenen",
-                    "Bildrate in Filmen",
-                ],
-            ),
+            ("de", &["Bildrate der Zwischensequenzen", "Bildrate der Filmszenen", "Bildrate in Filmen"]),
             ("fr", &["Fréquence des cinématiques"]),
             ("es", &["Fotogramas de las cinemáticas"]),
             ("it", &["Frame rate dei filmati"]),

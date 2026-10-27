@@ -97,7 +97,13 @@ fn load(d: Vec<u8>, gen: &Path) -> Result<Sdk, String> {
         patches: HashMap::new(),
         img: d,
     };
-    Ok(Sdk { im, syms, by_addr, code_slots, game_imports })
+    Ok(Sdk {
+        im,
+        syms,
+        by_addr,
+        code_slots,
+        game_imports,
+    })
 }
 
 #[derive(Default)]
@@ -136,7 +142,11 @@ fn read_config(sdk: &Sdk, roots_file: &Path, log: &mut dyn FnMut(String)) -> Res
                 if procs.is_none() {
                     procs = Some(nvn_procs::procs(&sdk.im.img)?);
                 }
-                let off = *procs.as_ref().unwrap().get(arg(1)?).ok_or(format!("{}: not in this sdk's proc table", arg(1)?))?;
+                let off = *procs
+                    .as_ref()
+                    .unwrap()
+                    .get(arg(1)?)
+                    .ok_or(format!("{}: not in this sdk's proc table", arg(1)?))?;
                 cfg.roots.push(SDK_BASE + off);
                 cfg.named.insert(SDK_BASE + off, arg(1)?.into());
             }
@@ -161,17 +171,31 @@ fn read_config(sdk: &Sdk, roots_file: &Path, log: &mut dyn FnMut(String)) -> Res
 fn throw_helper(n: &str) -> bool {
     // ^_ZNKSt3__12[01]__(basic_string|vector_base)_commonILb1EE20__throw_(length_error|out_of_range)Ev$
     let Some(r) = n.strip_prefix("_ZNKSt3__12") else { return false };
-    let Some(r) = r.strip_prefix('0').or_else(|| r.strip_prefix('1')) else { return false };
+    let Some(r) = r.strip_prefix('0').or_else(|| r.strip_prefix('1')) else {
+        return false;
+    };
     let Some(r) = r.strip_prefix("__") else { return false };
-    let Some(r) = r.strip_prefix("basic_string").or_else(|| r.strip_prefix("vector_base")) else { return false };
+    let Some(r) = r.strip_prefix("basic_string").or_else(|| r.strip_prefix("vector_base")) else {
+        return false;
+    };
     let Some(r) = r.strip_prefix("_commonILb1EE20__throw_") else { return false };
     matches!(r, "length_errorEv" | "out_of_rangeEv")
 }
 
 fn noreturn(n: &str) -> bool {
-    ["Abort", "UnexpectedDefault", "OnAssertionFailure", "__assert_fail", "__cxa_throw", "__cxa_pure_virtual", "_Unwind_Resume", "__throw_", "terminate"]
-        .iter()
-        .any(|s| n.contains(s))
+    [
+        "Abort",
+        "UnexpectedDefault",
+        "OnAssertionFailure",
+        "__assert_fail",
+        "__cxa_throw",
+        "__cxa_pure_virtual",
+        "_Unwind_Resume",
+        "__throw_",
+        "terminate",
+    ]
+    .iter()
+    .any(|s| n.contains(s))
         || matches!(n, "abort" | "exit" | "_Exit")
 }
 
@@ -203,7 +227,9 @@ impl Env<'_> {
     /// Follow PLT stubs: (address, None) or (None, imported name).
     fn resolve(&mut self, mut target: i64) -> (Option<i64>, Option<String>) {
         for _ in 0..4 {
-            let Some((_, shndx, value)) = self.plt.entry(&self.sdk.im, target) else { return (Some(target), None) };
+            let Some((_, shndx, value)) = self.plt.entry(&self.sdk.im, target) else {
+                return (Some(target), None);
+            };
             if shndx == 0 {
                 return (None, self.plt.symbol(&self.sdk.im, target));
             }
@@ -304,8 +330,16 @@ fn mul_by_element(w: u32) -> Option<String> {
     if w & 0xbf00f400 != 0x0f008000 {
         return None;
     }
-    let (q, size, l, m, mut rm, h, rn, rd) =
-        ((w >> 30) & 1, (w >> 22) & 3, (w >> 21) & 1, (w >> 20) & 1, (w >> 16) & 15, (w >> 11) & 1, (w >> 5) & 31, w & 31);
+    let (q, size, l, m, mut rm, h, rn, rd) = (
+        (w >> 30) & 1,
+        (w >> 22) & 3,
+        (w >> 21) & 1,
+        (w >> 20) & 1,
+        (w >> 16) & 15,
+        (w >> 11) & 1,
+        (w >> 5) & 31,
+        w & 31,
+    );
     let (idx, fld, n, typ);
     if size == 2 {
         idx = (h << 1) | l;
@@ -351,30 +385,29 @@ fn ushl_vec(w: u32) -> Option<String> {
         return None;
     }
     let (q, u, size, rm, rn, rd) = ((w >> 30) & 1, (w >> 29) & 1, (w >> 22) & 3, (w >> 16) & 31, (w >> 5) & 31, w & 31);
-    let (fld, nbits, ut, st) =
-        [("b", 8, "uint8_t", "int8_t"), ("h", 16, "uint16_t", "int16_t"), ("w", 32, "uint32_t", "int32_t"), ("d", 64, "uint64_t", "int64_t")]
-            [size as usize];
+    let (fld, nbits, ut, st) = [
+        ("b", 8, "uint8_t", "int8_t"),
+        ("h", 16, "uint16_t", "int16_t"),
+        ("w", 32, "uint32_t", "int32_t"),
+        ("d", 64, "uint64_t", "int64_t"),
+    ][size as usize];
     if size == 3 && q == 0 {
         return None;
     }
     let n = (if q != 0 { 128 } else { 64 }) / nbits;
     let (body, decl) = if u != 0 {
         (
-            format!("r_.{}[i_] = s_ >= {} || s_ <= -{} ? 0 : s_ >= 0 ? ({})(x_ << s_) : ({})(x_ >> -s_);", fld, nbits, nbits, ut, ut),
+            format!(
+                "r_.{}[i_] = s_ >= {} || s_ <= -{} ? 0 : s_ >= 0 ? ({})(x_ << s_) : ({})(x_ >> -s_);",
+                fld, nbits, nbits, ut, ut
+            ),
             format!("{} x_ = a_.{}[i_];", ut, fld),
         )
     } else {
         (
             format!(
                 "r_.{}[i_] = ({})(s_ >= {} ? 0 : s_ >= 0 ? ({})(({}){}) : s_ <= -{} ? (x_ < 0 ? -1 : 0) : ({})(x_ >> -s_));",
-                fld,
-                ut,
-                nbits,
-                st,
-                ut,
-                "x_ << s_",
-                nbits,
-                st
+                fld, ut, nbits, st, ut, "x_ << s_", nbits, st
             ),
             format!("{} x_ = ({})a_.{}[i_];", st, st, fld),
         )
@@ -499,7 +532,8 @@ pub fn gen(sdk_elf: &Path, roots_file: &Path, gen_dir: &Path, log: &mut dyn FnMu
             None => cfg.named.get(&a).cloned().unwrap_or_else(|| format!("sub_{:x}", a - SDK_BASE)),
         }
     };
-    let mut f = String::from("/* generated by sdklift.py from sdk.elf -- do not edit */\n#include \"runtime.h\"\n#include \"rt_ext.h\"\n#include \"sdklift.h\"\n\n");
+    let mut f =
+        String::from("/* generated by sdklift.py from sdk.elf -- do not edit */\n#include \"runtime.h\"\n#include \"rt_ext.h\"\n#include \"sdklift.h\"\n\n");
     f += "static void sdk_call_indirect(Ctx *c, uint64_t a);\n#define call_indirect sdk_call_indirect\n";
     for a in &done {
         f += &format!("static void f_{}(Ctx *c);\n", hx(*a));

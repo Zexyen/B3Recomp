@@ -35,7 +35,13 @@ pub fn nso2elf(d: &[u8]) -> Result<Converted, String> {
         }
         let ok = Sha256::digest(&raw)[..] == d[0xA0 + i * 0x20..0xC0 + i * 0x20];
         hashes_ok &= ok;
-        report.push(format!("seg {} vaddr {:x} size {:x} sha256 {}", i, moff, size, if ok { "OK" } else { "MISMATCH" }));
+        report.push(format!(
+            "seg {} vaddr {:x} size {:x} sha256 {}",
+            i,
+            moff,
+            size,
+            if ok { "OK" } else { "MISMATCH" }
+        ));
         segs.push((moff, raw));
     }
     let bss = u32_at(d, 0x3c) as usize;
@@ -78,7 +84,20 @@ pub fn nso2elf(d: &[u8]) -> Result<Converted, String> {
     let mut names: Vec<u8> = vec![0];
     let mut secs: Vec<Vec<u8>> = vec![vec![0u8; 64]];
     #[allow(clippy::too_many_arguments)]
-    fn sec(names: &mut Vec<u8>, secs: &mut Vec<Vec<u8>>, name: &str, typ: u32, fl: u64, addr: u64, off: u64, size: u64, link: u32, info: u32, align: u64, ent: u64) {
+    fn sec(
+        names: &mut Vec<u8>,
+        secs: &mut Vec<Vec<u8>>,
+        name: &str,
+        typ: u32,
+        fl: u64,
+        addr: u64,
+        off: u64,
+        size: u64,
+        link: u32,
+        info: u32,
+        align: u64,
+        ent: u64,
+    ) {
         let ni = names.len() as u32;
         names.extend_from_slice(name.as_bytes());
         names.push(0);
@@ -100,15 +119,67 @@ pub fn nso2elf(d: &[u8]) -> Result<Converted, String> {
         return Err("dynsym / dynstr not in the order nso2elf expects".into());
     }
     sec(&mut names, &mut secs, ".rodata", 1, 2, rv as u64, o(rv), (symtab - rv) as u64, 0, 0, 16, 0);
-    sec(&mut names, &mut secs, ".dynsym", 11, 2, symtab as u64, o(symtab), (nsym * 24) as u64, 4, 1, 8, 24);
+    sec(
+        &mut names,
+        &mut secs,
+        ".dynsym",
+        11,
+        2,
+        symtab as u64,
+        o(symtab),
+        (nsym * 24) as u64,
+        4,
+        1,
+        8,
+        24,
+    );
     sec(&mut names, &mut secs, ".dynstr", 3, 2, strtab as u64, o(strtab), strsz as u64, 0, 0, 1, 0);
     let r1 = strtab + strsz;
-    sec(&mut names, &mut secs, ".rodata.1", 1, 2, r1 as u64, o(r1), (rv + ro.len()) as u64 - r1 as u64, 0, 0, 1, 0);
+    sec(
+        &mut names,
+        &mut secs,
+        ".rodata.1",
+        1,
+        2,
+        r1 as u64,
+        o(r1),
+        (rv + ro.len()) as u64 - r1 as u64,
+        0,
+        0,
+        1,
+        0,
+    );
     sec(&mut names, &mut secs, ".data", 1, 3, dv as u64, o(dv), (dynv - dv) as u64, 0, 0, 16, 0);
     sec(&mut names, &mut secs, ".dynamic", 6, 3, dynv as u64, o(dynv), dynsz as u64, 4, 0, 8, 16);
     let d1 = dynv + dynsz;
-    sec(&mut names, &mut secs, ".data.1", 1, 3, d1 as u64, o(d1), (dv + data.len() - d1) as u64, 0, 0, 1, 0);
-    sec(&mut names, &mut secs, ".bss", 8, 3, bss_s as u64, o(dv + data.len()), (bss_e - bss_s) as u64, 0, 0, 16, 0);
+    sec(
+        &mut names,
+        &mut secs,
+        ".data.1",
+        1,
+        3,
+        d1 as u64,
+        o(d1),
+        (dv + data.len() - d1) as u64,
+        0,
+        0,
+        1,
+        0,
+    );
+    sec(
+        &mut names,
+        &mut secs,
+        ".bss",
+        8,
+        3,
+        bss_s as u64,
+        o(dv + data.len()),
+        (bss_e - bss_s) as u64,
+        0,
+        0,
+        16,
+        0,
+    );
     let shstr_i = secs.len();
     let shstr_off = OFF + mem.len();
     sec(&mut names, &mut secs, ".shstrtab", 3, 0, 0, shstr_off as u64, 0, 0, 0, 1, 0);

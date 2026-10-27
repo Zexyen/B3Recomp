@@ -237,7 +237,11 @@ fn unescape(s: &str) -> Result<Vec<u8>, String> {
             };
             let digits = b.get(i + 2..i + 2 + n).filter(|d| d.iter().all(|x| x.is_ascii_hexdigit()));
             let Some(d) = digits else {
-                let end = (i + 2..b.len().min(i + 2 + n)).take_while(|&k| b[k].is_ascii_hexdigit()).last().map(|k| k + 1).unwrap_or(i + 2);
+                let end = (i + 2..b.len().min(i + 2 + n))
+                    .take_while(|&k| b[k].is_ascii_hexdigit())
+                    .last()
+                    .map(|k| k + 1)
+                    .unwrap_or(i + 2);
                 let what = match c {
                     b'x' => "truncated \\xXX escape",
                     b'u' => "truncated \\uXXXX escape",
@@ -340,7 +344,14 @@ pub fn parse_pchtxt(text: &str, name: &str) -> R<(Option<String>, Vec<Block>)> {
                 bid = Some(parts[0].chars().skip(8).collect::<String>());
             } else if word == "@flag" {
                 if parts.len() >= 3 && parts[1].to_lowercase() == "offset_shift" {
-                    shift = py::int0(parts[2]).ok_or_else(|| ModError(format!("{} line {}: invalid literal for int() with base 0: {}", name, n, py::repr_str(parts[2]))))?;
+                    shift = py::int0(parts[2]).ok_or_else(|| {
+                        ModError(format!(
+                            "{} line {}: invalid literal for int() with base 0: {}",
+                            name,
+                            n,
+                            py::repr_str(parts[2])
+                        ))
+                    })?;
                 } else if parts.len() >= 2 && ["little-endian", "big-endian"].contains(&parts[1].to_lowercase().as_str()) {
                     little = parts[1].to_lowercase() == "little-endian";
                 }
@@ -354,10 +365,19 @@ pub fn parse_pchtxt(text: &str, name: &str) -> R<(Option<String>, Vec<Block>)> {
         }
         let Some(c) = cur else { continue };
         let Some((off, val)) = record(line) else {
-            return err(format!("{} line {}: expected \"<hex offset> <hex bytes>\" or <hex offset> \"string\": {}", name, n, py::repr_str(raw)));
+            return err(format!(
+                "{} line {}: expected \"<hex offset> <hex bytes>\" or <hex offset> \"string\": {}",
+                name,
+                n,
+                py::repr_str(raw)
+            ));
         };
-        let data = if val.starts_with('"') { unescape(&val[1..val.len() - 1]) } else { hex_bytes(val, little) }
-            .map_err(|e| ModError(format!("{} line {}: {}", name, n, e)))?;
+        let data = if val.starts_with('"') {
+            unescape(&val[1..val.len() - 1])
+        } else {
+            hex_bytes(val, little)
+        }
+        .map_err(|e| ModError(format!("{} line {}: {}", name, n, e)))?;
         let off = i128::from_str_radix(off, 16).unwrap_or(i128::MAX / 2) + shift - NSO_HEADER as i128;
         blocks[c].2.push((off as i64, data, n));
     }
@@ -469,7 +489,10 @@ fn has_romfs(m: &Path) -> bool {
         return true;
     }
     fs::read_dir(m)
-        .map(|rd| rd.flatten().any(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().join("romfs").is_dir()))
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| !e.file_name().to_string_lossy().starts_with('.') && e.path().join("romfs").is_dir())
+        })
         .unwrap_or(false)
 }
 
@@ -485,11 +508,18 @@ pub fn tree(folder: &Path, main_nso: Option<&Path>, settings: &HashMap<String, b
         let ips = path.to_string_lossy().to_lowercase().ends_with(".ips");
         let (blocks, note) = match read_mod(folder, &path) {
             Ok((bid, blocks)) => {
-                let note = if ips { format!("IPS, {} record(s)", blocks[0].2.len()) } else { String::new() };
+                let note = if ips {
+                    format!("IPS, {} record(s)", blocks[0].2.len())
+                } else {
+                    String::new()
+                };
                 match &want {
                     Some(w) if !same_build(&bid, w) => (
                         Vec::new(),
-                        format!("for build ID {}, not your main: another version of the game or another module", bid.to_lowercase().trim_end_matches('0')),
+                        format!(
+                            "for build ID {}, not your main: another version of the game or another module",
+                            bid.to_lowercase().trim_end_matches('0')
+                        ),
                     ),
                     _ => (blocks, note),
                 }
@@ -508,17 +538,36 @@ pub fn tree(folder: &Path, main_nso: Option<&Path>, settings: &HashMap<String, b
             ]);
         }
         if m != rk {
-            lines.push(vec!["file".into(), rk.clone(), on(&rk, true), rk.chars().skip(m.chars().count() + 1).collect(), note]);
+            lines.push(vec![
+                "file".into(),
+                rk.clone(),
+                on(&rk, true),
+                rk.chars().skip(m.chars().count() + 1).collect(),
+                note,
+            ]);
         }
         if !ips {
             for (key, (title, enabled, recs)) in block_keys(&r, &blocks).into_iter().zip(blocks) {
-                let label = if title.is_empty() { format!("block {}", key.rsplit('#').next().unwrap()) } else { title };
-                lines.push(vec!["block".into(), key.clone(), on(&key, enabled), (enabled as u8).to_string(), recs.len().to_string(), label]);
+                let label = if title.is_empty() {
+                    format!("block {}", key.rsplit('#').next().unwrap())
+                } else {
+                    title
+                };
+                lines.push(vec![
+                    "block".into(),
+                    key.clone(),
+                    on(&key, enabled),
+                    (enabled as u8).to_string(),
+                    recs.len().to_string(),
+                    label,
+                ]);
             }
         }
     }
     if folder.is_dir() {
-        let mut ds: Vec<String> = fs::read_dir(folder).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        let mut ds: Vec<String> = fs::read_dir(folder)
+            .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
         ds.sort_by_key(|d| d.to_lowercase());
         for d in ds {
             if !seen.contains(&d) && has_romfs(&folder.join(&d)) {
@@ -530,7 +579,15 @@ pub fn tree(folder: &Path, main_nso: Option<&Path>, settings: &HashMap<String, b
         Ok(mods) => lines.push(vec!["state".into(), fingerprint(&mods).unwrap_or_else(|| "none".into()), String::new()]),
         Err(ModError(e)) => lines.push(vec!["state".into(), "error".into(), e]),
     }
-    Ok(lines.into_iter().map(|l| l.iter().map(|x| x.split_whitespace().collect::<Vec<_>>().join(" ")).collect::<Vec<_>>().join("\t")).collect())
+    Ok(lines
+        .into_iter()
+        .map(|l| {
+            l.iter()
+                .map(|x| x.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect())
 }
 
 /// None when nothing would change; else a hash of exactly what would be written
@@ -600,7 +657,11 @@ pub fn apply(elf: &mut [u8], mods: &[Mod], log: &mut dyn FnMut(String)) -> R<usi
                 short(&old),
                 short(data),
                 if old == *data { "  (unchanged)" } else { "" },
-                if over.is_empty() { String::new() } else { format!("  (overrides {})", over.join(", ")) }
+                if over.is_empty() {
+                    String::new()
+                } else {
+                    format!("  (overrides {})", over.join(", "))
+                }
             ));
         }
     }

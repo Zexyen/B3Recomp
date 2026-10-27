@@ -1,5 +1,6 @@
-// Runs scripts/setup.py (the build from the player's dump) as a child process and follows its output: which of its
-// steps runs, which are done, how far the compile step is, and the last lines of the log. poll() never blocks.
+// Runs the build from the player's dump (wtbuild setup; scripts/setup.py where wtbuild was not built) as a child
+// process and follows its output: which of its steps runs, which are done, how far the compile step is, and the last
+// lines of the log. poll() never blocks.
 #pragma once
 #include <ios>
 #include <map>
@@ -9,18 +10,18 @@
 
 class BuildRunner {
 public:
-	// setup.py's steps, in order (scripts/setup.py STEPS)
+	// the build's steps, in order (tools/wtbuild/src/setup.rs STEPS, scripts/setup.py STEPS)
 	static const std::vector<std::string>& steps();
 
 	bool start(const std::string& repo, const std::vector<std::string>& args);
-	void stop();                         // ends the build; setup.py resumes from the step it was in next time
+	void stop();                         // ends the build; it resumes from the step it was in next time
 	bool poll();                         // reads what is new; true when anything changed
 	bool running() const { return pid > 0; }
 
 	int exit_code = 0;                   // when it has ended
 	std::string current;                 // the step running now
 	std::vector<std::string> done;       // steps finished in this run
-	std::map<std::string, std::string> took;   // and how long each took, as setup.py says it
+	std::map<std::string, std::string> took;   // and how long each took, as the build says it
 	std::string failed;                  // the step that failed
 	std::vector<std::string> lines;      // the output, without the step lines
 	int compiled = 0, to_compile = 0;    // the compile step's progress ([n/total] in build/logs/compile.log)

@@ -21,9 +21,6 @@ pub fn u64_at(b: &[u8], o: usize) -> u64 {
 pub fn i64_at(b: &[u8], o: usize) -> i64 {
     i64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
-pub fn put_u32(b: &mut [u8], o: usize, v: u32) {
-    b[o..o + 4].copy_from_slice(&v.to_le_bytes());
-}
 pub fn put_u64(b: &mut [u8], o: usize, v: u64) {
     b[o..o + 8].copy_from_slice(&v.to_le_bytes());
 }
@@ -92,13 +89,13 @@ pub fn py_repr(v: f64) -> String {
         };
         format!("{}{}", sign, s)
     } else {
-        let m = if digits.len() > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.clone() };
+        let m = if digits.len() > 1 {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        } else {
+            digits.clone()
+        };
         format!("{}{}e{}{:02}", sign, m, if exp < 0 { '-' } else { '+' }, exp.abs())
     }
-}
-
-pub fn sha256_hex(data: &[u8]) -> String {
-    hex(&Sha256::digest(data))
 }
 
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {

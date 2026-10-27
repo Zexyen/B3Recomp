@@ -1,9 +1,12 @@
+mod compile;
 mod lifter;
+mod link;
 mod nso;
+mod nvn_procs;
 mod pchtxt;
 mod py;
-mod nvn_procs;
 mod sdklift;
+mod setup;
 mod tables;
 mod text;
 mod text_strings;
@@ -57,13 +60,36 @@ fn main() {
             }
             lifter::eh::lift_main(&im, Path::new(&args[2]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
+        Some("setup") => std::process::exit(setup::main(&args[1..])),
+        Some("compile") => {
+            // compile_main.py on build/gen_eh (developers: the step on its own)
+            let repo = repo_root(&args).to_string_lossy().into_owned();
+            let clang = compile::find_clang(Path::new(&repo));
+            let jobs = args
+                .iter()
+                .position(|a| a == "--jobs")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|j| j.parse().ok())
+                .unwrap_or(8);
+            if let Err(e) = compile::run_step(&repo, &clang, jobs, &setup::child_env, &mut |l| println!("{}", l)) {
+                die(e)
+            }
+        }
         Some("tables") if args.len() == 2 => {
             tables::run(Path::new(&args[1]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
         Some("mods-tree") | Some("mods-apply") => {
             // pchtxt.py tree <mods folder> [<main NSO>] / apply <mods folder> <main NSO> <in.elf> <out.elf>  [--ini=<mods.ini>]
-            let ini = args.iter().find_map(|a| a.strip_prefix("--ini=").map(PathBuf::from)).unwrap_or_else(|| repo_root(&args).join("config").join("mods.ini"));
-            let rest: Vec<&String> = args[1..].iter().enumerate().filter(|(i, a)| !a.starts_with("--") && args[*i] != "--repo").map(|(_, a)| a).collect();
+            let ini = args
+                .iter()
+                .find_map(|a| a.strip_prefix("--ini=").map(PathBuf::from))
+                .unwrap_or_else(|| repo_root(&args).join("config").join("mods.ini"));
+            let rest: Vec<&String> = args[1..]
+                .iter()
+                .enumerate()
+                .filter(|(i, a)| !a.starts_with("--") && args[*i] != "--repo")
+                .map(|(_, a)| a)
+                .collect();
             let settings = pchtxt::read_settings(&ini);
             let r = if args[0] == "mods-tree" && !rest.is_empty() {
                 pchtxt::tree(Path::new(rest[0]), rest.get(1).map(Path::new), &settings).map(|lines| println!("{}", lines.join("\n")))

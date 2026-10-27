@@ -15,8 +15,7 @@ use std::fs;
 use std::path::Path;
 
 /// Game functions whose direct calls go to a host function instead (runtime/game_shim_eh.c): see recomp_eh.py.
-pub const HOST_OVERRIDES: &[(i64, &str)] =
-    &[(0x7100b382c0, "morton_split32"), (0x7100d02de0, "fps_mode_set"), (0x7100c1f600, "frame_clock")];
+pub const HOST_OVERRIDES: &[(i64, &str)] = &[(0x7100b382c0, "morton_split32"), (0x7100d02de0, "fps_mode_set"), (0x7100c1f600, "frame_clock")];
 
 /// runtime/options_row.c OPTX_BASE: the page after main's image
 const OPTX_PAGE: i64 = 0x7105a00000;
@@ -37,7 +36,7 @@ pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
         0xb9400000 | (off / 4) << 10 | rn << 5 | rt
     }
     let mut want: Vec<(i64, (u32, u32))> = Vec::new();
-    let mut put = |want: &mut Vec<(i64, (u32, u32))>, a: i64, v: (u32, u32)| {
+    let put = |want: &mut Vec<(i64, (u32, u32))>, a: i64, v: (u32, u32)| {
         if let Some(e) = want.iter_mut().find(|e| e.0 == a) {
             e.1 = v;
         } else {
@@ -187,9 +186,7 @@ pub fn parse_main_eh(im: &Image, log: &mut dyn FnMut(String)) -> Result<EhInfo, 
                 calls.push(plt.symbol(im, x));
             }
         }
-        let v = calls.len() >= 2
-            && calls[0].as_deref() == Some("__cxa_begin_catch")
-            && calls[1].as_deref() == Some("_ZSt9terminatev");
+        let v = calls.len() >= 2 && calls[0].as_deref() == Some("__cxa_begin_catch") && calls[1].as_deref() == Some("_ZSt9terminatev");
         term.insert(t, v);
         v
     };
@@ -319,7 +316,12 @@ pub fn parse_main_eh(im: &Image, log: &mut dyn FnMut(String)) -> Result<EhInfo, 
         v.sort_unstable();
         v
     };
-    Ok(EhInfo { pads: sorted(pads), catchers, starts: sorted(starts), fde_starts: sorted(fde_starts) })
+    Ok(EhInfo {
+        pads: sorted(pads),
+        catchers,
+        starts: sorted(starts),
+        fde_starts: sorted(fde_starts),
+    })
 }
 
 /// Env of the full lift: every call is a lifted function (or a host override); targets are remembered.
@@ -331,7 +333,11 @@ struct FullEnv {
 
 impl FullEnv {
     fn new() -> FullEnv {
-        FullEnv { wanted: Vec::new(), wanted_set: HashSet::new(), overrides: HOST_OVERRIDES.iter().cloned().collect() }
+        FullEnv {
+            wanted: Vec::new(),
+            wanted_set: HashSet::new(),
+            overrides: HOST_OVERRIDES.iter().cloned().collect(),
+        }
     }
     fn want(&mut self, a: i64) {
         if self.wanted_set.insert(a) {
@@ -379,7 +385,13 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let two = !pads.is_empty() || catcher;
     let e = hx(entry);
     let mut out = String::with_capacity(lines.len() * 64);
-    out += &format!("void {}_{}(Ctx *c{}) {{\n  c->fn = 0x{}ULL;", if two { "u" } else { "f" }, e, if two { ", uint64_t rp" } else { "" }, e);
+    out += &format!(
+        "void {}_{}(Ctx *c{}) {{\n  c->fn = 0x{}ULL;",
+        if two { "u" } else { "f" },
+        e,
+        if two { ", uint64_t rp" } else { "" },
+        e
+    );
     if f.has_br {
         out += "\n  uint64_t jt = 0;";
     }
@@ -409,7 +421,11 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     }
     out += "\n}";
     if two {
-        let body = if catcher { format!("nro_catch_call(c, u_{});", e) } else { format!("u_{}(c, 0);", e) };
+        let body = if catcher {
+            format!("nro_catch_call(c, u_{});", e)
+        } else {
+            format!("u_{}(c, 0);", e)
+        };
         out += &format!("\nvoid f_{}(Ctx *c) {{ {} }}", e, body);
     }
     if falls {
@@ -419,16 +435,8 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     (out, n, bad.len(), pads.iter().map(|&lp| (lp, entry)).collect())
 }
 
-pub struct LiftStats {
-    pub functions: usize,
-    pub files: usize,
-    pub rewritten: usize,
-    pub instructions: usize,
-    pub bad: usize,
-}
-
 /// recomp_eh.main: lift every function of main into outdir.
-pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Result<LiftStats, String> {
+pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let t0 = std::time::Instant::now();
     let el = || t0.elapsed().as_secs_f64();
     let info = parse_main_eh(im, log)?;
@@ -439,7 +447,11 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     starts.sort_unstable();
     log(format!("function entries: {}  ({:.0}s)", starts.len(), el()));
     fs::create_dir_all(outdir).map_err(|e| format!("{}: {}", outdir.display(), e))?;
-    let cx = Ctx { im, starts: &starts, eh: &info };
+    let cx = Ctx {
+        im,
+        starts: &starts,
+        eh: &info,
+    };
     let mut known: HashSet<i64> = starts.iter().cloned().collect();
     let mut pending: Vec<i64> = starts.clone();
     let mut all_funcs: Vec<i64> = Vec::new();
@@ -467,7 +479,12 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
             new.extend(wanted.into_iter().filter(|w| !known.contains(w) && in_text(*w)));
         }
         all_funcs.extend(pending.iter().cloned());
-        log(format!("discovery: {} functions, {} extra branch targets  ({:.0}s)", pending.len(), new.len(), el()));
+        log(format!(
+            "discovery: {} functions, {} extra branch targets  ({:.0}s)",
+            pending.len(),
+            new.len(),
+            el()
+        ));
         known.extend(new.iter().cloned());
         pending = new.into_iter().collect();
     }
@@ -493,8 +510,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
                 "/* generated by recomp_eh.py -- do not edit */\n#include \"runtime.h\"\n#include \"rt_ext.h\"\n#include \"funcs.h\"\n\n{}\n",
                 texts.join("\n\n")
             );
-            let changed = crate::util::write_if_changed(&outdir.join(name), content.as_bytes())
-                .map_err(|e| format!("{}: {}", name, e))?;
+            let changed = crate::util::write_if_changed(&outdir.join(name), content.as_bytes()).map_err(|e| format!("{}: {}", name, e))?;
             Ok((name.clone(), changed, resume))
         })
         .collect();
@@ -524,7 +540,13 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     for n in ov {
         f += &format!("void h_{}(Ctx *c);\n", n);
     }
-    let mut us: Vec<i64> = first.values().cloned().chain(catchers.iter().cloned()).collect::<HashSet<_>>().into_iter().collect();
+    let mut us: Vec<i64> = first
+        .values()
+        .cloned()
+        .chain(catchers.iter().cloned())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
     us.sort_unstable();
     for a in us {
         f += &format!("void u_{}(Ctx *c, uint64_t rp);\n", hx(a));
@@ -572,7 +594,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
         missing,
         catchers.len()
     ));
-    Ok(LiftStats { functions: all_funcs.len(), files: files.len(), rewritten: changed, instructions: total, bad })
+    Ok(())
 }
 
 /// every dynamic symbol by index: name, and whether this module defines it
