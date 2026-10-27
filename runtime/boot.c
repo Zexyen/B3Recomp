@@ -291,7 +291,7 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     return 0;
 }
 
-int main(int argc, char **argv) {
+static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifdef __linux__
@@ -439,3 +439,9 @@ int main(int argc, char **argv) {
     }
     return 0;
 }
+
+int main(int argc, char **argv) { return b3_main(argc, argv); }
+
+/* [b3recomp] the same entry in libb3host.so (scripts/build_runtime.py, Linux): the Witch Time launcher (launcher/) loads it
+ * and calls this to run the game in its own process and window (display.c takes the launcher's window) */
+int b3_host_main(int argc, char **argv) { return b3_main(argc, argv); }

@@ -164,6 +164,15 @@ def main():
         if code:
             print(out[-3000:])
             return code
+        # [b3recomp] the same host objects as a library: the Witch Time launcher (launcher/) loads it and runs the game in
+        # its own process and window (boot.c b3_host_main). Without it the launcher starts b3-game instead, so a failure
+        # here does not fail the build.
+        host = os.path.join(os.path.dirname(EXE), 'libb3host.so')
+        code, out = run([CLANG, '-shared', '-fuse-ld=lld', '-g', '-Xlinker', '--no-dependent-libraries'] + objs +
+                        [DLL, '-Xlinker', '-rpath=$ORIGIN', '-Xlinker', '-soname=libb3host.so'] + LIBS + ['-o', host])
+        print('libb3host.so: exit %d%s' % (code, '' if not code else ' (the launcher starts b3-game instead)'))
+        if code:
+            print(out[-3000:])
         print('%s: %.1f MB (TOOLCHAIN=linux)' % (EXE, os.path.getsize(EXE) / 2 ** 20))
         return 0
     shutil.copy2(os.path.join(SDL3, 'lib', 'x64', 'SDL3.dll'), os.path.dirname(EXE))

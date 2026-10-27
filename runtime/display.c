@@ -616,7 +616,14 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     int visible = show ? atoi(show) != 0 : 1;
     snprintf(g_title, sizeof g_title, "%s", getenv("SSBU_TITLE") ? getenv("SSBU_TITLE") : "B3 Recomp");
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (go->window_mode ? SDL_WINDOW_FULLSCREEN : 0) | (visible ? 0 : SDL_WINDOW_HIDDEN);
-    SDL_Window *w = SDL_CreateWindow(g_title, go->width, go->height, flags);
+    /* [b3recomp] started by the Witch Time launcher (launcher/, through libb3host.so): the game takes over the launcher's
+     * window, so building and playing happen in one window. The launcher has let go of it (no renderer of its own left). */
+    SDL_Window *w = (SDL_Window *)SDL_GetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", NULL);
+    if (w) {
+        SDL_SetWindowTitle(w, g_title);
+        window_apply(w);
+        if (visible) SDL_ShowWindow(w);
+    } else w = SDL_CreateWindow(g_title, go->width, go->height, flags);
     if (!w) { printf("display: the window cannot be made: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }
     int pw = 0, ph = 0;
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
