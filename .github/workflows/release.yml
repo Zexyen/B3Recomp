@@ -274,7 +274,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/llvm-win
-          key: llvm-win-${{ env.LLVM_VERSION }}-${{ env.LLVM_MINGW_TAG }}-trim1
+          key: llvm-win-${{ env.LLVM_VERSION }}-${{ env.LLVM_MINGW_TAG }}-trim2
       - name: LLVM for Windows
         if: steps.llvm-win.outputs.cache-hit != 'true'
         run: |
@@ -282,7 +282,9 @@ jobs:
           mkdir -p "$d"
           curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/$top.tar.xz" |
             tar -xJ --strip-components=1 -C "$d" --wildcards "$top/bin/clang.exe" "$top/bin/ld.lld.exe" \
-              "$top/lib/clang/$major/include/*" "$top/LICENSE.TXT"
+              "$top/lib/clang/$major/include/*"
+          # the Windows archive has no LICENSE.TXT at its top; the same file from the source, as the Linux job does
+          curl -sSfL -o "$d/LICENSE.TXT" "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$v/llvm/LICENSE.TXT"
           mkdir -p "$d/lib/clang/$major/lib/windows"
           cp "$RUNNER_TEMP"/llvm-mingw/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a "$d/lib/clang/$major/lib/windows/"
           du -sh "$d"
