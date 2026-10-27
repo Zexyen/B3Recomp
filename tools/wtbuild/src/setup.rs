@@ -322,68 +322,100 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
     say(format!("  compiler (linux): {}   [{}]", ver, clang));
     let probe = cx.build.join("probe");
     fs::create_dir_all(&probe).map_err(|e| Fail(e.to_string()))?;
-    let src = probe.join("p.c");
-    let exe = probe.join("p");
-    fs::write(&src, "#include <stdio.h>\nint main(void){puts(\"ok\");return 0;}\n").map_err(|e| Fail(e.to_string()))?;
-    let build_run = |extra: &[&str]| -> Result<(), String> {
-        let o = Command::new(&clang)
+    if link::has_prebuilt(cx.root()) {
+        // a release: the runtime is prebuilt, and this PC only compiles and links game.so, without system headers
+        let src = probe.join("t.c");
+        fs::write(
+            &src,
+            "#include <string.h>\n#include <math.h>\n#include <stdint.h>\ndouble t(double *d, const void *s) { memcpy(d, s, 8); return trunc(*d); }\n",
+        )
+        .map_err(|e| Fail(e.to_string()))?;
+        let mut c = Command::new(&clang);
+        c.args(["-shared", "-fPIC", "-O2", "-nostdlib", "-fuse-ld=lld"])
+            .args(link::freestanding(cx.root()))
             .arg(&src)
             .arg("-o")
-            .arg(&exe)
-            .args(extra)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !o.status.success() {
-            return Err(compile::tail(&(String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr)), 800).to_string());
-        }
-        let r = Command::new(&exe).output().map_err(|e| e.to_string())?;
-        if String::from_utf8_lossy(&r.stdout).trim() != "ok" {
-            return Err("the program did not print ok".into());
-        }
-        Ok(())
-    };
-    build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a Linux program\n{}", e)))?;
-    build_run(&["-fuse-ld=lld"]).map_err(|e| {
-        Fail(format!(
-            "clang works, but not with the lld linker: install lld (ld.lld) from your distribution\n{}",
-            e
-        ))
-    })?;
-    say("  compiler builds and runs a Linux program: ok");
-    if std::env::var_os("WTBUILD_SKIP_LIB_CHECK").is_none() {
-        let mut missing = Vec::new();
-        for (what, header, libs) in SYSTEM_LIBS {
-            let c = probe.join("lib.c");
-            let inc = if header.is_empty() {
-                String::new()
-            } else {
-                format!("#include <{}>\n", header)
-            };
-            let _ = fs::write(&c, format!("{}int main(void){{return 0;}}\n", inc));
-            let ok = Command::new(&clang)
-                .arg(&c)
-                .arg("-o")
-                .arg(probe.join("lib"))
-                .arg("-fuse-ld=lld")
-                .args(libs.split_whitespace())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if !ok {
-                missing.push(format!(
-                    "{} ({})",
-                    what,
-                    [header, libs].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ")
-                ));
-            }
-        }
-        if !missing.is_empty() {
+            .arg(probe.join("t.so"));
+        let (code, out, _) = compile::run(&mut c, Some(120));
+        if code != Some(0) {
             return Err(Fail(format!(
-                "the development files of these libraries are missing: {}. Install them from your distribution (README, \"Build (Linux)\")",
-                missing.join("; ")
+                "the compiler cannot build a library with the lld linker (the bundled one is deps/llvm)\n{}",
+                compile::tail(&out, 800)
             )));
         }
-        say("  SDL3, Vulkan headers, glslang, FFmpeg, OpenSSL, OpenGL: ok");
+        say("  compiler builds the game's library: ok");
+        let missing = link::prebuilt_missing(cx.root());
+        if !missing.is_empty() {
+            return Err(Fail(format!(
+                "the game needs these libraries, which are not installed: {}. Install them from your distribution (README, \"Build (Linux)\")",
+                missing.join(", ")
+            )));
+        }
+        say("  runtime: prebuilt, its libraries are installed");
+    } else {
+        let src = probe.join("p.c");
+        let exe = probe.join("p");
+        fs::write(&src, "#include <stdio.h>\nint main(void){puts(\"ok\");return 0;}\n").map_err(|e| Fail(e.to_string()))?;
+        let build_run = |extra: &[&str]| -> Result<(), String> {
+            let o = Command::new(&clang)
+                .arg(&src)
+                .arg("-o")
+                .arg(&exe)
+                .args(extra)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !o.status.success() {
+                return Err(compile::tail(&(String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr)), 800).to_string());
+            }
+            let r = Command::new(&exe).output().map_err(|e| e.to_string())?;
+            if String::from_utf8_lossy(&r.stdout).trim() != "ok" {
+                return Err("the program did not print ok".into());
+            }
+            Ok(())
+        };
+        build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a Linux program\n{}", e)))?;
+        build_run(&["-fuse-ld=lld"]).map_err(|e| {
+            Fail(format!(
+                "clang works, but not with the lld linker: install lld (ld.lld) from your distribution\n{}",
+                e
+            ))
+        })?;
+        say("  compiler builds and runs a Linux program: ok");
+        if std::env::var_os("WTBUILD_SKIP_LIB_CHECK").is_none() {
+            let mut missing = Vec::new();
+            for (what, header, libs) in SYSTEM_LIBS {
+                let c = probe.join("lib.c");
+                let inc = if header.is_empty() {
+                    String::new()
+                } else {
+                    format!("#include <{}>\n", header)
+                };
+                let _ = fs::write(&c, format!("{}int main(void){{return 0;}}\n", inc));
+                let ok = Command::new(&clang)
+                    .arg(&c)
+                    .arg("-o")
+                    .arg(probe.join("lib"))
+                    .arg("-fuse-ld=lld")
+                    .args(libs.split_whitespace())
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if !ok {
+                    missing.push(format!(
+                        "{} ({})",
+                        what,
+                        [header, libs].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+            if !missing.is_empty() {
+                return Err(Fail(format!(
+                    "the development files of these libraries are missing: {}. Install them from your distribution (README, \"Build (Linux)\")",
+                    missing.join("; ")
+                )));
+            }
+            say("  SDL3, Vulkan headers, glslang, FFmpeg, OpenSSL, OpenGL: ok");
+        }
     }
     cx.clang = clang;
     cx.state.insert("tools".into(), Value::Object(tools));
@@ -763,7 +795,7 @@ fn step_compile(cx: &mut Ctx) -> Result<(), Fail> {
 fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     let (root, clang) = (cx.root().to_path_buf(), cx.clang.clone());
     cx.logged("link", |log| link::run_step(&root, &clang, &child_env, log))?;
-    for f in ["game.so", "witch-time-game"] {
+    for f in ["game.so", "libwitchtime.so", "witch-time-game"] {
         if !cx.build.join(f).is_file() {
             return Err(Fail(format!(
                 "build/{} is missing after the link step (see {})",
@@ -774,14 +806,10 @@ fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     }
     let mb = |f: &str| fs::metadata(cx.build.join(f)).map(|m| m.len()).unwrap_or(0) as f64 / (1u64 << 20) as f64;
     say(format!(
-        "  build/witch-time-game {:.1} MB, game.so {:.0} MB, {}",
-        mb("witch-time-game"),
+        "  build/game.so {:.0} MB, libwitchtime.so {:.1} MB ({})",
         mb("game.so"),
-        if cx.build.join("libwitchtime.so").is_file() {
-            "libwitchtime.so (the launcher plays in its own window)"
-        } else {
-            "no libwitchtime.so (the launcher starts witch-time-game)"
-        }
+        mb("libwitchtime.so"),
+        if link::has_prebuilt(&root) { "prebuilt" } else { "built here" }
     ));
     Ok(())
 }
@@ -804,7 +832,7 @@ fn step_check(_cx: &mut Ctx) -> Result<(), Fail> {
 /// A newer Witch Time unpacked over a finished build: the files the later steps read have changed, so tables, lift,
 /// compile, link, text and check run again (compile then compiles only the C files that changed). This program itself
 /// stands for the lifter and the build scripts.
-const SOURCE_GLOBS: [(&str, &[&str]); 7] = [
+const SOURCE_GLOBS: [(&str, &[&str]); 9] = [
     ("lifter", &[".txt", ".h"]),
     ("runtime", &[".c", ".h", ".inc"]),
     ("runtime/gen_static", &[""]),
@@ -812,6 +840,8 @@ const SOURCE_GLOBS: [(&str, &[&str]); 7] = [
     ("runtime/linux/GL", &[".h"]),
     ("runtime/posix", &[".c", ".h"]),
     ("runtime/gen", &["make_gen.py"]),
+    ("runtime/split", &[".h"]),
+    ("runtime/freestanding", &[".h"]),
 ];
 
 fn source_fingerprint(repo: &Path) -> String {

@@ -3,8 +3,15 @@
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with the archive attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archive is kept as a workflow artifact
 #
-# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with build/witch-time, the
-# libSDL3.so.0 it was built with and build/wtbuild (the build tool, tools/wtbuild: no Python needed to build the game).
+# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
+#   build/witch-time, libSDL3.so.0   the launcher and the SDL3 it was built with
+#   build/wtbuild                    the build tool (tools/wtbuild: no Python needed to build the game)
+#   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libssbu_glslang.so with a
+#                                    static glslang, game_shim_eh.o) and the FFmpeg it uses; nothing in it comes from a
+#                                    dump (runtime/split), so the player's PC only builds game.so
+#   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which wtbuild uses:
+#                                    the game's code compiles without system headers (runtime/freestanding)
+#   licenses/                        the licences of the libraries and tools above
 # Nothing derived from the game is in it: the player builds that from their own dump.
 name: Release
 
@@ -12,19 +19,22 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-  # a pull request that changes the launcher builds the archive too, as a check
+  # a pull request that changes what the archive is built from builds it too, as a check
   pull_request:
-    paths: ['launcher/**', 'tools/wtbuild/**', '.github/workflows/release.yml']
+    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'lifter/sdklift_install.txt', '.github/workflows/release.yml']
 
 permissions:
   contents: write
 
 env:
   SDL_TAG: release-3.4.18
+  FFMPEG_TAG: n7.1.5
+  GLSLANG_TAG: 16.6.0
+  LLVM_VERSION: 23.1.4
 
 jobs:
   linux:
-    # the oldest supported runner, so the binary runs on older glibc too
+    # the oldest supported runner, so the binaries run on older glibc too
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -36,18 +46,40 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "name=WitchTime-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
 
-      - name: wtbuild
-        run: |
-          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
-          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
-
       - name: Packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build patchelf libfreetype-dev \
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf nasm libfreetype-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
             libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
-            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
+            libgl-dev libssl-dev libvulkan-dev
+          python3 -m pip install --user lz4
+
+      # the compiler players get: clang, lld and clang's own headers and builtins from LLVM's release, nothing else
+      - name: LLVM cache
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: deps/llvm
+          key: llvm-${{ env.LLVM_VERSION }}-trim1
+      - name: LLVM
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: |
+          v="$LLVM_VERSION"; major="${v%%.*}"
+          mkdir -p deps/llvm
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/LLVM-$v-Linux-X64.tar.xz" |
+            tar -xJ --strip-components=1 -C deps/llvm --wildcards "LLVM-$v-Linux-X64/bin/clang-$major" \
+              "LLVM-$v-Linux-X64/bin/lld" "LLVM-$v-Linux-X64/lib/clang/$major/include/*" \
+              "LLVM-$v-Linux-X64/lib/clang/$major/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a"
+          strip deps/llvm/bin/clang-$major deps/llvm/bin/lld
+          ln -s clang-$major deps/llvm/bin/clang
+          ln -s clang-$major deps/llvm/bin/clang++
+          ln -s lld deps/llvm/bin/ld.lld
+          curl -sSfL -o deps/llvm/LICENSE.TXT "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$v/llvm/LICENSE.TXT"
+          du -sh deps/llvm
+      - name: LLVM check
+        run: deps/llvm/bin/clang --version && deps/llvm/bin/ld.lld --version
 
       - name: SDL3
         run: |
@@ -56,6 +88,47 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
           cmake --build "$RUNNER_TEMP/sdl-build"
           cmake --install "$RUNNER_TEMP/sdl-build"
+          cp "$RUNNER_TEMP/sdl/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+
+      # FFmpeg for the movies, shared and LGPL (no --enable-gpl), decoders and demuxers only, nothing found on the runner
+      # (--disable-autodetect), so the libraries need only glibc
+      - name: FFmpeg cache
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu-22.04-1
+      - name: FFmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FFMPEG_TAG" https://github.com/FFmpeg/FFmpeg.git "$RUNNER_TEMP/ffmpeg-src"
+          cd "$RUNNER_TEMP/ffmpeg-src"
+          ./configure --prefix="$RUNNER_TEMP/ffmpeg" --enable-shared --disable-static --enable-pic --disable-autodetect \
+            --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-network --disable-encoders \
+            --disable-muxers --disable-debug
+          make -j"$(nproc)"
+          make install
+          cp COPYING.LGPLv2.1 "$RUNNER_TEMP/ffmpeg/"
+          # each library finds the others beside it
+          for f in "$RUNNER_TEMP"/ffmpeg/lib/lib*.so.*.*; do patchelf --set-rpath '$ORIGIN' "$f"; done
+
+      # glslang for the shader compiler shim, static (no SPIRV-Tools optimizer), linked into libssbu_glslang.so
+      - name: glslang cache
+        id: glslang
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/glslang
+          key: glslang-${{ env.GLSLANG_TAG }}-ubuntu-22.04-1
+      - name: glslang
+        if: steps.glslang.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$GLSLANG_TAG" https://github.com/KhronosGroup/glslang.git "$RUNNER_TEMP/glslang-src"
+          cmake -S "$RUNNER_TEMP/glslang-src" -B "$RUNNER_TEMP/glslang-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/glslang" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=OFF
+          cmake --build "$RUNNER_TEMP/glslang-build"
+          cmake --install "$RUNNER_TEMP/glslang-build"
+          cp "$RUNNER_TEMP/glslang-src/LICENSE.txt" "$RUNNER_TEMP/glslang/"
 
       - name: Launcher
         run: |
@@ -70,20 +143,50 @@ jobs:
           cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
           cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
 
+      # the runtime, with the bundled clang, against the SDL3, FFmpeg and glslang above and the runner's GL and OpenSSL 3
+      - name: Runtime
+        run: |
+          mkdir -p prebuilt
+          for l in avformat avcodec swscale swresample avutil; do
+            so=$(readelf -d "$RUNNER_TEMP/ffmpeg/lib/lib$l.so" | sed -n 's/.*SONAME.*\[\(.*\)\]/\1/p')
+            cp -L "$RUNNER_TEMP/ffmpeg/lib/$so" prebuilt/
+          done
+          export LLVM_ROOT="$PWD/deps/llvm"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/glslang/include"
+          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
+          export WT_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
+          tools/wtbuild/target/release/wtbuild runtime --out prebuilt
+          strip prebuilt/libssbu_glslang.so
+          readelf -d prebuilt/libwitchtime.so | grep -E 'NEEDED|RUNPATH'
+          ls -la prebuilt
+
+      # the link step on stand-in modules, with this prebuilt runtime and the bundled compiler, run until the image is mapped
+      - name: Smoke test of the link step
+        run: |
+          PATH="$PWD/deps/llvm/bin:$PATH" LLVM_ROOT="$PWD/deps/llvm" \
+            python3 tools/wtbuild/smoke_link.py --prebuilt prebuilt --lib "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0"
+
       - name: Package
         run: |
           name="${{ steps.version.outputs.name }}"
-          mkdir -p "dist/$name/build"
+          mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           rm -rf "dist/$name/.github"
           cp build/witch-time "dist/$name/build/"
           cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
           strip "dist/$name/build/witch-time" "dist/$name/build/libSDL3.so.0"
+          cp -a prebuilt "dist/$name/prebuilt"
+          cp -a deps/llvm "dist/$name/deps/llvm"
+          cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "dist/$name/licenses/SDL3.txt"
+          cp "$RUNNER_TEMP/ffmpeg/COPYING.LGPLv2.1" "dist/$name/licenses/FFmpeg-LGPL-2.1.txt"
+          cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
+          cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
           ln -s build/witch-time "dist/$name/witch-time"
           LD_LIBRARY_PATH= ldd "dist/$name/build/witch-time" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:

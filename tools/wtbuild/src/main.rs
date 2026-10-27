@@ -75,6 +75,23 @@ fn main() {
                 die(e)
             }
         }
+        Some("link") => {
+            // the link step on its own (developers, smoke_link.py): build/game.so, and the runtime when not prebuilt
+            let repo = repo_root(&args);
+            let clang = compile::find_clang(&repo);
+            link::run_step(&repo, &clang, &setup::child_env, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+        }
+        Some("runtime") => {
+            // the prebuilt runtime of a release (CI): wtbuild runtime --out <dir> [--repo <dir>]
+            let repo = repo_root(&args);
+            let out = args
+                .iter()
+                .position(|a| a == "--out")
+                .and_then(|i| args.get(i + 1))
+                .unwrap_or_else(|| die("runtime: --out <dir>"));
+            let clang = compile::find_clang(&repo);
+            link::make_prebuilt(&repo, &clang, Path::new(out), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
+        }
         Some("tables") if args.len() == 2 => {
             tables::run(Path::new(&args[1]), &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }

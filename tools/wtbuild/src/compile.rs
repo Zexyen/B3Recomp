@@ -1,7 +1,9 @@
 //! The `compile` step (scripts/compile_main.py, Linux): build/gen_eh/*.c -> build/obj/*.obj with clang -O2, only the
 //! files whose object is out of date. The up-to-date record (build/obj/_stamps.json, _funcs.h.prev) is the one
-//! compile_main.py keeps, with the same configuration hash, so a build made by setup.py is taken over without compiling
-//! anything again. compile_main.py's module comment has the rules.
+//! compile_main.py keeps; compile_main.py's module comment has the rules. Unlike compile_main.py, the code is compiled
+//! against runtime/freestanding instead of the system's C library headers (the same objects, without a libc development
+//! package: tools/wtbuild/compare_freestanding.py), so the configuration hash differs and a build made by setup.py is
+//! compiled once more.
 
 use crate::util::sha256_file;
 use serde_json::{json, Map, Value};
@@ -197,6 +199,22 @@ impl Cfg {
             seen.insert(inc, Sha256::digest(&data).to_vec());
             todo.extend(includes(&latin1(&data)));
         }
+        // the C library headers the code is compiled against (included as <...>, so not followed above)
+        let free = Path::new(&self.inc).join("freestanding");
+        let mut libc: Vec<String> = fs::read_dir(&free)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.ends_with(".h"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        libc.sort();
+        for n in &libc {
+            h.update(format!("<{}>", n).as_bytes());
+            h.update([0]);
+            h.update(Sha256::digest(fs::read(free.join(n)).unwrap_or_default()));
+        }
         for (inc, d) in &seen {
             h.update(inc.as_bytes());
             h.update([0]);
@@ -378,6 +396,7 @@ pub fn run_step(repo: &str, clang: &str, jobs: usize, env: &(dyn Fn(&mut Command
     let root = format!("{}/scripts/..", repo); // compile_main.py's ROOT, as its paths (and the stamps' hash) spell it
     let gen = format!("{}/build/gen_eh", root);
     let inc = format!("{}/runtime", root);
+    let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let c = Cfg {
         clang: clang.to_string(),
         gen: gen.clone(),
@@ -389,6 +408,9 @@ pub fn run_step(repo: &str, clang: &str, jobs: usize, env: &(dyn Fn(&mut Command
             "-mcx16",
             "-fPIC",
             FORCE_INLINE,
+            "-nostdlibinc",
+            "-isystem",
+            &free,
             "-I",
             &inc,
             "-I",
