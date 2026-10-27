@@ -787,8 +787,8 @@ Runs (muted, hidden window, copies of the save and of the user's graphics.ini; s
   **byte for byte the original**; SlotData untouched; B closed the pause menu, gameplay went on.
 - **Languages** (empty save + SSBU_LANGUAGE, `lang_*`): ja, zh-Hans, zh-Hant, ko, de, fr, es, it, ru show their labels and
   values in the list's font; es / ru / it / fr / ja / zh-Hans again after shortening the values that overflowed (es
-  "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto", not shown
-  again). **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
+  "Personalizado", "Predeterminado"; ru "По умолчанию" and its label; the German "Automatisch" is now "Auto"), de (Randlos)
+  and ko (전체 화면) again on the last build. **nl**: the game's own Dutch core text is empty (its ON / OFF and button guides are blank) and its messcore has
   no digits, so our values are partly blank there too; pt has the same files (not run). SSBU_LANGUAGE=en-GB showed the
   Japanese text (the game's choice; gb not tested).
 - Without the mod (SSBU_MODS=none, `nomod_8rows`): the 8 rows, cursor wrap over 8.
