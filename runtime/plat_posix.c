@@ -280,7 +280,22 @@ BOOL InitOnceExecuteOnce(INIT_ONCE *once, BOOL (*fn)(INIT_ONCE *, PVOID, PVOID *
 
 /* ---------------------------------------------------------------- fibers */
 DWORD FlsAlloc(void (*dtor)(PVOID)) { pthread_key_t k; return pthread_key_create(&k, dtor) ? FLS_OUT_OF_INDEXES : (DWORD)k; }
-typedef struct Fiber { ucontext_t uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
+#ifdef __ANDROID__
+/* [witchtime] bionic has no getcontext / makecontext / swapcontext: a switch of our own of what survives a call in the
+ * AArch64 procedure call standard (x19-x28, x29, x30, sp, d8-d15); `ret` of the switch lands in the other fiber */
+typedef struct { uint64_t x[12], sp, d[8]; } FiberCtx;     /* x19..x28, x29, x30; sp; d8..d15 */
+__asm__(".text\n.globl wt_fiber_swap\n.type wt_fiber_swap,%function\nwt_fiber_swap:\n"
+        "stp x19, x20, [x0]\n stp x21, x22, [x0, #16]\n stp x23, x24, [x0, #32]\n stp x25, x26, [x0, #48]\n"
+        "stp x27, x28, [x0, #64]\n stp x29, x30, [x0, #80]\n mov x9, sp\n str x9, [x0, #96]\n"
+        "stp d8, d9, [x0, #104]\n stp d10, d11, [x0, #120]\n stp d12, d13, [x0, #136]\n stp d14, d15, [x0, #152]\n"
+        "ldp x19, x20, [x1]\n ldp x21, x22, [x1, #16]\n ldp x23, x24, [x1, #32]\n ldp x25, x26, [x1, #48]\n"
+        "ldp x27, x28, [x1, #64]\n ldp x29, x30, [x1, #80]\n ldr x9, [x1, #96]\n mov sp, x9\n"
+        "ldp d8, d9, [x1, #104]\n ldp d10, d11, [x1, #120]\n ldp d12, d13, [x1, #136]\n ldp d14, d15, [x1, #152]\n ret\n");
+void wt_fiber_swap(FiberCtx *from, FiberCtx *to);
+#else
+typedef ucontext_t FiberCtx;
+#endif
+typedef struct Fiber { FiberCtx uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
 static __thread Fiber *t_fiber;
 static void fiber_entry(void) { t_fiber->fn(t_fiber->arg); _exit(70); }   /* a fiber function never returns (Windows ends the thread) */
 LPVOID ConvertThreadToFiber(LPVOID arg) {
@@ -296,17 +311,26 @@ LPVOID CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_START_R
     f->stack = mmap(NULL, f->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
     if (f->stack == MAP_FAILED) { free(f); return NULL; }
     f->fn = fn; f->arg = arg;
+#ifdef __ANDROID__
+    f->uc.sp = ((uintptr_t)f->stack + f->stack_size) & ~(uintptr_t)15;
+    f->uc.x[11] = (uint64_t)(uintptr_t)fiber_entry;   /* x30: the first switch to it returns there, x29 = 0 ends its frame chain */
+#else
     getcontext(&f->uc);
     f->uc.uc_stack.ss_sp = f->stack;
     f->uc.uc_stack.ss_size = f->stack_size;
     f->uc.uc_link = NULL;
     makecontext(&f->uc, fiber_entry, 0);
+#endif
     return f;
 }
 void SwitchToFiber(LPVOID fiber) {
     Fiber *from = t_fiber, *to = fiber;
     t_fiber = to;
+#ifdef __ANDROID__
+    wt_fiber_swap(&from->uc, &to->uc);
+#else
     swapcontext(&from->uc, &to->uc);
+#endif
 }
 void DeleteFiber(LPVOID fiber) {
     Fiber *f = fiber;
@@ -496,7 +520,11 @@ void GetSystemInfo(SYSTEM_INFO *si) {
 /* ---------------------------------------------------------------- modules and process */
 HMODULE LoadLibraryA(LPCSTR name) {
     static const char *const map[][2] = {      /* the Windows DLLs the runtime opens by name, and their Linux libraries */
+#ifdef __ANDROID__
+        {"vulkan-1.dll", "libvulkan.so"}, {"ssbu_glslang.dll", "libssbu_glslang.so"}, {"SDL3.dll", "libSDL3.so"}, {"libopus-0.dll", "libopus.so"},
+#else
         {"vulkan-1.dll", "libvulkan.so.1"}, {"ssbu_glslang.dll", "libssbu_glslang.so"}, {"SDL3.dll", "libSDL3.so.0"}, {"libopus-0.dll", "libopus.so.0"},
+#endif
     };
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
         if (!strcasecmp(name, map[i][0])) {
@@ -517,6 +545,13 @@ void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == (HMODULE)
 HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : (HMODULE)&__ehdr_start; }
 DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     (void)m;   /* the runtime asks for its own program only */
+#ifdef __ANDROID__
+    extern char **__argv;
+    /* [witchtime] the process is the app's (app_process64): the program is the one wt_main.c names, build/witch-time-game
+     * of the Witch Time folder on the phone, so <program folder>/../config etc. are found as on a PC */
+    int w = snprintf(out, n, "%s", __argv && __argv[0] ? __argv[0] : "");
+    return w < 0 || (DWORD)w >= n ? 0 : (DWORD)w;
+#endif
     ssize_t len = readlink("/proc/self/exe", out, n ? n - 1 : 0);
     if (len < 0) { if (n) out[0] = 0; return 0; }
     out[len] = 0;

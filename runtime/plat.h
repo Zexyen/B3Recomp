@@ -391,7 +391,11 @@ static inline int plat_protect(void *p, size_t size, int prot) {
 #define InterlockedCompareExchange(p, x, c)        plat_cas_((p), (x), (c))
 #define InterlockedCompareExchange64(p, x, c)      plat_cas_((p), (x), (c))
 #define InterlockedCompareExchangePointer(p, x, c) plat_cas_((p), (x), (c))
+#ifdef __aarch64__
+#define YieldProcessor() __asm__ __volatile__("yield")
+#else
 #define YieldProcessor() __builtin_ia32_pause()
+#endif
 
 /* SRW locks: a mutex, because SleepConditionVariableSRW waits on them (a pthread condvar needs a mutex); shared
  * acquisitions are exclusive, which is stricter and so still correct */

@@ -91,6 +91,15 @@ const LIBS: &[&str] = &[
     "-lswresample",
     "-lavutil",
 ];
+/// Android: SDL3, FFmpeg (built with the NDK in CI) and bionic; no OpenGL (the GL back end's functions are all null there,
+/// plat.h wglGetProcAddress), no libpthread (in libc)
+const ANDROID_LIBS: &[&str] = &["-lSDL3", "-ldl", "-lm", "-llog", "-landroid", "-lavformat", "-lavcodec", "-lswscale", "-lswresample", "-lavutil"];
+/// clang's compiler-rt builtins for AArch64 Android, shipped with the runtime: the player's bundled clang has none for
+/// that target, and game.so links no C library (`builtins` below)
+const ANDROID_BUILTINS: &str = "libclang_rt.builtins-aarch64-android.a";
+/// the NDK's stand-ins for bionic (symbol tables only), shipped with the runtime: game.so names them as its needs, so that
+/// Android's linker, which resolves every symbol when the app loads game.so, finds its C functions
+const ANDROID_LIBC_STUBS: &[&str] = &["libc.so", "libm.so", "libdl.so"];
 /// Windows (build_runtime.py's mingw LIBS): SDL3, and the system's libraries (Media Foundation for the movies, waveOut)
 const WIN_LIBS: &[&str] = &[
     "-lSDL3",
@@ -166,9 +175,15 @@ fn runtime_files(t: Target) -> &'static [&'static str] {
     match t {
         Target::Linux => &["libwitchtime.so", "witch-time-game", "libssbu_glslang.so", "game_shim_eh.o"],
         Target::Windows => &["witch-time-game.exe", "ssbu_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
+        Target::Android => &["libwitchtime.so", "libssbu_glslang.so", "game_shim_eh.o", ANDROID_BUILTINS, "libc.so", "libm.so", "libdl.so"],
     }
 }
 pub const PREBUILT: &str = "prebuilt";
+/// where a release ships the prebuilt runtime: prebuilt/ for this system, prebuilt-android/ for the Android build the
+/// player's PC links game.so for
+fn prebuilt_dir(repo: &Path, t: Target) -> PathBuf {
+    repo.join(if t == Target::host() { PREBUILT.to_string() } else { format!("{}-{}", PREBUILT, t.name()) })
+}
 
 fn s(p: &Path) -> String {
     p.to_string_lossy().into_owned()
@@ -292,7 +307,7 @@ pub fn build_runtime(
     if !t.windows() {
         flags.extend(["-I".to_string(), s(&rt.join("posix"))]);
     }
-    flags.extend(strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]));
+    flags.extend(strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing"]));
     if t.windows() {
         flags.push("-gcodeview".into()); // debug information in a PDB beside the program (crash addresses -> source)
     }
@@ -317,7 +332,11 @@ pub fn build_runtime(
         "-Werror=int-conversion",
     ]));
     let t0 = Instant::now();
-    let sources: Vec<&str> = HOST_SOURCES.iter().chain(if t.windows() { &[][..] } else { POSIX_SOURCES }).cloned().collect();
+    let mut sources: Vec<&str> = HOST_SOURCES.iter().chain(if t.windows() { &[][..] } else { POSIX_SOURCES }).cloned().collect();
+    if t.android() {
+        sources.push("wt_main.c"); // SDL_main, called by the app's SDLActivity: the library is the program
+        sources.push("posix/gl_android.c"); // the GL 1.1 functions the GL back end calls: no desktop GL there
+    }
     let jobs: Vec<(PathBuf, PathBuf)> = sources
         .iter()
         .map(|n| (rt.join(n), objdir.join(format!("{}.obj", Path::new(n).file_stem().unwrap().to_string_lossy()))))
@@ -338,7 +357,7 @@ pub fn build_runtime(
 
     // 2. game.so's own part of the runtime: the calls back into the host, the landing-pad resume, host versions of
     // game functions (on Windows also game.dll's entry point: it is linked without the C runtime)
-    let mut a = strs(&["-c", "-O1", "-w", "-mcx16"]);
+    let mut a = strs(&["-c", "-O1", "-w"]);
     a.extend(if t.windows() {
         strs(&["-DWT_GAME_NOSTDLIB"])
     } else {
@@ -378,7 +397,8 @@ pub fn build_runtime(
     a.extend(jobs.iter().map(|j| s(&j.1)));
     a.extend(["-Xlinker".into(), "--no-as-needed".into(), s(&stub.join("game.so"))]);
     a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "-soname=libwitchtime.so"]));
-    a.extend(strs(LIBS));
+    a.push(format!("-L{}", s(out))); // the libraries shipped beside it (CI copies them there first; the NDK's clang ignores LIBRARY_PATH)
+    a.extend(strs(if t.android() { ANDROID_LIBS } else { LIBS }));
     a.extend(["-o".into(), s(&host)]);
     let (code, o, _) = cl.run(&a);
     log(format!("libwitchtime.so: link exit {}", code.unwrap_or(-1)));
@@ -387,18 +407,28 @@ pub fn build_runtime(
         return Err("libwitchtime.so did not link".into());
     }
 
-    // 4. witch-time-game: the same runtime as a program of its own (the launcher starts it when it cannot load the
-    // library); what libwitchtime.so needs from game.so is resolved when it runs
-    let exe = out.join("witch-time-game");
-    let mut a = strs(&["-fuse-ld=lld", "-g"]);
-    a.extend([s(&rt.join("wt_main.c")), s(&host)]);
-    a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "--allow-shlib-undefined", "-o"]));
-    a.push(s(&exe));
-    let (code, o, _) = cl.run(&a);
-    log(format!("witch-time-game: link exit {}", code.unwrap_or(-1)));
-    if code != Some(0) {
-        log(tail(&o, 3000).to_string());
-        return Err("witch-time-game did not link".into());
+    if t.android() {
+        // the app loads the library: no program. The builtins go to the player's PC, for game.so's link
+        let b = cl.builtins().ok_or("the NDK's clang has no compiler-rt builtins for aarch64-linux-android")?;
+        fs::copy(&b, out.join(ANDROID_BUILTINS)).map_err(|e| format!("{}: {}", b, e))?;
+        for l in ANDROID_LIBC_STUBS {
+            let (_, p, _) = cl.run(&[format!("-print-file-name={}", l)]);
+            fs::copy(p.trim(), out.join(l)).map_err(|e| format!("{} ({}): {}", l, p.trim(), e))?;
+        }
+    } else {
+        // 4. witch-time-game: the same runtime as a program of its own (the launcher starts it when it cannot load the
+        // library); what libwitchtime.so needs from game.so is resolved when it runs
+        let exe = out.join("witch-time-game");
+        let mut a = strs(&["-fuse-ld=lld", "-g"]);
+        a.extend([s(&rt.join("wt_main.c")), s(&host)]);
+        a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "--allow-shlib-undefined", "-o"]));
+        a.push(s(&exe));
+        let (code, o, _) = cl.run(&a);
+        log(format!("witch-time-game: link exit {}", code.unwrap_or(-1)));
+        if code != Some(0) {
+            log(tail(&o, 3000).to_string());
+            return Err("witch-time-game did not link".into());
+        }
     }
 
     // 5. the shader compiler shim; LoadLibraryA("ssbu_glslang.dll") opens it beside the program
@@ -407,6 +437,9 @@ pub fn build_runtime(
     let mut a = strs(&["-shared", "-fPIC", "-O2", "-w", "-D_GNU_SOURCE", "-D__declspec(x)=", "-I"]);
     a.extend([s(&rt.join("posix")), "-I".into(), s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
+    if t.android() {
+        a.push(s(&host)); // its InitOnceExecuteOnce: Android's linker does not show a library opened later what the app loaded
+    }
     a.extend(["-o".into(), s(&so)]);
     let (code, o, _) = cl.run(&a);
     log(format!("libssbu_glslang.so: exit {}", code.unwrap_or(-1)));
@@ -502,23 +535,18 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
 
 /// game.so: the lifted objects, game_shim_eh.o and the player's tables, linked without the C library (what they call
 /// in it, and in the runtime, is found when the game starts). game.dll: the same, exporting its tables (game.def) and
-/// importing the C functions from the UCRT (`implibs`)
-fn link_game(
-    repo: &Path,
-    clang: &str,
-    t: Target,
-    env: &(dyn Fn(&mut Command) + Sync),
-    shim: &Path,
-    implibs: &[PathBuf],
-    log: &mut dyn FnMut(String),
-) -> Result<(), String> {
+/// importing the C functions from the UCRT. Android: the compiler-rt builtins and bionic's stand-ins the runtime build
+/// shipped (the bundled clang has neither for AArch64). `dir` holds game_shim_eh.o and those (prebuilt, or build/)
+fn link_game(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command) + Sync), dir: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let cl = Clang { path: clang, t, env };
+    let shim = dir.join("game_shim_eh.o");
+    let archives: Vec<PathBuf> = runtime_files(t).iter().filter(|f| f.ends_with(".a")).map(|f| dir.join(f)).collect();
     let rt = repo.join("runtime");
-    let build = repo.join("build");
-    let (obj, objt) = (build.join("obj"), build.join("obj_tables"));
+    let build = t.out_dir(repo);
+    let (obj, objt) = (t.obj_dir(repo), repo.join("build").join("obj_tables"));
     fs::create_dir_all(&objt).map_err(|e| e.to_string())?;
 
-    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"]);
+    let mut flags = strs(&["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing"]);
     if !t.windows() {
         flags.extend(strs(&["-fPIC", "-D__declspec(x)="]));
     }
@@ -559,14 +587,18 @@ fn link_game(
     if !t.windows() {
         a.extend(strs(&["-Xlinker", "-soname=game.so"]));
     }
-    a.push(s(shim));
+    a.push(s(&shim));
     a.extend(jobs.iter().map(|j| s(&j.1)));
     a.push(format!("@{}", s(&rsp)));
     if t.windows() {
         let def = build.join("game.def");
         fs::write(&def, game_def()).map_err(|e| e.to_string())?;
         a.push(s(&def));
-        a.extend(implibs.iter().map(|p| s(p)));
+    }
+    a.extend(archives.iter().map(|p| s(p)));
+    if t.android() {
+        a.push(format!("-L{}", s(dir)));
+        a.extend(ANDROID_LIBC_STUBS.iter().map(|l| format!("-l{}", &l[3..l.len() - 3])));
     }
     let builtins = cl.builtins();
     a.extend(builtins.iter().cloned());
@@ -589,18 +621,19 @@ fn link_game(
 
 /// prebuilt/manifest.json of a release, when its runtime was built from these sources: (folder, its files)
 fn prebuilt(repo: &Path, t: Target, log: &mut dyn FnMut(String)) -> Option<(PathBuf, Vec<String>)> {
-    let dir = repo.join(PREBUILT);
+    let dir = prebuilt_dir(repo, t);
+    let name = dir.file_name().unwrap().to_string_lossy().into_owned();
     let m: Value = serde_json::from_slice(&fs::read(dir.join("manifest.json")).ok()?).ok()?;
     let files: Vec<String> = m.get("files")?.as_array()?.iter().filter_map(|v| v.as_str().map(String::from)).collect();
     if m.get("sources").and_then(|v| v.as_str()) != Some(sources_hash(repo).as_str()) {
-        log(format!("{}/ was built from other runtime sources: the runtime is built here", PREBUILT));
+        log(format!("{}/ was built from other runtime sources: the runtime is built here", name));
         return None;
     }
     let missing = (runtime_files(t).iter().map(|f| f.to_string()).filter(|f| !files.contains(f)))
         .chain(files.iter().filter(|f| !dir.join(f).is_file()).cloned())
         .next();
     if let Some(f) = missing {
-        log(format!("{}/ is incomplete (no {}): the runtime is built here", PREBUILT, f));
+        log(format!("{}/ is incomplete (no {}): the runtime is built here", name, f));
         return None;
     }
     Some((dir, files))
@@ -651,26 +684,28 @@ fn install(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// an input of the player's link (game_shim_eh.o, the UCRT's import library), not a file of the runtime
 fn link_input(f: &str) -> bool {
-    f.ends_with(".o") || f.ends_with(".a")
+    f.ends_with(".o") || f.ends_with(".a") || ANDROID_LIBC_STUBS.contains(&f)
 }
 
 pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command) + Sync), log: &mut dyn FnMut(String)) -> Result<(), String> {
-    let build = repo.join("build");
-    let (shim, implibs) = match prebuilt(repo, t, log) {
+    let build = t.out_dir(repo);
+    fs::create_dir_all(&build).map_err(|e| e.to_string())?;
+    let dir = match prebuilt(repo, t, log) {
         Some((dir, files)) => {
             for f in files.iter().filter(|f| !link_input(f)) {
                 install(&dir.join(f), &build.join(f)).map_err(|e| format!("{}: {}", f, e))?;
             }
-            log(format!("runtime: prebuilt, {} files from {}/", files.len(), PREBUILT));
-            (dir.join("game_shim_eh.o"), vec![dir.join(UCRT_IMPLIB)])
+            log(format!("runtime: prebuilt, {} files from {}/", files.len(), dir.file_name().unwrap().to_string_lossy()));
+            dir
         }
         None => {
             let gen = repo.join("runtime").join("gen");
             build_runtime(repo, clang, t, env, &build, &build.join("obj_host"), &gen, log)?;
-            (build.join("game_shim_eh.o"), vec![build.join(UCRT_IMPLIB)])
+            build
         }
     };
-    link_game(repo, clang, t, env, &shim, &implibs, log)?;
+    link_game(repo, clang, t, env, &dir, log)?;
+    let build = t.out_dir(repo);
     let mb = |f: &str| fs::metadata(build.join(f)).map(|m| m.len()).unwrap_or(0) as f64 / (1 << 20) as f64;
     let host = if t.windows() { "witch-time-game.exe" } else { "libwitchtime.so" };
     log(format!(

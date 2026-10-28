@@ -18,3 +18,6 @@ On Windows (`_WIN32`, the MinGW target `wtbuild` gives clang there) the headers 
 `jmp_buf` is its 256-byte layout and `setjmp` expands as mingw-w64's does (the UCRT's `_setjmp` with the frame from
 `__builtin_sponentry`), and `ldexpf` / `frexpf`, which the UCRT lacks, are inline over the double versions as mingw-w64
 gives them. `compare_freestanding.py --target windows` checks those objects against mingw-w64's headers.
+
+On Android (`__ANDROID__`, `--target=aarch64-linux-android29`) `jmp_buf` is bionic's 32 longs (256 bytes) and `setjmp` its
+own function; checked by hand against the NDK's header (`sizeof(jmp_buf)` with both), not yet by `compare_freestanding.py`.

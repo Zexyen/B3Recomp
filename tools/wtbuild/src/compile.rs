@@ -394,14 +394,14 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let inc = format!("{}/runtime", root);
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
-    flags.extend(["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from));
+    flags.extend(["-ffp-contract=off", "-w", "-fno-strict-aliasing"].map(String::from));
     flags.extend(t.pic());
     flags.extend([FORCE_INLINE, "-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     let c = Cfg {
         target: t,
         clang: clang.to_string(),
         gen: gen.clone(),
-        obj: Path::new(repo).join("build").join("obj"),
+        obj: t.obj_dir(Path::new(repo)),
         flags,
         inc,
     };

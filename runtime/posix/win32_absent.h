@@ -150,9 +150,16 @@ SHORT GetAsyncKeyState(int vk);
 #define LoadImageA(...) ((HANDLE)NULL)
 #define GetSystemMetrics(i) 0
 /* the critical-section fields the lock diagnostics print, on glibc's mutex */
+#ifdef __ANDROID__
+/* bionic's pthread_mutex_internal_t (64-bit): state (type, counter, locked bits) then owner_tid. Diagnostics only. */
+#define OwningThread __private[1]
+#define RecursionCount __private[0]
+#define LockCount __private[0]
+#else
 #define OwningThread __data.__owner
 #define RecursionCount __data.__count
 #define LockCount __data.__lock
+#endif
 
 /* ---------------------------------------------------------------- keyboard and raw mouse input (display.c answers on SDL3) */
 #define VK_LBUTTON 0x01
