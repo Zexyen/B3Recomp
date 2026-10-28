@@ -5232,7 +5232,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
-    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    for (int i = 0; g_vrc && i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);   /* the table is made at the first streamed draw (vrc_init) */
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;
