@@ -1771,7 +1771,10 @@ int mx_translate(const MxIn *in, MxOut *out) {
         if (in->stage == MX_VERTEX || tess_stage(e)) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
         const int vk = in->target == 1;
         const char *set0 = vk ? "set = 0, " : "", *set1 = vk ? "set = 1, " : "";
-        if (vk) emit(&h, "#version 460\n#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
+        /* [witchtime] SignedZeroInfNanPreserve: without it AMD's Windows driver may assume no NaN / Inf and fold away the isnan and
+         * zero checks that model Maxwell (FMZ, saturate, NaN compares); an Inf / NaN pixel then reaches the bloom as a white blob */
+        if (vk) emit(&h, "#version 460\n#extension GL_ARB_gpu_shader_int64 : enable\n#extension GL_EXT_texture_shadow_lod : enable\n"
+                         "#extension GL_EXT_spirv_intrinsics : require\nspirv_execution_mode(extensions = [\"SPV_KHR_float_controls\"], capabilities = [4466], 4461, 32);\n");
         else
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
