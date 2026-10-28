@@ -849,15 +849,19 @@ fn step_compile(cx: &mut Ctx) -> Result<(), Fail> {
     Ok(())
 }
 
+fn link_outputs(t: Target) -> &'static [&'static str] {
+    if t.windows() {
+        &["game.dll", "witch-time-game.exe"]
+    } else {
+        &["game.so", "libwitchtime.so", "witch-time-game"]
+    }
+}
+
 fn step_link(cx: &mut Ctx) -> Result<(), Fail> {
     let (root, clang) = (cx.root().to_path_buf(), cx.clang.clone());
     let t = Target::host();
     cx.logged("link", |log| link::run_step(&root, &clang, t, &child_env, log))?;
-    let files: &[&str] = if t.windows() {
-        &["game.dll", "witch-time-game.exe"]
-    } else {
-        &["game.so", "libwitchtime.so", "witch-time-game"]
-    };
+    let files = link_outputs(t);
     for f in files {
         if !cx.build.join(f).is_file() {
             return Err(Fail(format!(
@@ -1021,6 +1025,14 @@ pub fn main(args: &[String]) -> i32 {
     }
     if let Some(f) = cx.a.from.clone() {
         let i = STEPS.iter().position(|s| *s == f).unwrap();
+        let done = cx.done();
+        for s in &STEPS[i..] {
+            done.remove(*s);
+        }
+    }
+    // a link marked done whose files are gone (deleted, or made by an older Witch Time under other names) links again
+    if cx.done().contains_key("link") && link_outputs(Target::host()).iter().any(|f| !cx.build.join(f).is_file()) {
+        let i = STEPS.iter().position(|s| *s == "link").unwrap();
         let done = cx.done();
         for s in &STEPS[i..] {
             done.remove(*s);
