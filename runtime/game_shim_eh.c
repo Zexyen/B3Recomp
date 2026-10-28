@@ -78,6 +78,8 @@ void h_morton_split32(Ctx *c) {
  * cutscene_fps = 60 (graphics.ini, SSBU_CUTSCENE_FPS) a 1 is made 0: those scenes run as gameplay does. Each change of
  * the mode asked for is logged with the wall-clock time (the start and end of a cutscene). */
 void f_7100d02de0(Ctx *c);
+/* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
+static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
 __declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
@@ -92,7 +94,7 @@ void h_fps_mode_set(Ctx *c) {
         fflush(stdout);
         last = want;
     }
-    g_fps_forced = sixty && want == 1;
+    g_fps_forced = (sixty || uncap_on()) && want == 1;      /* above 60 fps the 30 fps scenes run at frame_rate too (real time) */
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }
@@ -105,8 +107,161 @@ void h_fps_mode_set(Ctx *c) {
  * time while frames are late too; one longer than 33 ms slows it as on the console. (A fixed 0.5: 92.3 s for the 92.1 s
  * cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1) follows the real frame time already. */
 void f_7100c1f600(Ctx *c);
+/* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WT_FPS_CENSUS=1 calls
+ * fps_census before the store of every counter site (tools/wtbuild/src/lifter/fps.rs, the list in gen_eh/fps_sites.txt).
+ * SSBU_FPS_CENSUS=<file>: per (site, field) the visits are counted against the game clock's updates (h_frame_clock):
+ * a visit in the update after the last one of the same field (consec: a frame counter, whatever the frame rate), in the
+ * same update (a loop), or later; and visits from another guest thread than the clock's. Every 1,200 updates the file
+ * gets one line per site (rewritten whole): site visits fields consec same later offthread updates_with_a_visit, then
+ * what a visit adds (the value stored - the field's value: code 1 / 2 / 4 an integer of that size, 0 a float): the mean
+ * of its size, its least and its largest; and a first line with the updates counted. scripts/fps_census.py compares a
+ * run at 60 with one above 60. */
+static volatile uint64_t g_upd;                 /* the clock's updates so far */
+static Ctx *volatile g_clock_ctx;               /* the guest thread that runs the clock */
+typedef struct { uint64_t site, field, last; } FcRec;
+typedef struct { uint64_t site, visits, fields, consec, same, later, off, upds, last; double dsum, dmin, dmax; } FcSite;
+#define FC_RECS (1u << 21)
+#define FC_SITES (1u << 16)
+static FcRec *fc_rec; static FcSite *fc_site; static volatile int fc_lock; static int fc_on = -1; static const char *fc_path;
+static uint64_t fc_hash(uint64_t a) { a ^= a >> 33; a *= 0xff51afd7ed558ccdull; a ^= a >> 33; return a; }
+static void fc_dump(void) {
+    FILE *f = fopen(fc_path, "w");
+    if (!f) return;
+    fprintf(f, "updates %llu\n", (unsigned long long)g_upd);
+    for (uint32_t i = 0; i < FC_SITES; i++) {
+        FcSite *t = &fc_site[i];
+        if (t->site) fprintf(f, "%llx %llu %llu %llu %llu %llu %llu %llu %.6g %.6g %.6g\n", (unsigned long long)t->site, (unsigned long long)t->visits, (unsigned long long)t->fields,
+                             (unsigned long long)t->consec, (unsigned long long)t->same, (unsigned long long)t->later, (unsigned long long)t->off, (unsigned long long)t->upds,
+                             t->dsum / (double)(t->visits ? t->visits : 1), t->dmin, t->dmax);
+    }
+    fclose(f);
+}
+void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code) {
+    if (fc_on <= 0) {
+        if (fc_on == 0) return;
+        fc_path = getenv("SSBU_FPS_CENSUS");
+        if (fc_path && *fc_path) { fc_rec = calloc(FC_RECS, sizeof *fc_rec); fc_site = calloc(FC_SITES, sizeof *fc_site); }
+        fc_on = fc_rec && fc_site;
+        if (!fc_on) return;
+        printf("fps census: counter sites recorded to %s\n", fc_path);
+    }
+    uint64_t u = g_upd;
+    double d;
+    if (code) {
+        uint32_t o = 0; memcpy(&o, (void *)(uintptr_t)field, (size_t)code);
+        int sh = 64 - 8 * code;
+        d = (double)((int64_t)((v - o) << sh) >> sh);
+    } else {
+        float a, b; uint32_t w = (uint32_t)v; memcpy(&a, (void *)(uintptr_t)field, 4); memcpy(&b, &w, 4);
+        d = (double)b - (double)a;
+        if (d != d) d = 0.0;
+    }
+    while (__atomic_exchange_n(&fc_lock, 1, __ATOMIC_ACQUIRE)) {}
+    FcSite *t = 0;
+    for (uint32_t i = (uint32_t)fc_hash(site) & (FC_SITES - 1), n = 0; n < FC_SITES; i = (i + 1) & (FC_SITES - 1), n++)
+        if (fc_site[i].site == site || !fc_site[i].site) { t = &fc_site[i]; break; }
+    FcRec *r = 0;
+    for (uint32_t i = (uint32_t)fc_hash(site * 31 + field) & (FC_RECS - 1), n = 0; n < 64; i = (i + 1) & (FC_RECS - 1), n++)
+        if ((fc_rec[i].site == site && fc_rec[i].field == field) || !fc_rec[i].site) { r = &fc_rec[i]; break; }
+    if (t) {
+        if (!t->site) { t->site = site; t->last = ~0ull; t->dmin = t->dmax = d; }
+        t->visits++;
+        t->dsum += d < 0 ? -d : d; if (d < t->dmin) t->dmin = d; if (d > t->dmax) t->dmax = d;
+        if (t->last != u) { t->upds++; t->last = u; }
+        if (c != g_clock_ctx) t->off++;
+        if (r && !r->site) { r->site = site; r->field = field; t->fields++; }
+        else if (r) { if (r->last == u) t->same++; else if (r->last + 1 == u) t->consec++; else t->later++; }
+        if (r) r->last = u;
+    }
+    __atomic_store_n(&fc_lock, 0, __ATOMIC_RELEASE);
+}
+/* Frame counters at any frame rate (tools/wtbuild/fps_counters.txt: the sites; the lifter makes their +/-1 a call of
+ * fps_ci / fps_cf). The game's counters move 1 a frame, made for 60 Hz frames (30 Hz in the 30 fps scenes). Each clock
+ * update adds its step (frames of the game's own cadence) to an accumulator; G = the whole frames due so far (at most 4
+ * an update). A counter visit moves by the frames due since that field's last visit when it also ran in the previous
+ * update, so it keeps the game's time at 90, 120, 144 fps or a rate that changes from frame to frame; a second visit in
+ * the same update moves as the first did (a counter the game steps twice a frame); any other visit (the first, a one-off
+ * event) moves 1 as made. A countdown never passes 0 in one visit and takes the stock step at 0 with no frame due (a
+ * test of the result for 0 fires as made); an up-counter moves at most 1 a visit (a test for an exact value is not
+ * passed over); what a limit holds back is owed to the next visits (at most 8). Off (the stock 1) unless frame_rate is
+ * above 60; SSBU_FPS_COUNTERS=0 keeps the stock one above 60 too (tests: is a fault the sites'). The rules of B2recomp's
+ * fps_patch.py (finding 134), written again for B3. */
+static int fc_sites_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("SSBU_FPS_COUNTERS"); v = uncap_on() && !(e && !atoi(e)); } return v; }
+static float fc_stab[256];                  /* the step of update n at [n & 255] (fps_fs) */
+static uint64_t fc_gtab[256];               /* G of update n at [n & 255], stored before n is published: other threads read n, then its G */
+typedef struct { uint64_t key, field, S, U; int64_t now, carry; float f; } FcCnt;
+#define FC_CNTS 4096
+static FcCnt fc_cnt[FC_CNTS];
+static FcCnt *fc_find(uint64_t key, uint64_t field) {
+    uint64_t h = fc_hash(key * 0x9E3779B97F4A7C15ull ^ field);
+    FcCnt *victim = 0;
+    for (int i = 0; i < 8; i++) {
+        FcCnt *r = &fc_cnt[(h + (uint64_t)i) % FC_CNTS];
+        uint64_t k = __atomic_load_n(&r->key, __ATOMIC_ACQUIRE);
+        if (k == key && r->field == field) return r;
+        if (!k) {                                    /* a free slot, claimed with a CAS (two threads may insert) */
+            if (__atomic_compare_exchange_n(&r->key, &k, key, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { r->field = field; r->U = ~0ull; r->now = r->carry = 0; return r; }
+            if (k == key && r->field == field) return r;
+            continue;
+        }
+        if (!victim || r->U < victim->U) victim = r; /* all 8 taken: the one visited longest ago gives way */
+    }
+    victim->key = key; victim->field = field; victim->U = ~0ull; victim->now = victim->carry = 0;
+    return victim;
+}
+static int64_t fc_visit(uint64_t key, uint64_t field, FcCnt **rp) {
+    uint64_t n = __atomic_load_n(&g_upd, __ATOMIC_ACQUIRE), g = fc_gtab[n & 255];
+    FcCnt *r = fc_find(key, field);
+    int64_t de;
+    if (r->U == n) de = r->now;
+    else {
+        if (r->U == n - 1) { de = (int64_t)(g - r->S); if (de < 0) de = 0; if (de > 4) de = 4; de += r->carry; }
+        else de = 1;
+        r->carry = 0;
+        if (de > 8) { r->carry = de - 8; de = 8; }
+        r->now = de;
+    }
+    r->S = g; r->U = n;
+    *rp = r;
+    return de;
+}
+static void fc_limit(FcCnt *r, int64_t *de, int64_t keep) {
+    if (*de > keep) { r->carry += *de - keep; if (r->carry > 8) r->carry = 8; *de = keep; }
+}
+/* an integer counter's add / sub of k (w: its value before): what it moves by */
+uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int sign) {
+    (void)c;
+    if (!fc_sites_on() || !g_upd) return (uint32_t)k;
+    FcCnt *r;
+    int64_t de = fc_visit(key, field, &r), w = (int32_t)wb;
+    if (sign < 0) { if (de == 0 && w == 0) de = 1; fc_limit(r, &de, w > k ? 1 + (w - k) / k : 1); }
+    else fc_limit(r, &de, 1);
+    return (uint32_t)(k * de);
+}
+/* a float counter's add of +/-1.0 (w: its value before): the frames that multiply the 1.0 */
+int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign) {
+    (void)c;
+    if (!fc_sites_on() || !g_upd) return 1;
+    FcCnt *r;
+    int64_t de = fc_visit(key, field, &r);
+    fc_limit(r, &de, sign < 0 ? (w >= 2.0f ? 1 + (int64_t)(w - 1.0f) : 1) : 1);
+    return (int)de;
+}
+/* a float the game adds a per-frame amount to (x +/- a): the factor of a, the step of this update (frames of game time,
+ * fractional: motion stays smooth at any rate) when the site also ran in the previous update; a second visit in the same
+ * update takes the same factor; any other visit (a one-off event) 1, as made. Off: 1. */
+float fps_fs(Ctx *c, uint64_t key, uint64_t field) {
+    (void)c;
+    if (!fc_sites_on() || !g_upd) return 1.0f;
+    uint64_t n = __atomic_load_n(&g_upd, __ATOMIC_ACQUIRE);
+    FcCnt *r = fc_find(key, field);
+    float f = r->U == n ? r->f : r->U == n - 1 ? fc_stab[n & 255] : 1.0f;
+    r->f = f; r->U = n; r->S = fc_gtab[n & 255];
+    return f;
+}
 void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
+    g_clock_ctx = c;
     int fixed = (uint32_t)c->x[1] == 0;
     f_7100c1f600(c);
     if (g_fps_forced && fixed) {
@@ -116,4 +271,30 @@ void h_frame_clock(Ctx *c) {
         v *= k < 1.0f ? k : 1.0f;
         memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
     }
+    /* frame_rate above 60: a measured step (w1 = 1) is this frame's ms / the ms of a 60 Hz frame (+0xec) with the floor 1.0
+     * lowered to 1/16 (960 fps) and no carry; the 2.0 ceiling (slow below 30 fps) and the global override (7100ba3300's float,
+     * when above 0) stay the game's. The game's frame counters of tools/wtbuild/fps_counters.txt follow (fps_ci below). */
+    if (!fixed && uncap_on()) {
+        uint64_t p; float ov, ms, per;
+        memcpy(&p, (void *)(uintptr_t)0x71024aaea0ull, 8); memcpy(&ov, (void *)(uintptr_t)p, 4);
+        memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4); memcpy(&per, (void *)(uintptr_t)(obj + 0xec), 4);
+        if (!(ov > 0.0f) && per > 0.0f && ms == ms) {
+            float s = ms / per, z = 0.0f;
+            s = s < 0.0625f ? 0.0625f : s > 2.0f ? 2.0f : s;
+            memcpy((void *)(uintptr_t)(obj + 0xe0), &s, 4); memcpy((void *)(uintptr_t)(obj + 0xe4), &z, 4);
+        }
+    }
+    {   /* this update's step into the frames due (fps_ci), then the update is published */
+        static double acc; static uint64_t g;
+        float st; memcpy(&st, (void *)(uintptr_t)(obj + 0xe0), 4);
+        acc += st > 0.0f && st == st ? st : 0.0;
+        int t = (int)(acc + 1e-3);
+        if (t > 4) { t = 4; acc = 4.0; }
+        acc -= t; if (acc < 0) acc = 0;
+        g += (uint64_t)t;
+        fc_gtab[(g_upd + 1) & 255] = g;
+        fc_stab[(g_upd + 1) & 255] = st > 0.0f && st == st ? st : 1.0f;
+    }
+    if (fc_on > 0) { while (__atomic_exchange_n(&fc_lock, 1, __ATOMIC_ACQUIRE)) {} g_upd++; if (g_upd % 1200 == 0) fc_dump(); __atomic_store_n(&fc_lock, 0, __ATOMIC_RELEASE); }
+    else __atomic_store_n(&g_upd, g_upd + 1, __ATOMIC_RELEASE);
 }

@@ -5,6 +5,7 @@
 //! real address, so guest pointers are host pointers.
 
 pub mod eh;
+pub mod fps;
 
 use crate::util::{bits, cstr, hx, i64_at, py_repr, sext, u16_at, u32_at, u64_at};
 use std::collections::HashMap;

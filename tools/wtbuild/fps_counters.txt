@@ -1,0 +1,23 @@
+# Frame counters that move by the 60 Hz frames of game time due to them above 60 fps (lifter/fps.rs patch_op; the rules
+# are runtime/game_shim_eh.c fps_ci / fps_cf). Found by the census (docs/STATUS.md, "Frame rates above 60"; scripts/fps_census.py)
+# and read one by one. <store address> <what it counts>
+# First batch (2026-10-27; census at 60 and 120, Shibuya street fight): frame-locked on the game's thread, visited
+# once per update, the add per visit a constant (or 1). Not read in the game's code yet beyond that.
+7100814268 float -= 1/60 a frame (seconds at 60), 8 objects  [x19 + 3092]
+7100627d18 float -= 1/60 a frame  [x19 + 1620]
+71006274b8 float += 0.1 a frame  [x19 + 1016]
+710077397c float -= 0.33 a frame  [x19 + 104]
+7100084328 float -= 0.1 a frame, 5 objects  [x21 + 3168]
+7100c8a7cc float countdown -1.0 a frame, 195 objects  [x19 + 2368]
+710064cff8 float countdown -1.0 a frame  [x19 + 2456]
+710055a83c int countdown -1 a frame  [x19 + 380]
+710055a8dc int countdown -1 a frame  [x19 + 396]
+710055a8f0 int countdown -1 a frame  [x19 + 428]
+710055a41c int countdown -1 a frame: the double-tap-dodge window (two quick dodges while moving: the demon form)  [x19 + 956]
+# Checked (census of the patched build at 120 against 60): each of the first 10 adds about half as much per visit at 120
+# (ratio 1.85 .. 2.11), i.e. keeps the game's time. 7100694cbc / 7100694d60 (float -= 0.05165 / 0.2719, [x21 + 0],
+# 7100692284) did not (ratio 1.19, the field changes from update to update): not listed until read.
+# 710055a41c (2026-10-27): found from a player report (the demon form's double-tap dodge failed above 60): scripted
+# double-taps while moving forward, 0.12 / 0.20 / 0.30 s apart, transform at 60 for 0.12 and 0.20, at 120 only for
+# 0.12; six frame-locked countdowns of the double-tap census patched, then bisected to this one: with it, 0.20
+# transforms at 120 and 0.30 still does not, as at 60.
