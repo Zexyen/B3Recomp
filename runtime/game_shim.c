@@ -15,6 +15,7 @@ typedef struct {
     void (*stx_diag)(Ctx *, uint64_t, uint64_t, uint64_t, uint64_t, int);
     void (*sdk_dispatch)(Ctx *, uint64_t);           /* [witchtime] for gen/sdklift_gen.c, which is in the game library now */
     void (*sdk_host_call)(Ctx *, int);
+    void (*sdk_trap_call)(Ctx *, const char *);
 } GameHost;
 
 typedef struct {
@@ -34,9 +35,10 @@ void guest_svc(Ctx *c, uint32_t number) { host.guest_svc(c, number); }
 void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, int bits) { host.stx_diag(c, a, expected, seen, v, bits); }
 #ifdef _WIN32
 /* [witchtime] the lifted sdk (gen/sdklift_gen.c) is linked into game.dll with the player's other tables (runtime/split);
- * on Linux game.so finds these two in the runtime when it is loaded */
+ * on Linux game.so finds these three in the runtime when it is loaded */
 void sdk_dispatch(Ctx *c, uint64_t addr) { host.sdk_dispatch(c, addr); }
 void sdk_host_call(Ctx *c, int index) { host.sdk_host_call(c, index); }
+void sdk_trap_call(Ctx *c, const char *name) { host.sdk_trap_call(c, name); }
 #endif
 #ifdef WT_GAME_NOSTDLIB
 /* [witchtime] game.dll as wtbuild links it on the player's PC: without the C runtime's start-up code (-nostdlib), so its

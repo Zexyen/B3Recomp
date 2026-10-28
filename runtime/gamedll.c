@@ -15,6 +15,7 @@ typedef struct {
     void (*stx_diag)(Ctx *, uint64_t, uint64_t, uint64_t, uint64_t, int);
     void (*sdk_dispatch)(Ctx *, uint64_t);           /* [witchtime] game_shim.c */
     void (*sdk_host_call)(Ctx *, int);
+    void (*sdk_trap_call)(Ctx *, const char *);
 } GameHost;
 
 typedef struct {
@@ -26,6 +27,7 @@ typedef struct {
 
 void sdk_dispatch(Ctx *c, uint64_t addr);     /* sdklift_rt.c */
 void sdk_host_call(Ctx *c, int index);
+void sdk_trap_call(Ctx *c, const char *name);
 __declspec(dllimport) void game_bind(const GameHost *h, GameTables *t);
 
 #undef fn_table
@@ -38,7 +40,7 @@ const DynSym (*game_dyn_syms_p)[];
 const int *game_dyn_sym_count_p;
 
 __attribute__((constructor)) static void bind_game(void) {
-    GameHost h = {call_indirect, host_import, guest_trap, guest_unimpl, guest_svc, stx_diag, sdk_dispatch, sdk_host_call};
+    GameHost h = {call_indirect, host_import, guest_trap, guest_unimpl, guest_svc, stx_diag, sdk_dispatch, sdk_host_call, sdk_trap_call};
     GameTables t;
     game_bind(&h, &t);
     game_fn_table_p = (const FnEntry (*)[])t.table;
