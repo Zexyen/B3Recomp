@@ -237,6 +237,8 @@ void App::bind_model()
 	c.RegisterArray<std::vector<Rml::String>>();
 	c.Bind("screen", &screen);
 	c.Bind("built", &built);
+	c.Bind("hour_deg", &hour_deg);
+	c.Bind("minute_deg", &minute_deg);
 	c.Bind("status_bad", &status_bad);
 	c.Bind("status_title", &status_title);
 	c.Bind("status_line", &status_line);
@@ -293,7 +295,9 @@ int App::run()
 	while (running)
 	{
 		SDL_Event ev;
-		if (SDL_WaitEventTimeout(&ev, runner.running() ? 30 : 50))
+		// while an animation plays RmlUi asks for the next frame at once; the swapchain's vsync paces it
+		const int wait = ctx->GetNextUpdateDelay() <= 0 ? 1 : runner.running() ? 30 : 50;
+		if (SDL_WaitEventTimeout(&ev, wait))
 		{
 			handle(ev);
 			while (running && SDL_PollEvent(&ev))
@@ -703,8 +707,24 @@ void App::start_build()
 	go("build");
 }
 
+void App::tick_clock()
+{
+	std::time_t now = std::time(nullptr);
+	std::tm* t = std::localtime(&now);
+	if (!t)
+		return;
+	const float m = t->tm_min * 6 + t->tm_sec * 0.1f, h = (t->tm_hour % 12) * 30 + t->tm_min * 0.5f;
+	if (m == minute_deg && h == hour_deg)
+		return;
+	minute_deg = m;
+	hour_deg = h;
+	model.DirtyVariable("minute_deg");
+	model.DirtyVariable("hour_deg");
+}
+
 void App::tick()
 {
+	tick_clock();
 	{
 		std::lock_guard<std::mutex> lock(picked_mutex);
 		if (picked)

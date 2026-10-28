@@ -45,8 +45,8 @@
 				<div class="abs num" style="left: 105.5dp; top: 61.6dp;">XI</div>
 				<div class="abs hub"></div>
 				<img class="moon" src="gen:moon?c=e8cf94"/>
-				<div class="abs hand accent"></div>
-				<div class="abs hand long"></div>
+				<div class="abs hand hour" data-style-transform="'rotate(' + hour_deg + 'deg)'"></div>
+				<div class="abs hand minute" data-style-transform="'rotate(' + minute_deg + 'deg)'"></div>
 				<div class="abs pin"></div>
 			</div>
 			<div class="caption">

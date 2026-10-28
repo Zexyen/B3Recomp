@@ -37,6 +37,7 @@ private:
 	// what the screens show (the data model "wt")
 	Rml::String screen = "title";
 	bool built = false, status_bad = false;
+	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
 	Rml::String status_title, status_line, footer_info;
 	Rml::String dump;
 	bool checking = false, verified = false;
@@ -70,6 +71,7 @@ private:
 	bool key(Rml::Input::KeyIdentifier k);
 	void back();
 	void tick();
+	void tick_clock();
 	void draw();
 	void rescale();
 	void focus_first();
