@@ -18,6 +18,8 @@
         android:hardwareAccelerated="true"
         android:isGame="true"
         android:appCategory="game">
+        <!-- touches are the touch controls' (TouchControls.java), never mouse clicks: the mouse is bound to punch and the camera -->
+        <meta-data android:name="SDL_ENV.SDL_TOUCH_MOUSE_EVENTS" android:value="0" />
         <activity android:name=".WitchTimeActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"

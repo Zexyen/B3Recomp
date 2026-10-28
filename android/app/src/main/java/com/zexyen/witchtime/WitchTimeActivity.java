@@ -1,5 +1,8 @@
 package com.zexyen.witchtime;
 
+import android.os.Bundle;
+import android.view.ViewGroup;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -17,6 +20,23 @@ import org.libsdl.app.SDLActivity;
  * own files first and loaded before the runtime, which needs it.
  */
 public class WitchTimeActivity extends SDLActivity {
+    private TouchControls touch;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        ViewGroup layout = (ViewGroup) getContentView();
+        if (layout == null) return;      // the libraries did not load: SDL shows its error
+        touch = new TouchControls(this, new File(getExternalFilesDir(null), "config/controllers.ini"));
+        layout.addView(touch, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (touch != null) touch.update();     // controllers.ini may have changed while the app was away
+    }
+
     @Override
     protected String[] getLibraries() {
         return new String[] { "SDL3", "witchtime" };

@@ -18,6 +18,15 @@ builds the game library for it from your dump, as it does for itself:
 4. Start the app. It copies `build/game.so` into its own storage (code cannot run from the shared storage) and starts
    the game; the runtime's log is `build/run/witch-time-game.log`, saves go to `build/userdata`.
 
+## Controls
+
+A controller works as on a PC: one paired over Bluetooth or USB, or a handheld's built-in controller. Without one the
+app shows touch controls over the game: a stick where the left thumb lands, a drag on the right half for the camera, and
+the Switch's buttons where a Switch has them (RS is the right stick press, lock-on). `touch_controls` in
+`config/controllers.ini` decides: `auto` (the default) shows them only while no controller is connected and hides them
+when one connects, `on` always, `off` never. The app reads it when it comes back to the front. The touch controls are a
+controller of their own to the game ("Witch Time touch controls"), so `controllers.ini` can remap them like any pad.
+
 Uninstalling asks whether to keep the app's data: keep it, or the folder above, with the game data, is deleted.
 
 ## Building the app
@@ -34,4 +43,6 @@ reference. The runtime build needs SDL3, FFmpeg and libopus copied into `prebuil
 debug key for now, so a newer build may need the old one uninstalled first (keep the data when asked).
 
 `WitchTimeActivity.java` is SDL's activity, which loads `libSDL3.so`, then `game.so`, then `libwitchtime.so`, whose
-`SDL_main` (`runtime/wt_main.c`) sets up the paths and runs the game.
+`SDL_main` (`runtime/wt_main.c`) sets up the paths and runs the game. `TouchControls.java` is the touch layer (dusklight's
+touch controls were the reference); it registers with SDL through `org/libsdl/app/TouchPadBridge.java`, since SDL's
+controller natives are package-private.
