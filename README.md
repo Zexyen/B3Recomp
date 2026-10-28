@@ -45,6 +45,10 @@ tools/wtbuild/target/release/wtbuild setup --dump <your dump folder>
 Or build the launcher (`launcher/README.md`) and run `build/witch-time`, which does the same with progress on screen
 and then plays in its own window.
 
+Setup puts the game data (the dump's `romfs`) in `targets/romfs`, so the Witch Time folder holds the whole game and can be
+moved anywhere: copied by default (hard links on the same drive, so no extra space, and your dump stays whole), or moved
+with `--move-dump` (the launcher's "Move the game data here" switch).
+
 The steps (`deps verify convert mods tables lift compile link text check`, resumable; `--only`, `--from`, `--status`)
 are those of `scripts/setup.py`, which stays as the reference the Rust port is checked
 against (`tools/wtbuild/README.md`). The `verify` step accepts only the build named in `tools/wtbuild/src/setup.rs`.
@@ -60,8 +64,7 @@ build\wtbuild.exe setup --dump <your dump folder>
 ```
 
 Movies play through Media Foundation, which Windows has; the "N" editions need the Media Feature Pack, and the `deps`
-step says so when it is missing. The game's `romfs` is linked into `build\` with a directory junction, which needs no
-administrator rights. The game runs as `build\witch-time-game.exe`, with its own window; the launcher waits for it.
+step says so when it is missing. The game runs as `build\witch-time-game.exe`, with its own window; the launcher waits for it.
 
 Building the runtime yourself (a checkout, or a changed `runtime\`) needs llvm-mingw and the MinGW builds of SDL3,
 glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-builds all of it on Linux

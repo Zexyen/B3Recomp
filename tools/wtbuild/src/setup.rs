@@ -82,7 +82,7 @@ const WINDOWS_LIBS: [(&str, &str, &str); 3] = [
     ),
 ];
 
-const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified]
+const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
                      [--mods <folder>] [--llvm <folder>] [--repo <folder>]
 steps: deps verify convert mods tables lift compile link text check (scripts/setup.py describes them)";
 
@@ -100,6 +100,7 @@ struct Args {
     from: Option<String>,
     status: bool,
     accept_modified: bool,
+    move_dump: bool,
     mods: Option<String>,
     llvm: Option<String>,
     repo: Option<String>,
@@ -113,6 +114,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         from: None,
         status: false,
         accept_modified: false,
+        move_dump: false,
         mods: None,
         llvm: None,
         repo: None,
@@ -145,6 +147,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             }
             "--status" => a.status = true,
             "--accept-modified" => a.accept_modified = true,
+            "--move-dump" => a.move_dump = true,
             "--mods" => a.mods = Some(val()?),
             "--llvm" => a.llvm = Some(val()?),
             "--repo" => a.repo = Some(val()?),
@@ -540,7 +543,10 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         dirs.iter().try_for_each(|d| scan(d))
     }
     scan(Path::new(&dump))?;
-    let (exefs, romfs) = (Path::new(&dump).join("exefs"), Path::new(&dump).join("romfs"));
+    let (exefs, mut romfs) = (Path::new(&dump).join("exefs"), Path::new(&dump).join("romfs"));
+    if !romfs.is_dir() && cx.targets.join("romfs").is_dir() {
+        romfs = cx.targets.join("romfs"); // moved into the build folder by an earlier run (--move-dump)
+    }
     for d in [&exefs, &romfs] {
         if !d.is_dir() {
             return Err(Fail(format!("{} is missing: the dump folder needs exefs/ and romfs/", d.display())));
@@ -630,21 +636,54 @@ fn need_dump(cx: &Ctx) -> Result<String, Fail> {
     }
 }
 
-/// link = a symbolic link to target (made again when it points elsewhere); a real folder at link is kept as it is
-fn link_folder(link: &Path, target: &Path) -> Result<String, Fail> {
-    if let Ok(m) = fs::symlink_metadata(link) {
-        if m.file_type().is_symlink() {
-            if fs::canonicalize(link).ok() == fs::canonicalize(target).ok() {
-                return Ok("kept".into());
+/// dst = a real folder with the files of src, so the build folder holds the game on its own (portable): moved when
+/// `mv`, else hard-linked (same drive: no extra space, the dump stays whole) or copied. A file already in dst with
+/// the same size is kept, so an interrupted run resumes; a symbolic link or junction at dst (older setups) is replaced.
+fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
+    let f = |e: std::io::Error| Fail(e.to_string());
+    if fs::symlink_metadata(dst).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+        target::remove_dir_link(dst).map_err(f)?; // the link only, never what it points to
+    }
+    if !src.is_dir() {
+        return if dst.is_dir() { Ok("in place (moved here before)".into()) } else { Err(Fail(format!("{} is missing", src.display()))) };
+    }
+    let mut files = Vec::new();
+    walk_files(src, "", &mut files);
+    let (mut placed, mut linked) = (0, 0);
+    for (rel, from) in &files {
+        let to = dst.join(rel);
+        let size = fs::metadata(from).map_err(f)?.len();
+        if fs::metadata(&to).map(|m| m.len()).ok() != Some(size) {
+            fs::create_dir_all(to.parent().unwrap()).map_err(f)?;
+            let _ = fs::remove_file(&to);
+            let done = if mv { fs::rename(from, &to) } else { fs::hard_link(from, &to).map(|_| linked += 1) };
+            if done.is_err() {
+                fs::copy(from, &to).map_err(|e| Fail(format!("{} -> {}: {}", from.display(), to.display(), e)))?; // another drive
             }
-            target::remove_dir_link(link).map_err(|e| Fail(e.to_string()))?; // the link only, never what it points to
-        } else {
-            return Ok("a real folder, kept (not replaced by the dump's)".into());
+            placed += 1;
+        }
+        if mv {
+            fs::remove_file(from).ok(); // gone already when renamed
         }
     }
-    fs::create_dir_all(link.parent().unwrap()).map_err(|e| Fail(e.to_string()))?;
-    target::link_dir(target, link).map_err(|e| Fail(format!("could not make the link {} -> {}: {}", link.display(), target.display(), e)))?;
-    Ok(format!("{} to {}", if cfg!(windows) { "junction" } else { "symlink" }, target.display()))
+    if mv {
+        remove_empty_dirs(src);
+    }
+    Ok(format!(
+        "{} files, {} {} from {}{}",
+        files.len(),
+        placed,
+        if mv { "moved" } else { "copied" },
+        src.display(),
+        if linked > 0 { format!(" ({} as hard links: no extra space)", linked) } else { String::new() }
+    ))
+}
+
+fn remove_empty_dirs(d: &Path) {
+    if let Ok(rd) = fs::read_dir(d) {
+        rd.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).for_each(|e| remove_empty_dirs(&e.path()));
+    }
+    let _ = fs::remove_dir(d); // fails, as it should, when something is left
 }
 
 /// shutil.copy2: the bytes and the modification time
@@ -684,15 +723,18 @@ fn step_convert(cx: &mut Ctx) -> Result<(), Fail> {
         say(format!("  {} -> targets/exefs/{}.elf, segment hashes ok", name, name));
     }
     // the game, the launcher and the run scripts read targets/romfs and targets/sysdata/fonts
+    if !cx.a.move_dump {
+        say("  copying the game data into targets/ (--move-dump moves it instead)");
+    }
     say(format!(
         "  targets/romfs: {}",
-        link_folder(&cx.targets.join("romfs"), &Path::new(&dump).join("romfs"))?
+        place_folder(&cx.targets.join("romfs"), &Path::new(&dump).join("romfs"), cx.a.move_dump)?
     ));
     let fonts = Path::new(&dump).join("sysdata").join("fonts");
-    if fonts.is_dir() {
+    if fonts.is_dir() || cx.targets.join("sysdata").join("fonts").is_dir() {
         say(format!(
             "  targets/sysdata/fonts: {}",
-            link_folder(&cx.targets.join("sysdata").join("fonts"), &fonts)?
+            place_folder(&cx.targets.join("sysdata").join("fonts"), &fonts, cx.a.move_dump)?
         ));
     } else {
         say("  no sysdata/fonts in the dump: a font of this PC will stand in for the console's system fonts (BUILDING.md)");
@@ -1091,4 +1133,33 @@ pub fn main(args: &[String]) -> i32 {
         ));
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn place_folder_copies_resumes_and_moves() {
+        let t = std::env::temp_dir().join(format!("wtbuild_place_{}", std::process::id()));
+        let (src, dst) = (t.join("dump romfs"), t.join("targets").join("romfs"));
+        fs::create_dir_all(src.join("movie")).unwrap();
+        fs::write(src.join("a.pkz"), b"aa").unwrap();
+        fs::write(src.join("movie").join("b.webm"), b"b").unwrap();
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&src, &dst).unwrap(); // an older setup's link: replaced, its target kept
+        }
+        assert!(place_folder(&dst, &src, false).ok().unwrap().starts_with("2 files, 2 copied"));
+        assert!(!fs::symlink_metadata(&dst).unwrap().file_type().is_symlink());
+        assert!(place_folder(&dst, &src, false).ok().unwrap().starts_with("2 files, 0 copied"));
+        fs::remove_file(dst.join("a.pkz")).unwrap();
+        assert!(place_folder(&dst, &src, true).ok().unwrap().starts_with("2 files, 1 moved"));
+        assert!(!src.exists());
+        assert_eq!(fs::read(dst.join("movie").join("b.webm")).unwrap(), b"b");
+        assert_eq!(fs::read(dst.join("a.pkz")).unwrap(), b"aa");
+        assert!(place_folder(&dst, &src, true).is_ok()); // moved before: in place
+        fs::remove_dir_all(&t).unwrap();
+    }
 }

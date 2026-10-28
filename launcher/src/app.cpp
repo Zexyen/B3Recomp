@@ -244,6 +244,7 @@ void App::bind_model()
 	c.Bind("dump", &dump);
 	c.Bind("checking", &checking);
 	c.Bind("verified", &verified);
+	c.Bind("move_dump", &move_dump);
 	c.Bind("checks", &checks);
 	c.Bind("building", &building);
 	c.Bind("progress", &progress);
@@ -268,6 +269,10 @@ void App::bind_model()
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
+	c.BindEventCallback("toggle_move", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		move_dump = !move_dump;
+		model.DirtyVariable("move_dump");
+	});
 	c.BindEventCallback("start_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { start_build(); });
 	c.BindEventCallback("stop_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { runner.stop(); });
 	c.BindEventCallback("open_mods", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
@@ -687,6 +692,8 @@ void App::start_build()
 	std::vector<std::string> args;
 	if (!dump.empty())
 		args = {"--dump", dump};
+	if (move_dump)
+		args.push_back("--move-dump");
 	build_error.clear();
 	mods_rebuild = false;
 	if (runner.start(paths.repo, args))
