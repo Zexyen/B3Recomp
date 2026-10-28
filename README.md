@@ -3,6 +3,8 @@
 </p>
 
 # Witch Time
+![](https://dcbadge.limes.pink/api/server/https://discord.gg/hvkD3JNhWZ) ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zexyen/witch-time/total)
+
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
 [B2recomp](../B2recomp): the game's AArch64 code is translated to C **on your PC from your own dump**, and runs on a
