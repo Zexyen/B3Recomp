@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/witch-time-logo.svg" alt="Witch Time" width="720">
+</p>
+
 # Witch Time
 
 An unofficial static recompilation of *Bayonetta 3* (Nintendo Switch) for PC, in the spirit and architecture of
@@ -74,3 +78,7 @@ glslang and the Vulkan headers, named in `CPATH` and `LIBRARY_PATH`. CI cross-bu
 
 Lifter, runtime and build scripts come from B2recomp (K0NL), which builds on
 [ssbu-recomp](https://github.com/Denkishi/ssbu-recomp) (Denkishi). GPL-3.0; see `NOTICE.md` and `LICENSE`.
+
+The logo's lettering is set in the "Bayonetta" typeface by
+[Kustren](http://kustren.deviantart.com/) (free for non-commercial use), converted to outlines; the font file itself
+is not included.
