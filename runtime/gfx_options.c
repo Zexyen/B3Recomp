@@ -124,11 +124,11 @@ static const char *const k_default_ini =
 "frame_time_overlay = off\r\n"
 "\r\n"
 "; frame_rate = 60      (60 .. 120; EXPERIMENTAL above 60)\r\n"
-";   60: the game as made (60 frames per second, its own 30 fps cinematics). 61 .. 120: the game's frame clock measures\r\n"
-";   real time and the frame rate is capped at this value; its timers that count frames are converted to game time\r\n"
-";   (scripts/fps_patch.py, notes/fps-research.md). Not every frame counter is converted yet: some effects, menus and\r\n"
-";   button-mash prompts may run faster than at 60, and the cinematics run in real time. vsync = clock / display /\r\n"
-";   auto still show each frame at once above 60 (no tearing: mailbox, else FIFO, which shows at most one frame per refresh).\r\n"
+";   60: the game as made. 61 .. 120: the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
+";   runtime/game_shim_eh.c h_frame_clock) and the runtime paces the game at this value; the title, menus and cutscenes\r\n"
+";   run at it too (as cutscene_fps = 60). The game's timers that count frames are converted one by one\r\n"
+";   (tools/wtbuild/fps_counters.txt; docs/STATUS.md, \"Frame rates above 60\"): some effects, input windows and countdowns\r\n"
+";   may still run faster than at 60.\r\n"
 "frame_rate = 60\r\n"
 "\r\n"
 "; cutscene_fps = 30 | 60\r\n"
@@ -258,8 +258,8 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "SSBU_CUTSCENE_FPS" : "graphics.ini",
                o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
     }
-    /* [Recomps#1] frame_rate above 60: switch on the lifted code's frame-rate patch (scripts/fps_patch.py), which reads
-     * RECOMPS_UNCAP / RECOMPS_UNCAP_FPS with getenv the first time the game's clock runs (after this, at the first frame).
+    /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
+     * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).
      * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */
     if (o->frame_rate > 60 && !getenv("RECOMPS_UNCAP")) {
         char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
@@ -267,8 +267,8 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         int paced = !(pe && !atoi(pe));
         _putenv_s("RECOMPS_UNCAP", "1");
         if (!getenv("RECOMPS_UNCAP_FPS")) _putenv_s("RECOMPS_UNCAP_FPS", paced ? "0" : n);
-        printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; notes/fps-research.md)\n", o->frame_rate,
-               paced ? "the game released and its pictures presented on a steady tick of" : "the lifted limiter caps it at (SSBU_PACE_120=0)", o->frame_rate);
+        printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
+               paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (SSBU_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
     }
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
         o->scale = GFX_LOW_SCALE; o->aniso = 0; o->present = 0;

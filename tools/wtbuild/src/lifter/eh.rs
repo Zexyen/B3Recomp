@@ -7,7 +7,7 @@
 //!   - a function with a catch clause whose handler can return is entered through nro_catch_call(c, u_<entry>)
 //!   - the start of every FDE is a function entry; table.c also holds resume_table_main
 
-use super::{extent, lift_lines, CallEnv, Fn, Image, Plt};
+use super::{extent, fps, lift_lines, CallEnv, Fn, Image, Plt};
 use crate::util::{hx, i32_at, sext, u32_at, u64_at};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -88,6 +88,7 @@ pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
         }
         im.patches.insert(a, new);
     }
+    im.fps_counters = fps::counters();
     Ok(())
 }
 
@@ -404,8 +405,26 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     }
     let last = &lines.last().unwrap().1;
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
+    let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
+    let mut lines = lines;
+    let listed = &im.fps_counters;
+    if lines.iter().any(|(pc, _)| listed.contains(pc)) {
+        for s in fps::sites(im, entry, end).into_iter().filter(|s| listed.contains(&s.store)) {
+            let i = ((s.op - entry) / 4) as usize;
+            lines[i].1 = fps::patch_op(&s, &lines[i].1).unwrap_or_else(|e| panic!("{}", e));
+        }
+    }
     for (pc, stmt) in &lines {
-        out += &format!("\nL_{}: {}", hx(*pc), stmt);
+        match census.iter().find(|s| s.store == *pc) {
+            Some(s) => {
+                let (v, code) = match s.kind {
+                    fps::Kind::Int { size, .. } | fps::Kind::IntReg { size } => (format!("c->x[{}]", s.src), size),
+                    _ => (format!("(uint64_t)c->v[{}].w[0]", s.src), 0),
+                };
+                out += &format!("\nL_{}: fps_census(c, 0x{}ULL, c->x[{}] + (uint64_t){}LL, {}, {}); {}", hx(*pc), hx(*pc), s.base, s.off, v, code, stmt)
+            }
+            None => out += &format!("\nL_{}: {}", hx(*pc), stmt),
+        }
     }
     if falls {
         out += &format!("\n  f_{}(c); return;", hx(end));
@@ -489,6 +508,20 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
         pending = new.into_iter().collect();
     }
     all_funcs.sort_unstable();
+    if !im.fps_counters.is_empty() {
+        // every address of fps_counters.txt must be a site the patch finds (a typo, or a site whose form changed, fails here)
+        let listed = &im.fps_counters;
+        let found: HashSet<i64> = all_funcs
+            .par_iter()
+            .flat_map_iter(|&a| fps::sites(im, a, extent(&starts, a, im.text_end())).into_iter().map(|s| s.store).filter(|s| listed.contains(s)))
+            .collect();
+        let mut missing: Vec<String> = listed.iter().filter(|a| !found.contains(a)).map(|a| hx(*a)).collect();
+        if !missing.is_empty() {
+            missing.sort();
+            return Err(format!("fps_counters.txt: not a counter site of main: {}", missing.join(" ")));
+        }
+        log(format!("fps counters: {} sites move by the game time due above 60 fps (tools/wtbuild/fps_counters.txt)", listed.len()));
+    }
     const BUCKET: i64 = 0xC000; // one output file per 48 KB of guest code: file contents stay stable across runs
     let mut buckets: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
     for &a in &all_funcs {
@@ -550,6 +583,30 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     us.sort_unstable();
     for a in us {
         f += &format!("void u_{}(Ctx *c, uint64_t rp);\n", hx(a));
+    }
+    if !im.fps_counters.is_empty() {
+        // runtime/game_shim_eh.c; a stand-in's funcs.h stays what recomp_eh.py writes
+        f += "uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int sign);\n";
+        f += "int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign);\n";
+        f += "float fps_fs(Ctx *c, uint64_t key, uint64_t field);\n";
+    }
+    if fps::census_on() {
+        // the census build: every counter site reports its store (runtime/game_shim_eh.c), and the list of the sites
+        f += "void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code);\n";
+        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WT_FPS_CENSUS=1)\n");
+        for &a in &all_funcs {
+            for s in fps::sites(im, a, extent(&starts, a, im.text_end())) {
+                let k = match s.kind {
+                    fps::Kind::Int { size, delta } => format!("int{}{:+}", size * 8, delta),
+                    fps::Kind::IntReg { size } => format!("int{}+reg", size * 8),
+                    fps::Kind::F1 { delta } => format!("f32{:+}", delta),
+                    fps::Kind::FReg => "f32+reg".to_string(),
+                };
+                t += &format!("{} {} {} {} {} [x{} {:+}]\n", hx(s.store), hx(a), hx(s.load), hx(s.op), k, s.base, s.off);
+            }
+        }
+        fs::write(outdir.join("fps_sites.txt"), t).map_err(|e| e.to_string())?;
+        log(format!("fps census: every counter site reports its store (fps_sites.txt)"));
     }
     fs::write(outdir.join("funcs.h"), f).map_err(|e| e.to_string())?;
     let mut t = String::from("/* generated by recomp_eh.py -- do not edit */\n#include \"runtime.h\"\n#include \"funcs.h\"\n\n");

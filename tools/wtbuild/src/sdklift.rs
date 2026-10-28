@@ -95,6 +95,7 @@ fn load(d: Vec<u8>, gen: &Path) -> Result<Sdk, String> {
         symtab: symtab as i64,
         strtab: strtab as i64,
         patches: HashMap::new(),
+        fps_counters: Default::default(),
         img: d,
     };
     Ok(Sdk {

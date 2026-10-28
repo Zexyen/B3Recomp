@@ -502,6 +502,50 @@ halved in 2:1 steps first).
 
 ## Frame rates above 60: feasibility (2026-10-25; a study, not implemented)
 
+**First step done (2026-10-27): `frame_rate = 61 .. 120` in graphics.ini.** `h_frame_clock` (`runtime/game_shim_eh.c`)
+replaces the measured step by this frame's ms / +0xec with the floor 1/16 instead of 1.0 (the 2.0 ceiling and the global
+override stay, the carry is zeroed); the 30 fps-mode scenes run at frame_rate as with `cutscene_fps = 60`; display.c paces
+at frame_rate (Recomps#1). Measured (1.0 scale, vsync = clock, 120): the Shibuya street from the end of loading to the
+cutscene 105.12 s against 105.07 s at 60 (real time kept); the fight 105-120 fps, p50 8.4 / p90 10.6 / p99 31.7 ms.
+**Not done**: the census of frame counters and smoothings below (input windows, countdowns, effects may run fast), and
+the frames -> seconds conversion `7100cb4f54`. Not played by hand.
+
+**Frame counters at any frame rate: census and first sites (2026-10-27).** Rust lifter only (`lifter/recomp_eh.py` is
+not changed; it is to be retired).
+- **Sites** (`tools/wtbuild/src/lifter/fps.rs`): every load of a field, add / sub (immediate, register, float register,
+  +/-1.0) of the loaded value and store to the same field, conditional branches and a CSEL allowed between: 17,370 in
+  main (12,147 int32 immediates, 4,233 float adds of a register, ...).
+- **Census**: `WT_FPS_CENSUS=1 wtbuild setup --from lift` makes every site's store call `fps_census` first
+  (`runtime/game_shim_eh.c`; `build/gen_eh/fps_sites.txt` lists them); a run with `SSBU_FPS_CENSUS=<file>` records per
+  site the visits per field against the clock's updates and what each visit adds. `scripts/fps_census.py <at 60>
+  <above 60>` compares two runs of the same scene: a site that adds as much per visit at 120 as at 60 is frame-locked;
+  half as much, it takes the frame's time already. One run at each rate replaces B2's alternating 60 / 120 run. A normal
+  lift writes the files back (about 3.5 minutes of compile each way).
+- **Shibuya street fight, 300 s at 60 and at 120**: of the sites visited once per update, 147 already take the frame's
+  time (most of the gameplay: B3 times with the frame's delta far more than B2), 61 are frame-locked but on a thread
+  with its own clock (visited as often per second at both rates: engine, audio, 60 Hz vsync), **62 are frame-locked on
+  the game's frames**: the list to read (`build/perf/census_report.txt` of the run; regenerate with the script).
+- **Fix, variable rate** (`tools/wtbuild/fps_counters.txt`: the store addresses; the lifter rewrites each site's op):
+  an integer counter moves by the whole frames of game time due since its last visit (`fps_ci`: B2's rules: a countdown
+  never passes 0 in one visit, an up-counter moves at most 1, the rest is owed), a float +/-1.0 the same (`fps_cf`), a
+  float x +/- a by a x this update's step (`fps_fs`: fractional, motion stays smooth). Each clock update adds its step
+  to the frames due, so any rate works, also one that changes from frame to frame. Off (stock) at frame_rate = 60.
+- **First 10 sites**: float timers of a constant a frame (-1/60 twice, -0.1, +0.1, -0.33), two float countdowns of 1.0
+  (one on 196 objects), three integer countdowns. A census of the patched build at 120 against the 60 run: each adds
+  half as much per visit (ratio 1.85-2.11). Two more (`7100694cbc`, `7100694d60`) did not (1.19) and were taken out.
+  300 s at 120 with the census build and 120 s with the normal build: no error.
+- **The demon form's double-tap** (a player report: two quick dodges while moving forward no longer transformed above
+  60): the window is a frame countdown, `710055a41c` (`[x19 + 956]`, function `7100559ebc`), so at 120 it lasted half
+  as long. Scripted double-taps (`SSBU_SCRIPT` forward + ZR twice) at 60: 0.12 and 0.20 s transform, 0.30 not; at 120
+  only 0.12. The six frame-locked countdowns of a double-tap census patched together, then bisected; with this one
+  listed, 120 matches 60 (0.20 transforms, 0.30 not). The first 10 sites were not the cause (`SSBU_FPS_COUNTERS=0`,
+  new: the sites' stock +/-1 at run time, the same failure). It was not in the 62 of the fight census: it runs only
+  after a dodge, too few visits for its filter. Input windows like it need a census of the move itself.
+- **Next**: read the other 52 frame-locked sites (global frame numbers and the clock's own count stay as they are;
+  the large per-object ones on the job threads, 600-1,000 fields with a varying add, are probably effects), then
+  smoothings (x += k (T - x), adds whose ratio is between 1 and 2), other scenes (menus, cutscenes, Witch Time, other
+  characters), and play by hand. The sites' meanings are not read yet: only their form and their numbers.
+
 **How B3 times a frame** (read off the lifted code; the same engine generation as Bayonetta 2):
 - The per-frame clock `7100c1f600` (called by the main loop `7100670b80` before it picks the frame-rate mode) measures
   the last frame in ms (+0xf0) and keeps the frame's **step** at +0xe0, in 60 Hz frames:
