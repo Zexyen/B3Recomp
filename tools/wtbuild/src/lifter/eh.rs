@@ -88,6 +88,7 @@ pub fn options_row_patches(im: &mut Image) -> Result<(), String> {
         }
         im.patches.insert(a, new);
     }
+    im.fps_counters = fps::counters();
     Ok(())
 }
 
@@ -406,7 +407,7 @@ fn lift_function(cx: &Ctx, plt: &mut Plt, env: &mut FullEnv, entry: i64) -> (Str
     let falls = end < im.text_end() && !TAILS.iter().any(|t| last.starts_with(t));
     let census = if fps::census_on() { fps::sites(im, entry, end) } else { Vec::new() };
     let mut lines = lines;
-    let listed = fps::counters();
+    let listed = &im.fps_counters;
     if lines.iter().any(|(pc, _)| listed.contains(pc)) {
         for s in fps::sites(im, entry, end).into_iter().filter(|s| listed.contains(&s.store)) {
             let i = ((s.op - entry) / 4) as usize;
@@ -507,8 +508,9 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
         pending = new.into_iter().collect();
     }
     all_funcs.sort_unstable();
-    {   // every address of fps_counters.txt must be a site the patch finds (a typo, or a site whose form changed, fails here)
-        let listed = fps::counters();
+    if !im.fps_counters.is_empty() {
+        // every address of fps_counters.txt must be a site the patch finds (a typo, or a site whose form changed, fails here)
+        let listed = &im.fps_counters;
         let found: HashSet<i64> = all_funcs
             .par_iter()
             .flat_map_iter(|&a| fps::sites(im, a, extent(&starts, a, im.text_end())).into_iter().map(|s| s.store).filter(|s| listed.contains(s)))
@@ -582,9 +584,12 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     for a in us {
         f += &format!("void u_{}(Ctx *c, uint64_t rp);\n", hx(a));
     }
-    f += "uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int sign);\n";
-    f += "int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign);\n";
-    f += "float fps_fs(Ctx *c, uint64_t key, uint64_t field);\n";
+    if !im.fps_counters.is_empty() {
+        // runtime/game_shim_eh.c; a stand-in's funcs.h stays what recomp_eh.py writes
+        f += "uint32_t fps_ci(Ctx *c, uint64_t key, uint64_t field, uint32_t wb, int k, int sign);\n";
+        f += "int fps_cf(Ctx *c, uint64_t key, uint64_t field, float w, int sign);\n";
+        f += "float fps_fs(Ctx *c, uint64_t key, uint64_t field);\n";
+    }
     if fps::census_on() {
         // the census build: every counter site reports its store (runtime/game_shim_eh.c), and the list of the sites
         f += "void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code);\n";

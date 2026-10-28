@@ -255,17 +255,16 @@ pub fn census_on() -> bool {
     *ON.get_or_init(|| std::env::var("WT_FPS_CENSUS").map(|v| v == "1").unwrap_or(false))
 }
 
-/// tools/wtbuild/fps_counters.txt: the store address of every site whose +/-1 counts the frames due (fps_ci / fps_cf)
-pub fn counters() -> &'static std::collections::HashSet<i64> {
-    static SET: std::sync::OnceLock<std::collections::HashSet<i64>> = std::sync::OnceLock::new();
-    SET.get_or_init(|| {
-        include_str!("../../fps_counters.txt")
-            .lines()
-            .filter_map(|l| l.split_whitespace().next())
-            .filter(|w| !w.starts_with('#'))
-            .map(|w| i64::from_str_radix(w, 16).expect("fps_counters.txt: a hex store address"))
-            .collect()
-    })
+/// tools/wtbuild/fps_counters.txt: the store address of every site of main whose add counts the game time due
+/// (fps_ci / fps_cf / fps_fs). Taken with main's instruction patches (eh::options_row_patches): a stand-in (`lift
+/// --no-patches`) has none
+pub fn counters() -> std::collections::HashSet<i64> {
+    include_str!("../../fps_counters.txt")
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|w| !w.starts_with('#'))
+        .map(|w| i64::from_str_radix(w, 16).expect("fps_counters.txt: a hex store address"))
+        .collect()
 }
 
 /// the op statement of a listed site with its +/-1 made the frames due: Err when the lifted text is not one of the forms

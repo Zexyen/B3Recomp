@@ -24,6 +24,8 @@ pub struct Image {
     pub strtab: i64,
     /// instruction patches: address -> the word lifted instead of the binary's
     pub patches: HashMap<i64, u32>,
+    /// the frame counters that move by the game time due (fps::counters; main's, as the patches: empty for a stand-in)
+    pub fps_counters: std::collections::HashSet<i64>,
 }
 
 /// recomp._layout: .text size (the first PT_LOAD) and the DYNAMIC tags (first value of each tag).
@@ -71,6 +73,7 @@ impl Image {
             symtab: g(6),
             strtab: g(5),
             patches: HashMap::new(),
+            fps_counters: Default::default(),
             img,
         }
     }
