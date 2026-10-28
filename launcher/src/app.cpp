@@ -258,6 +258,7 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
+	c.BindFunc("pad", [this](Rml::Variant& v) { v = !pads.empty(); });    // footer hints: pad buttons, else keys
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
@@ -370,11 +371,13 @@ void App::handle(SDL_Event& ev)
 	case SDL_EVENT_GAMEPAD_ADDED:
 		if (SDL_Gamepad* p = SDL_OpenGamepad(ev.gdevice.which))
 			pads.push_back(p);
+		model.DirtyVariable("pad");
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_REMOVED:
 		for (auto it = pads.begin(); it != pads.end();)
 			it = SDL_GetGamepadID(*it) == ev.gdevice.which ? (SDL_CloseGamepad(*it), pads.erase(it)) : it + 1;
+		model.DirtyVariable("pad");
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
