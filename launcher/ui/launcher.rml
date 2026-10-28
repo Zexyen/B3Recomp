@@ -82,7 +82,7 @@
 			</div>
 			<div class="row mod">
 				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
-				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole. Free on the same drive (hard links); about 15 GB more from another drive.' }}</div></div>
+				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
 			</div>
 			<div class="rows">
 				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">

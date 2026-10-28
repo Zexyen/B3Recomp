@@ -11,6 +11,8 @@
 //   gen:ticks?n=&c=&a=&w=&l=               n marks w texels wide and l long around the edge (the dial's minutes)
 //   gen:moon?c=                            a crescent (the dial's centre)
 //   gen:fade?c=&a=                         c fading out from left to right (the selected menu row's line)
+//   gen:pill?w=&h=&f=&c=&a=&l=             a w x h texel rounded bar filled with f (if given), its edge c l texels
+//                                          thick (if given): the switches; w = h is a disc. RmlUi's border-radius is jagged
 namespace {
 
 struct Params {
@@ -147,6 +149,31 @@ Image fade(const Params& p)
 	return im;
 }
 
+Image pill(const Params& p)
+{
+	Image im(std::max(1, int(p.num("w", 116))), std::max(1, int(p.num("h", 60))));
+	const bool filled = p.v.count("f"), edged = p.v.count("c");
+	const Rml::Colourb fc = p.color("f", {}), ec = p.color("c", {});
+	const float r = im.h / 2.f, line = p.num("l", 2), ea = p.num("a", 255) / 255.f;
+	for (int y = 0; y < im.h; y++)
+		for (int x = 0; x < im.w; x++)
+		{
+			float px = std::clamp(x + .5f, r, im.w - r);   // nearest point on the bar's spine
+			float d = std::hypot(x + .5f - px, y + .5f - r) - r;
+			if (filled)
+				im.put(x, y, fc, coverage(d));
+			if (edged)
+			{
+				float a = coverage(std::max(d, -d - line)) * ea;
+				Rml::byte* q = &im.px[(size_t(y) * im.w + x) * 4];   // the edge over the fill, premultiplied
+				for (int k = 0; k < 3; k++)
+					q[k] = Rml::byte(q[k] * (1 - a) + (&ec.red)[k] * a + .5f);
+				q[3] = Rml::byte(q[3] * (1 - a) + 255 * a + .5f);
+			}
+		}
+	return im;
+}
+
 } // namespace
 
 Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source)
@@ -161,7 +188,7 @@ Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, cons
 		query = spec.substr(q + 1);
 	}
 	const Params p = parse(query);
-	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : fade(p);
+	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : name == "pill" ? pill(p) : fade(p);
 	texture_dimensions = {im.w, im.h};
 	return GenerateTexture({im.px.data(), im.px.size()}, texture_dimensions);
 }

@@ -148,11 +148,13 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .error { color: #ffb3d4; font-size: 17dp; line-height: 24dp; }
 
 /* ---- mods ---- */
-.switch { position: relative; width: 58dp; height: 30dp; border: 1dp #c9a35a99; border-radius: 15dp; flex-shrink: 0; tab-index: auto; nav: vertical; }
-.switch .knob { position: absolute; left: 3dp; top: 3dp; width: 22dp; height: 22dp; border-radius: 11dp; background-color: #c9a35a; }
-.switch.on { background-color: #e0338a; border-color: #e0338a; }
-.switch.on .knob { left: 31dp; background-color: #0a0610; }
-.switch:focus-visible, .switch:hover { border: 2dp #efe6d8; }
+/* drawn by gen:pill (smooth edges, 2x the 58x30dp box); borders would be jagged and hover's thicker one shifts the knob */
+.switch { position: relative; width: 58dp; height: 30dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=116&h=60&c=c9a35a&a=153&l=2 fill); }
+.switch .knob { position: absolute; left: 4dp; top: 4dp; width: 22dp; height: 22dp; decorator: image(gen:pill?w=44&h=44&f=c9a35a fill); }
+.switch.on { decorator: image(gen:pill?w=116&h=60&f=e0338a fill); }
+.switch.on .knob { left: 32dp; decorator: image(gen:pill?w=44&h=44&f=0a0610 fill); }
+.switch:focus-visible, .switch:hover { decorator: image(gen:pill?w=116&h=60&c=efe6d8&l=4 fill); }
+.switch.on:focus-visible, .switch.on:hover { decorator: image(gen:pill?w=116&h=60&f=e0338a&c=efe6d8&l=4 fill); }
 .mod .what { display: flex; flex-direction: column; gap: 3dp; flex: 1; }
 .mod .name { font-size: 22dp; }
 .mod .note { font-size: 16dp; color: #b9aabd; }
