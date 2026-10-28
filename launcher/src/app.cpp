@@ -714,7 +714,7 @@ void App::tick()
 		for (const std::string& l : runner.lines)
 		{
 			std::string t = l.substr(std::min(l.size(), l.find_first_not_of(' ')));
-			if (!t.empty() && t.rfind("setup:", 0) != 0)
+			if (!t.empty() && t.rfind("setup:", 0) != 0 && t.rfind("Start the game:", 0) != 0)    // wtbuild's closing lines are not checks
 				checks.push_back({t, "", "done"});
 		}
 		if (checks.size() > 8)
