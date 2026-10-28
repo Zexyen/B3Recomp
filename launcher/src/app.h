@@ -40,6 +40,7 @@ private:
 	Rml::String status_title, status_line, footer_info;
 	Rml::String dump;
 	bool checking = false, verified = false;
+	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
 	std::vector<CheckRow> checks;
 	bool building = false;
 	float progress = 0;

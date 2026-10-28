@@ -58,8 +58,8 @@
 	<div class="footer">
 		<div>{{ footer_info }}</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key">A</div><span>Select</span></div>
-		<div class="hint"><div class="key">B</div><span>Back</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
 	</div>
 </div>
 
@@ -79,6 +79,10 @@
 			<div class="field-row">
 				<input type="text" class="text autofocus" data-value="dump"/>
 				<div class="button" data-event-click="browse()">BROWSE</div>
+			</div>
+			<div class="row mod">
+				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
+				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole. Free on the same drive (hard links); about 15 GB more from another drive.' }}</div></div>
 			</div>
 			<div class="rows">
 				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
@@ -102,8 +106,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key">A</div><span>Select</span></div>
-		<div class="hint"><div class="key">B</div><span>Back</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
 	</div>
 </div>
 
@@ -150,7 +154,7 @@
 	<div class="footer">
 		<div>You can close the window; the build picks up where it stopped.</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key">B</div><span>Back</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
 	</div>
 </div>
 
@@ -183,8 +187,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key">A</div><span>Turn on or off</span></div>
-		<div class="hint"><div class="key">B</div><span>Back</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Turn on or off</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
 	</div>
 </div>
 
@@ -213,7 +217,7 @@
 	<div class="footer">
 		<div class="spacer"></div>
 		<div class="hint"><div class="key wide">&lt; &gt;</div><span>Change</span></div>
-		<div class="hint"><div class="key">B</div><span>Back</span></div>
+		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
 	</div>
 </div>
 

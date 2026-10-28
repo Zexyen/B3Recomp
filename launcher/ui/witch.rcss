@@ -103,8 +103,8 @@ body {
 .readout .phase { font-family: "Cormorant Garamond"; font-style: italic; font-size: 22dp; color: #b9aabd; }
 
 /* ---- two-column screens ---- */
-.body { display: flex; flex-direction: row; flex: 1; gap: 64dp; padding: 44dp 96dp 28dp 96dp; }
-.col { display: flex; flex-direction: column; gap: 22dp; flex: 1; }
+.body { display: flex; flex-direction: row; flex: 1; min-height: 0; gap: 64dp; padding: 44dp 96dp 28dp 96dp; }
+.col { display: flex; flex-direction: column; gap: 22dp; flex: 1; min-height: 0; }
 .panel { display: flex; flex-direction: column; gap: 18dp; width: 340dp; padding: 28dp; border: 1dp #c9a35a66; background-color: #170c1fb3; flex-shrink: 0; align-self: flex-start; }
 .panel p { font-family: "Cormorant Garamond"; font-size: 22dp; line-height: 29dp; }
 .panel p.plain { font-family: "Barlow Semi Condensed"; font-size: 19dp; line-height: 27dp; }
@@ -117,7 +117,13 @@ h2 { font-family: "Cormorant Garamond"; font-weight: 500; font-size: 40dp; line-
 input.text { flex: 1; height: 52dp; padding: 0 18dp; line-height: 50dp; background-color: #170c1fe6; border: 1dp #c9a35a80; color: #efe6d8; font-size: 19dp; tab-index: auto; nav: auto; }
 input.text:focus { border-color: #e8cf94; }
 
-.rows { display: flex; flex-direction: column; border-top: 1dp #c9a35a40; }
+.rows { display: flex; flex-direction: column; border-top: 1dp #c9a35a40; min-height: 0; flex-shrink: 1; overflow-y: auto; }
+/* an unstyled scrollbar takes the box's whole width and squeezes the rows to a word per line */
+scrollbarvertical { width: 6dp; }
+scrollbarvertical slidertrack { background-color: #c9a35a1a; }
+scrollbarvertical sliderbar { background-color: #c9a35a80; min-height: 24dp; }
+scrollbarvertical sliderbar:hover, scrollbarvertical sliderbar:active { background-color: #e8cf94; }
+scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; height: 0; }
 .row { display: flex; flex-direction: row; align-items: center; gap: 18dp; padding: 13dp 0; border-bottom: 1dp #c9a35a40; font-size: 19dp; }
 .row .grow { flex: 1; }
 .row .right { color: #b9aabd; }
