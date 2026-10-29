@@ -143,8 +143,10 @@ static const char *vk_result_name(VkResult r) {
     snprintf(buf, sizeof buf, "VkResult %d", (int)r);
     return buf;
 }
+static void ckpt_dump(void);                       /* nvn_vk_draw.c, issue 26: SSBU_VK_CHECKPOINTS */
 static void vk_fatal(const char *what, VkResult r) {
     printf("nvn_vk: %s failed: %s\n", what, vk_result_name(r));
+    if (r == VK_ERROR_DEVICE_LOST) ckpt_dump();
     fflush(stdout);
     ExitProcess(5);
 }
