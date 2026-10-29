@@ -48,7 +48,7 @@ driver ("Build (Windows)" in the main README).
   When the game exits through `ExitProcess`, `plat_exit_hook` starts the launcher again (`witch-time --returned
   <code>`), unless the player closed the window. If `libwitchtime.so` is missing or fails to load, the launcher hides its
   window and runs `build/witch-time-game` instead. On Windows the game always runs that way, as
-  `build\witch-time-game.exe` with its own window and its output in `build\run\witch-time-game.log`.
+  `build\witch-time-game.exe` with its own window. Either way the game's output goes to `build/run/witch-time-game.log`.
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 
