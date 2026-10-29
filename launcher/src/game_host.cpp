@@ -6,6 +6,7 @@
 #include <string>
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -18,6 +19,24 @@ std::string main_elf(const Paths& paths) { return paths.repo + "/targets/exefs/m
 #ifndef _WIN32
 std::string g_self;
 volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the player closed the window
+int g_out = -1, g_err = -1;                   // the launcher's own stdout / stderr while the game writes to its log
+
+// The game's output goes to build/run/witch-time-game.log, as on Windows: a launcher started from a desktop entry has no
+// terminal, and the log is what a bug report needs
+void log_to_file(const Paths& paths)
+{
+	std::string log = paths.run + "/witch-time-game.log";
+	std::fprintf(stderr, "witch-time: the game's output goes to %s\n", log.c_str());
+	std::fflush(nullptr);
+	int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+	if (fd < 0)
+		return;
+	g_out = fcntl(1, F_DUPFD_CLOEXEC, 3);
+	g_err = fcntl(2, F_DUPFD_CLOEXEC, 3);
+	dup2(fd, 1);
+	dup2(fd, 2);
+	close(fd);
+}
 
 // runtime/plat_posix.c calls this from ExitProcess, on whichever thread ends the game
 void on_game_exit(int code)
@@ -25,6 +44,10 @@ void on_game_exit(int code)
 	if (g_display_close && *g_display_close)
 		return;                                // closing the window ends everything, as it always did
 	std::fflush(nullptr);
+	if (g_out >= 0)                            // the launcher that starts again writes where this one did
+		dup2(g_out, 1);
+	if (g_err >= 0)
+		dup2(g_err, 2);
 	std::string c = std::to_string(code);
 	execl(g_self.c_str(), g_self.c_str(), "--returned", c.c_str(), (char*)nullptr);
 }
@@ -96,6 +119,7 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window)
 	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", window);
 	std::string exe = paths.build + "/witch-time-game", elf = main_elf(paths);
 	char* argv[] = {exe.data(), elf.data(), nullptr};
+	log_to_file(paths);
 	int code = host_main(2, argv);
 	on_game_exit(code);
 	std::fflush(nullptr);
@@ -106,9 +130,11 @@ int run_child(const Paths& paths, SDL_Window* window)
 {
 	SDL_HideWindow(window);
 	std::string exe = paths.build + "/witch-time-game", elf = main_elf(paths);
+	std::fflush(nullptr);                      // the child must not write the launcher's pending output again
 	pid_t pid = fork();
 	if (pid == 0)
 	{
+		log_to_file(paths);
 		execl(exe.c_str(), exe.c_str(), elf.c_str(), (char*)nullptr);
 		_exit(127);
 	}
