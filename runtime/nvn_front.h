@@ -130,7 +130,8 @@ int nvn_front_tex_levels(const Tex *t);                                     /* l
  * guest memory (finding 145: the texture's 4 MB regions are asked about again once it changes). */
 int nvn_front_tex_changed(Tex *t, uint32_t gen);
 /* Calls put() once per (level, layer) with tightly packed texels de-swizzled from the texture's memory; decode != 0 turns
- * every level into RGBA8 with tex_decode_rgba8 (rgba8 = 1 in the call). Returns 0 when the memory is not readable. */
+ * every level into RGBA8 with tex_decode_rgba8 (rgba8 = 1 in the call); decode == 2 into BC3 blocks after that (tex_encode_bc3,
+ * rgba8 = 0). Returns 0 when the memory is not readable. */
 typedef void nvn_front_put_fn(Tex *t, int level, int layer, int w, int h, int d, const void *data, size_t size, int rgba8, int64_t row_stride);
 int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put);
 /* Texture pool / sampler pool lookup of an NVN texture handle: returns bit 0 = live texture (*t, *v), bit 1 = sampler (*p). */
