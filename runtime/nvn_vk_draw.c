@@ -115,20 +115,27 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
 
 /* ---------------------------------------------------------------- memory: 64 MB blocks per memory type and class, first fit */
 typedef struct { int block; uint64_t off, size; void *map; VkDeviceMemory mem; } VMem;
-typedef struct { VkDeviceMemory mem; uint64_t size; void *map; uint32_t type; int cls, nfree, used; struct { uint64_t off, size; } fr[512]; } VBlock;
+typedef struct { VkDeviceMemory mem; uint64_t size; void *map; uint32_t type; int cls, nfree, used, sys; struct { uint64_t off, size; } fr[512]; } VBlock;
 static VBlock *g_blk[2048];
 static int g_nblk;
-static LONG64 g_mem_total, g_mem_leak;
+static LONG64 g_mem_total, g_mem_leak, g_mem_sys;
+static uint32_t g_vram_full;      /* [issue 22] bit per memory type: a new block of it failed with VK_ERROR_OUT_OF_DEVICE_MEMORY; cleared when a block is freed */
 static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
     VMem m = {-1, 0, 0, NULL, NULL};
-    uint32_t type = 32;
+    uint32_t type = 32, t0, alt = 32;
     for (uint32_t i = 0; i < D.mp.memoryTypeCount && type == 32; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) type = i;
     if (type == 32) vkd_fail("no memory type for flags 0x%x (bits 0x%x)", (unsigned)want, (unsigned)rq.memoryTypeBits);
+    /* [issue 22] when video memory is full, system memory the GPU reads over the bus: slower, but the game goes on (a GPU without
+     * ASTC holds the decoded RGBA8 textures, 16-25 times the size of the 8x8 / 10x10 blocks: 6.7 GB in a fight) */
+    for (uint32_t i = 0; i < D.mp.memoryTypeCount && alt == 32 && (D.mp.memoryHeaps[D.mp.memoryTypes[type].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT); i++)
+        if ( (rq.memoryTypeBits >> i & 1) && !(D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
+            (D.mp.memoryTypes[i].propertyFlags & want & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == (want & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) alt = i;
+    t0 = type;
     uint64_t al = rq.alignment < 256 ? 256 : rq.alignment;
     for (int pass = 0; pass < 2; pass++) {
         for (int b = 0; b < g_nblk; b++) {
             VBlock *k = g_blk[b];
-            if (!k || k->type != type || k->cls != cls) continue;
+            if (!k || (k->type != t0 && !(g_vram_full >> t0 & 1 && k->type == alt)) || k->cls != cls) continue;
             for (int i = 0; i < k->nfree; i++) {
                 uint64_t start = (k->fr[i].off + al - 1) / al * al, end = k->fr[i].off + k->fr[i].size;
                 if (start + rq.size > end) continue;
@@ -149,7 +156,18 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
         VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         k->size = rq.size > (16u << 20) ? rq.size : (64u << 20); k->type = type; k->cls = rq.size > (16u << 20) ? 100 + b : cls;      /* large: a block of its own */
         ai.allocationSize = k->size; ai.memoryTypeIndex = type;
-        VkResult r = vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+        static LONG64 cap = -1;      /* SSBU_VK_VRAM_MB=N, TEST: video memory as full past N MB (a smaller card) */
+        if (cap < 0) { const char *e = getenv("SSBU_VK_VRAM_MB"); cap = e ? (LONG64)atoi(e) << 20 : 0; }
+        VkResult r = alt != 32 && (g_vram_full >> type & 1 || (cap && g_mem_total - g_mem_sys + (LONG64)k->size > cap)) ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+        if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY && alt != 32) {
+            if (!(g_vram_full >> type & 1))
+                printf("nvn_vk: video memory full (a %llu MB block of memory type %u failed; %lld MB allocated, %lld MB of it in system memory): new blocks go to memory type %u in system memory until a block is freed\n",
+                       (unsigned long long)(k->size >> 20), type, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20), alt);
+            g_vram_full |= 1u << type;
+            type = k->type = ai.memoryTypeIndex = alt;
+            r = vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+            if (r == VK_SUCCESS) { k->sys = 1; g_mem_sys += (LONG64)k->size; }
+        }
         if (r != VK_SUCCESS) vkd_fail("vkAllocateMemory of %llu MB (type %u): %s; %lld MB allocated so far", (unsigned long long)(k->size >> 20), type, vk_result_name(r), (long long)(g_mem_total >> 20));
         if (D.mp.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) VKC(vkMapMemory(V.device, k->mem, 0, VK_WHOLE_SIZE, 0, &k->map));
         k->nfree = 1; k->fr[0].off = 0; k->fr[0].size = k->size;
@@ -163,7 +181,7 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
 static void vmem_free(VMem m) {
     if (m.block < 0) return;
     VBlock *k = g_blk[m.block];
-    if (--k->used == 0 && k->cls >= 100) { vkFreeMemory(V.device, k->mem, NULL); g_mem_total -= (LONG64)k->size; free(k); g_blk[m.block] = NULL; return; }
+    if (--k->used == 0 && k->cls >= 100) { vkFreeMemory(V.device, k->mem, NULL); g_mem_total -= (LONG64)k->size; g_vram_full = 0; if (k->sys) g_mem_sys -= (LONG64)k->size; free(k); g_blk[m.block] = NULL; return; }
     int i = 0;
     while (i < k->nfree && k->fr[i].off < m.off) i++;
     if (i > 0 && k->fr[i - 1].off + k->fr[i - 1].size == m.off) { k->fr[i - 1].size += m.size; if (i < k->nfree && k->fr[i].off == m.off + m.size) { k->fr[i - 1].size += k->fr[i].size; memmove(&k->fr[i], &k->fr[i + 1], sizeof k->fr[0] * (size_t)(k->nfree - i - 1)); k->nfree--; } return; }
@@ -4921,9 +4939,9 @@ swap: ;
         memcpy(last, g_tm, sizeof last); last_sets = R.sets; last_flush = R.flushes; last_reused = R.sets_reused; last_disp = R.dispatches;
     }
     if (frame % 600 == 0)
-        printf("nvn_vk: totals at frame %lld: %lld images made (%lld live, %lld views), %lld uploads (%lld MB), %lld shader modules, %lld pipelines, %lld descriptor sets, %lld command buffers, %lld ring wraps, %lld feedback passes, %lld MB device memory\n",
+        printf("nvn_vk: totals at frame %lld: %lld images made (%lld live, %lld views), %lld uploads (%lld MB), %lld shader modules, %lld pipelines, %lld descriptor sets, %lld command buffers, %lld ring wraps, %lld feedback passes, %lld MB device memory (%lld MB of it in system memory)\n",
                (long long)frame, (long long)R.images, (long long)R.images_live, (long long)R.views, (long long)R.uploads, (long long)(R.upload_bytes >> 20), (long long)R.modules, (long long)R.pipelines, (long long)R.sets,
-               (long long)R.flushes, (long long)R.ring_wraps, (long long)R.feedback, (long long)(g_mem_total >> 20));
+               (long long)R.flushes, (long long)R.ring_wraps, (long long)R.feedback, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20));
     if (frame % 600 == 0 && R.dispatches) {
         LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
         printf("nvn_vk: compute at frame %lld: %lld dispatches, %lld KB copied back to guest memory, draws using a vertex buffer written by compute in the same batch: %lld, copy-backs forced inside a batch: %lld, waits for the GPU before a copy-back: %lld (%.1f ms in all), %lld buffers made; words the guest wrote into a range pending copy-back: %lld (also written by compute: %lld)\n",
