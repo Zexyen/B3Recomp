@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
@@ -177,7 +178,9 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 		if (!f)
 			return false;
 	}
-	return std::rename(tmp.c_str(), file.c_str()) == 0;
+	std::error_code ec;   // std::rename will not replace an existing file on Windows
+	std::filesystem::rename(tmp, file, ec);
+	return !ec;
 }
 
 bool SetupState::has(const std::string& step) const { return std::find(done.begin(), done.end(), step) != done.end(); }
