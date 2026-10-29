@@ -60,6 +60,8 @@ static const Row k_rows[] = {
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
     {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "SSBU_CUTSCENE_FPS", "30", A_CUT, 0,
      {"30", "60"}, {"30 fps", "60 fps"}},
+    {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
+     {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at (Bayonetta 3: 1600 \xC3\x97 900 at 1.0). The first start at a new scale prepares its shaders for about two minutes once.", "SSBU_VK_SCALE", "1.0", A_RESTART, 0,
      {"0.5", "0.75", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.75 \xE2\x80\x94 1200 \xC3\x97 675", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",

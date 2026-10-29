@@ -1,20 +1,20 @@
-/* [witchtime] PC settings in the game's own Options screen (page Screen Display): seven rows of the game's own kind that show
+/* [witchtime] PC settings in the game's own Options screen (page Screen Display): eight rows of the game's own kind that show
  * and change keys of graphics.ini, and a "PC Settings" row that opens the PC settings panel (pcmenu.c) for the rest.
  * docs/RE_NOTES.md section 8 has the Options screen as found in main.
  *
  * The screen's rows are objects behind a table of pointers (ROWS: 25 rows, slot 25 is 0); a page shows rows by number,
  * Screen Display the 7 of a table in main's read-only data. The lift (lifter/recomp_eh.py, _options_row_patches) reads that
  * page's numbers and the row table from OPTX_BASE instead, a page mapped here after main's image:
- *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 32, 25, Restore Defaults (24); +0xffc their count
- *   +0x100  the row table: the game's 25, row 25, rows 26 .. 32
+ *   +0x000  Screen Display's row numbers: 18 .. 23, our rows 26 .. 33, 25, Restore Defaults (24); +0xffc their count
+ *   +0x100  the row table: the game's 25, row 25, rows 26 .. 33
  *   +0x300  row 25's method table: the Brightness row's (an action row: label, Confirm / Back, no value) with two methods of
  *           ours, the label (MENU_OPTION_LIST_PC_SETTINGS; without the text mod the pause menu's "Options") and "decide",
  *           which opens the panel where the Brightness row opens its screen
- *   +0x360  rows 26 .. 32's method table: the Display Language row's (a list row: left / right go round its values, with
+ *   +0x360  rows 26 .. 33's method table: the Display Language row's (a list row: left / right go round its values, with
  *           the game's sounds; a value is a message of a bank, the text by hash) with its value methods ours (+0x38 ..)
  *   +0x400  the row objects (8 bytes: the method table)
  * The texts (labels in the menu bank, values in the core bank, where the digits are) are added to the game's messages by
- * scripts/pc_settings_mod.py; the names here are theirs (the internal resolution's label says it applies at the next start). A value of graphics.ini that is none of a row's is "Custom" (one
+ * scripts/pc_settings_mod.py; the names here are theirs (the internal resolution's and the frame rate's labels say they apply at the next start; the frame rate's that it is experimental). A value of graphics.ini that is none of a row's is "Custom" (one
  * more value, until left / right leave it). The game's Restore Defaults does not touch these rows (its reset is the game's
  * own settings); the list row's reset button sets the row's default. Values change through pcmenu.c (pcmenu_key_set), so
  * the file is written and the live keys applied as from the panel. */
@@ -53,6 +53,7 @@ typedef struct {
 static const PcRow k_pc[] = {
     {"resolution_scale", "MENU_OPTION_LIST_PC_RES", {"1.0", "1.2", "1.6", "2.4"}, {"CORE_PC_RES_10", "CORE_PC_RES_12", "CORE_PC_RES_16", "CORE_PC_RES_24"}, 0},
     {"cutscene_fps", "MENU_OPTION_LIST_PC_CUTSCENE", {"30", "60"}, {"CORE_PC_FPS_30", "CORE_PC_FPS_60"}, 0},
+    {"frame_rate", "MENU_OPTION_LIST_PC_FPS", {"60", "90", "120"}, {"CORE_PC_FPS_60", "CORE_PC_FPS_90", "CORE_PC_FPS_120"}, 0},
     {"vsync", "MENU_OPTION_LIST_PC_VSYNC", {"auto", "display", "clock", "on", "off"}, {"CORE_PC_AUTO", "CORE_PC_MONITOR", "CORE_PC_TIMER", "CORE_SETTING_003", "CORE_SETTING_004"}, 0},
     {"window", "MENU_OPTION_LIST_PC_WINDOW", {"windowed", "borderless", "fullscreen"}, {"CORE_PC_WINDOWED", "CORE_PC_BORDERLESS", "CORE_PC_FULLSCREEN"}, 0},
     {"anisotropic_filtering", "MENU_OPTION_LIST_PC_ANISO", {"game", "2", "4", "8", "16"}, {"CORE_PC_DEFAULT", "CORE_PC_AF_2", "CORE_PC_AF_4", "CORE_PC_AF_8", "CORE_PC_AF_16"}, 0},
