@@ -200,6 +200,9 @@ int tex_decode_block_rgba8(int nvn_format, const uint8_t *block, uint8_t *out, i
  * stencil in R). src row pitch = w * bpb. Returns 0 or -1 for unsupported formats. */
 int tex_convert_rgba8(int nvn_format, const void *src, int w, int h, uint8_t *dst);
 
+/* RGBA8 (w x h, row pitch w * 4) -> BC3 blocks, ((w + 3) / 4) * ((h + 3) / 4) * 16 bytes, rows of blocks packed. */
+void tex_encode_bc3(const uint8_t *rgba, int w, int h, uint8_t *dst);
+
 /* ---------------------------------------------------------------- helpers */
 float tex_half_to_float(uint16_t h);
 uint16_t tex_float_to_half(float f);
