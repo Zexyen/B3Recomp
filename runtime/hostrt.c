@@ -336,9 +336,9 @@ static void audit_path_hit(const char *list, const char *name, uint64_t from);
  * 240 s battle run, from every thread). They are kept only when SSBU_IMPORT_COUNTS=1 or SSBU_AUDIT_COUNTS is set;
  * otherwise an import is counted (and traced) for its first three calls, as before, and then called directly. */
 static int g_import_count_all = 1;
-/* close4: suspension of the application by the applet manager (nnmisc.c oe_watch; suyu am/applet.cpp UpdateSuspensionStateLocked ->
- * process->Suspend). While g_guest_frozen is set every guest thread stops at its next call of, or return from, an SDK function and
- * waits here (the console's kernel stops the threads wherever they are; a thread inside a kernel call finishes it there too). */
+/* Suspension of the application, as the console's applet manager does it (suyu am/applet.cpp UpdateSuspensionStateLocked ->
+ * process->Suspend); [witchtime] only the PC menu (pcmenu.c) holds the game now, not a lost focus. While g_guest_frozen is
+ * set every guest thread stops at its next call of, or return from, an SDK function and waits here (the console's kernel stops the threads wherever they are; a thread inside a kernel call finishes it there too). */
 volatile LONG g_guest_frozen;
 void guest_freeze_wait(void) { while (g_guest_frozen) Sleep(5); }
 /* Session 8 (track V), SSBU_IMPORT_WATCH=<part of an import's name>: the calls of that one import are timed, and for every

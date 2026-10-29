@@ -45,6 +45,8 @@ GameStart prepare_game(const Paths& paths)
 	set_env("SSBU_ROMFS", paths.repo + "/targets/romfs", false);
 	set_env("SSBU_TITLE", "Witch Time", false);
 	set_env("SSBU_VK_MISSING", "warn", false);
+	// Linux runs the game in this process, named witch-time, which nnaudio.c's test-copy rule would leave silent
+	set_env("SSBU_VOLUME", "100", false);
 	if (!change_dir(paths.run))
 	{
 		g.error = "Cannot open " + paths.run + ".";
