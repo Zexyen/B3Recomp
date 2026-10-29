@@ -48,6 +48,7 @@ static struct {
     int has_gpl, ext_gpl, ext_so;
     VkPhysicalDeviceMemoryProperties mp;
 } D;
+static int g_ck_on;                                /* [issue 26] SSBU_VK_CHECKPOINTS (ckpt, after nvn_vk_m4.c) */
 static void vkd_fail(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); printf("nvn_vk: FATAL: "); vprintf(fmt, ap); printf("\n"); va_end(ap); fflush(stdout); ExitProcess(6);
 }
@@ -84,6 +85,12 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.ext_gpl = has_name(dext, ndext, "VK_EXT_graphics_pipeline_library") && has_name(dext, ndext, "VK_KHR_pipeline_library"); D.ext_so = has_name(dext, ndext, "VK_EXT_shader_object");
     if (D.ext_gpl && vk_gpl_mode()) { D.exts[D.next++] = "VK_KHR_pipeline_library"; EXT(has_gpl, "VK_EXT_graphics_pipeline_library", gpl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT) }
 #undef EXT
+    {   /* [issue 26] SSBU_VK_CHECKPOINTS=1: NVIDIA's diagnostic checkpoints (ckpt) */
+        const char *e = getenv("SSBU_VK_CHECKPOINTS");
+        g_ck_on = e && atoi(e) && has_name(dext, ndext, "VK_NV_device_diagnostic_checkpoints");
+        if (g_ck_on) D.exts[D.next++] = "VK_NV_device_diagnostic_checkpoints";
+        if (e && atoi(e)) printf("nvn_vk: SSBU_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
+    }
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("SSBU_VK_PUSH") && !atoi(getenv("SSBU_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
     D.has_vids = D.has_vids && D.vids.vertexInputDynamicState; D.has_cbc = D.has_cbc && D.cbc.customBorderColors && D.cbc.customBorderColorWithoutFormat;
@@ -472,7 +479,7 @@ static void slot_wait(Slot *s) {
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r));
+    if (r != VK_SUCCESS) { ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* SSBU_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
@@ -1295,6 +1302,49 @@ static void glsl_dump(int serial, int s, uint64_t h, const char *glsl) {
     if (f) { fputs(glsl, f); fclose(f); }
 }
 #include "nvn_vk_m4.c"                             /* session 4: stages, pipelines, workers (M4) */
+/* [issue 26] SSBU_VK_CHECKPOINTS=1: a GPU that hangs (VK_ERROR_DEVICE_LOST after the 20 s fence wait) on NVIDIA's Windows driver,
+ * where this machine has none. Before every draw and dispatch a checkpoint (VK_NV_device_diagnostic_checkpoints) whose marker is
+ * the number of a record of the frame and the stages (hb: the hash of the machine code and constants, the same on any machine);
+ * when the device is lost, the last markers the GPU passed per pipeline stage and the record after them are printed: the draw
+ * that never finished is at or just after them. */
+static PFN_vkCmdSetCheckpointNV vkCmdSetCheckpointNV_;
+static PFN_vkGetQueueCheckpointDataNV vkGetQueueCheckpointDataNV_;
+#define CK_N 8192
+typedef struct { long long frame; uint32_t draw; uint8_t kind; uint64_t hb[3]; } CkRec;
+static CkRec g_ck[CK_N];
+static uint32_t g_ckn;                             /* records made; marker = 1 + the record's number */
+static void ckpt(int kind, const VStage *a, const VStage *b, const VStage *c) {
+    if (!g_ck_on || !vkCmdSetCheckpointNV_) return;
+    uint32_t i = g_ckn++ % CK_N;
+    g_ck[i].frame = nvn_front_frame_next(); g_ck[i].draw = (uint32_t)R.frame_draws; g_ck[i].kind = (uint8_t)kind;
+    g_ck[i].hb[0] = a ? a->hb : 0; g_ck[i].hb[1] = b ? b->hb : 0; g_ck[i].hb[2] = c ? c->hb : 0;
+    vkCmdSetCheckpointNV_(R.cmd, (void *)(uintptr_t)g_ckn);
+}
+static void ckpt_print(const char *what, uint32_t m) {
+    if (!m || m > g_ckn || g_ckn - m >= CK_N) { printf("  %s: marker %u (no record)\n", what, m); return; }
+    const CkRec *k = &g_ck[(m - 1) % CK_N];
+    printf("  %s: marker %u of %u: frame %lld, draw %u of the frame, %s, stages hb %016llx %016llx %016llx\n", what, m, g_ckn, k->frame, k->draw,
+           k->kind ? "compute dispatch" : "draw (vertex, fragment, tessellation evaluation)", (unsigned long long)k->hb[0], (unsigned long long)k->hb[1], (unsigned long long)k->hb[2]);
+}
+static void ckpt_dump(void) {
+    if (!g_ck_on || !vkGetQueueCheckpointDataNV_) return;
+    VkCheckpointDataNV d[32];
+    uint32_t n = 0;
+    vkGetQueueCheckpointDataNV_(V.queue, &n, NULL);
+    if (n > 32) n = 32;
+    for (uint32_t i = 0; i < n; i++) { d[i].sType = VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV; d[i].pNext = NULL; }
+    vkGetQueueCheckpointDataNV_(V.queue, &n, d);
+    printf("nvn_vk_checkpoints: the device is lost or stuck; %u checkpoint(s) the GPU passed last (pipeline stage: marker):\n", n);
+    uint32_t lo = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t m = (uint32_t)(uintptr_t)d[i].pCheckpointMarker;
+        char what[64]; snprintf(what, sizeof what, "passed at pipeline stage 0x%x", (unsigned)d[i].stage);
+        ckpt_print(what, m);
+        if (!lo || m < lo) lo = m;
+    }
+    if (lo) ckpt_print("the record after the oldest of them (likely the draw that hangs)", lo + 1);
+    fflush(stdout);
+}
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
 /* ---------------------------------------------------------------- stages: machine code -> Vulkan GLSL -> SPIR-V -> module */
 typedef struct { uint8_t unit, dim, shadow; uint16_t binding; } VSmp;
@@ -2900,6 +2950,7 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     if (nw) vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cp);
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
+    ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
     g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
     if (v->images) storage_barrier();              /* [witchtime] */
@@ -3207,6 +3258,7 @@ static int draw_prepare(unsigned prim) {
         printf("\n");
     }
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
+    ckpt(0, vs, fs, tes);                          /* [issue 26] */
     return 1;
 }
 
@@ -5120,6 +5172,7 @@ static void vkd_init(void) {
     VKD(X)
 #undef X
     vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(V.device, "vkCmdSetVertexInputEXT");
+    if (g_ck_on) { vkCmdSetCheckpointNV_ = (PFN_vkCmdSetCheckpointNV)vkGetDeviceProcAddr(V.device, "vkCmdSetCheckpointNV"); vkGetQueueCheckpointDataNV_ = (PFN_vkGetQueueCheckpointDataNV)vkGetDeviceProcAddr(V.device, "vkGetQueueCheckpointDataNV"); }      /* [issue 26] */
     if (D.has_push) { vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(V.device, "vkCmdPushDescriptorSetKHR"); if (!vkCmdPushDescriptorSetKHR) D.has_push = 0; }
     if (D.has_eds3) {
 #define X3(n) n = (PFN_##n)vkGetDeviceProcAddr(V.device, #n); if (!n) vkd_fail("the device has VK_EXT_extended_dynamic_state3 but no " #n);
