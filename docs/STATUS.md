@@ -35,8 +35,9 @@ SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSB
 clash with B2recomp: `pgrep -x "Witch Time"` finds it. The executable is `build/witch-time-game` (`witch-time-game.exe` on Windows; it was
 `game_native`, the same name as B2recomp's, until 2026-10-24, then `b3-game` until 2026-10-27).
 
-- `SSBU_FOCUS_NOTIFY=0`: without it the applet model (nnmisc.c) **suspends the game whenever its window is not in the
-  foreground** (mode 3, as on the console); a run on a desktop where the window loses the focus then looks hung.
+- `SSBU_FOCUS_NOTIFY=0`: turns off the applet model's focus tracking (nnmisc.c), so the game is never told it lost the
+  focus. Losing the focus no longer suspends the game either way (that freeze silenced it whenever another window was in
+  front; removed 2026-10-29).
 - `SSBU_VK_MISSING=warn`: without it the Vulkan back end stops at the first operation it cannot do (see the blockers below);
   with it those are skipped and logged once each.
 - Test aids used for the results below: `SSBU_SHOW=0` (window off screen), `SSBU_SHOT_EVERY=<n> SSBU_SHOT_DIR=<dir>` (a .bmp
@@ -665,7 +666,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Open / close**: F1, or L3 + R3 on player 1's controller (seen at the game's own pad reads, `pcmenu_gate` in nnhid.c);
   B / Escape / F1 close it. Up / down choose a row, left / right change it (they stop at the ends), A / Enter go round;
   the mouse points at a row and clicks the value ('‹' for the one before). While it is open the **game is held** with the
-  console's suspension (`g_guest_frozen`, as for a minimised window; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
+  console's suspension (`g_guest_frozen`; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
   game's last picture again with the panel about 60 times a second, and the game reads an idle pad, also after closing
   until the buttons that closed it are let go.
 - **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the

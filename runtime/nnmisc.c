@@ -239,7 +239,8 @@ static LARGE_INTEGER g_start;
  * visible; minimised = 3 for a NoSuspend application and no change at all in the suspending modes.)
  * Differences from the console, stated: (1) in the suspending modes (0, 2, 3) the console also FREEZES the application
  * while it is in the background (mode 3: also while obscured); this port does not freeze the game's threads: a minimised
- * game keeps running (design of the freeze: plan\phases\R6_fake_audit.md, fourth round). (2) A window
+ * or covered game keeps running, sound included ([witchtime] the close4 freeze was removed: it silenced the game whenever
+ * another window had the focus). (2) A window
  * that has never been in the foreground (the automated tests keep theirs off screen) is treated as in focus.
  * (3) Closing the window is the exit request: see oe_exit_request below.
  * SSBU_FOCUS_NOTIFY=0 turns the focus tracking off. */
@@ -247,7 +248,7 @@ static LARGE_INTEGER g_start;
 static uint8_t g_oe_event[0x40];
 static uint32_t g_oe_queue[16];
 static int g_oe_count, g_oe_event_ready, g_oe_focus_state = 1, g_oe_focus_mode = 0, g_oe_was_foreground;
-static int g_oe_opmode_notify, g_oe_perfmode_notify, g_oe_resume_notify, g_oe_focus_pending, g_oe_focus_recheck;
+static int g_oe_opmode_notify, g_oe_perfmode_notify, g_oe_focus_pending, g_oe_focus_recheck;
 static HWND g_oe_window;
 static CRITICAL_SECTION g_oe_lock;
 static void oe_event_setup(void) {
@@ -260,71 +261,11 @@ static void oe_push(uint32_t message) {
     os_signal_event((uint64_t)(uintptr_t)g_oe_event);
     LeaveCriticalSection(&g_oe_lock);
 }
-/* Suspension (close4). The applet manager suspends the application's process while it is not runnable (suyu am/applet.cpp
- * UpdateSuspensionStateLocked, am/lifecycle_manager.cpp IsRunnable): in the background unless the handling mode is NoSuspend,
- * obscured only in AlwaysSuspend; never while an exit request is pending. A message "Resume" (16) is queued at that moment when
- * the application enabled it (RequestResumeNotification). Here a watcher thread applies the rule to the window every 20 ms and
- * sets hostrt.c's g_guest_frozen: every guest thread then stops at its next SDK call or return (hostrt.c host_import).
- * SSBU_FREEZE_TEST=<start s>,<seconds> minimises and restores the window by itself (test; the log line counts the polls of the
- * game's main loop during the freeze). */
-extern volatile LONG g_guest_frozen;
-int pcmenu_holds(void);
-static volatile LONG g_oe_poll_count;
-static int g_oe_exit_requested;                           /* defined with the exit request code below */
-#define OE_MSG_RESUME 16u
-static BOOL CALLBACK oe_find_window(HWND w, LPARAM out) {
-    DWORD pid = 0;
-    if (GetWindowThreadProcessId(w, &pid) && pid == GetCurrentProcessId() && IsWindowVisible(w) && !GetWindow(w, GW_OWNER)) { *(HWND *)out = w; return FALSE; }
-    return TRUE;
-}
-static DWORD WINAPI oe_watch(LPVOID unused) {
-    const char *test = getenv("SSBU_FREEZE_TEST");
-    double t_start = 0, t_len = 0;
-    int test_phase = 0;
-    ULONGLONG t0 = GetTickCount64(), frozen_at = 0;
-    LONG polls_at = 0;
-    if (test) sscanf(test, "%lf,%lf", &t_start, &t_len);
-    for (;;) {
-        Sleep(20);
-        double t = (double)(GetTickCount64() - t0) / 1000.0;
-        if (test && test_phase == 0 && t >= t_start) {
-            HWND w = NULL;
-            EnumWindows(oe_find_window, (LPARAM)&w);
-            if (w) { g_oe_window = w; g_oe_was_foreground = 1; ShowWindow(w, SW_SHOWMINNOACTIVE); test_phase = 1; printf("nn::oe: freeze test: window minimised (handling mode %d)\n", g_oe_focus_mode); fflush(stdout); }
-        } else if (test_phase == 1 && t >= t_start + t_len) {
-            ShowWindow(g_oe_window, SW_SHOWNOACTIVATE);
-            test_phase = 2;
-        }
-        DWORD pid = 0;
-        HWND fg = GetForegroundWindow();
-        int ours = fg && GetWindowThreadProcessId(fg, &pid) && pid == GetCurrentProcessId();
-        if (ours) { g_oe_was_foreground = 1; g_oe_window = fg; }
-        if (!g_oe_was_foreground) continue;
-        int minimised = g_oe_window && IsIconic(g_oe_window);
-        int runnable = ours || g_oe_exit_requested || (minimised ? g_oe_focus_mode == 1 : g_oe_focus_mode != 3);
-        if (!runnable && !g_guest_frozen) {
-            if (g_oe_resume_notify) oe_push(OE_MSG_RESUME);
-            frozen_at = GetTickCount64(); polls_at = g_oe_poll_count;
-            InterlockedExchange(&g_guest_frozen, 1);
-            trace_printf("     nn::oe: application suspended (%s, handling mode %d)\n", minimised ? "background" : "obscured", g_oe_focus_mode);
-        } else if (runnable && g_guest_frozen && !pcmenu_holds()) {      /* [witchtime] the PC menu (pcmenu.c) holds the game too */
-            LONG polls = g_oe_poll_count - polls_at;
-            InterlockedExchange(&g_guest_frozen, 0);
-            printf("nn::oe: application resumed after %llu ms of suspension; main-loop polls during it: %ld\n", (unsigned long long)(GetTickCount64() - frozen_at), (long)polls);
-            fflush(stdout);
-            trace_printf("     nn::oe: application resumed after %llu ms\n", (unsigned long long)(GetTickCount64() - frozen_at));
-        }
-        if (test_phase == 2 && !g_guest_frozen) { g_oe_was_foreground = 0; test_phase = 3; }      /* the test window was never the foreground window: back to "in focus" */
-    }
-    return 0;
-}
 static void oe_track_focus(void) {
     static int enabled = -1;
     static ULONGLONG last;
-    static volatile LONG watcher;
     ULONGLONG now = GetTickCount64();
     if (enabled < 0) { const char *e = getenv("SSBU_FOCUS_NOTIFY"); enabled = !(e && e[0] == '0'); }
-    if (enabled && InterlockedCompareExchange(&watcher, 1, 0) == 0) CloseHandle(CreateThread(NULL, 0, oe_watch, NULL, 0, NULL));
     if (!enabled || (now - last < 30 && !g_oe_focus_recheck)) return;
     last = now;
     g_oe_focus_recheck = 0;
@@ -396,7 +337,6 @@ static void oe_LeaveExitRequestHandlingSection(Ctx *c) {
 static void oe_TryPopNotificationMessage(Ctx *c) {       /* (uint32_t *out) -> bool */
     uint64_t out = A0;
     int got = 0;
-    InterlockedIncrement(&g_oe_poll_count);
     oe_track_focus();
     EnterCriticalSection(&g_oe_lock);
     if (g_oe_count > 0) {

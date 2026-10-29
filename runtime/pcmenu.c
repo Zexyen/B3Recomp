@@ -2,8 +2,8 @@
  *
  * Open: F1 on the keyboard, or L3 + R3 (both sticks pressed) on player 1's controller; seen at the game's own pad reads
  * (pcmenu_gate, nnhid.c), so nothing runs while it is closed but one key and one mask test per read. While it is open:
- *   - the game is held: every guest thread stops at its next SDK call (hostrt.c g_guest_frozen, the console's suspension, as
- *     for a minimised window); its sound runs dry; the game's pad reads (none while held) get an idle pad, and after the menu
+ *   - the game is held: every guest thread stops at its next SDK call (hostrt.c g_guest_frozen, the console's suspension);
+ *     its sound runs dry; the game's pad reads (none while held) get an idle pad, and after the menu
  *     closes too, until the buttons that closed it are let go;
  *   - a thread of its own reads player 1 (nnhid_menu_read: test scripts, the keyboard player's keys, the first controller),
  *     the arrow keys / Enter / Escape / F1 and the mouse, and posts a job to the render thread about 60 times a second that
@@ -318,7 +318,6 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
 int pcmenu_visible(void) { return g_open || hint_on(); }
-int pcmenu_holds(void) { return g_open != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_open = -1;
     int open = g_open != 0;
@@ -443,7 +442,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     }
     InterlockedExchange(&g_release, 0xff);                 /* each player reads an idle pad until it has let go of everything */
     InterlockedExchange(&g_open, 0);
-    InterlockedExchange(&g_guest_frozen, 0);               /* (nnmisc.c's watcher freezes it again within 20 ms if the window is in the background) */
+    InterlockedExchange(&g_guest_frozen, 0);
     if (nnpad_mouse_cfg(&sens, &inv)) display_mouse_want(1);
     printf("pcmenu: closed; the game goes on\n");
     fflush(stdout);
