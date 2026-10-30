@@ -19,6 +19,7 @@ std::string main_elf(const Paths& paths) { return paths.repo + "/targets/exefs/m
 #ifndef _WIN32
 std::string g_self;
 volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the player closed the window
+bool g_relaunch = true;                       // the launcher starts again when the game ends (not with --play)
 int g_out = -1, g_err = -1;                   // the launcher's own stdout / stderr while the game writes to its log
 
 // The game's output goes to build/run/witch-time-game.log, as on Windows: a launcher started from a desktop entry has no
@@ -41,7 +42,7 @@ void log_to_file(const Paths& paths)
 // runtime/plat_posix.c calls this from ExitProcess, on whichever thread ends the game
 void on_game_exit(int code)
 {
-	if (g_display_close && *g_display_close)
+	if ((g_display_close && *g_display_close) || !g_relaunch)
 		return;                                // closing the window ends everything, as it always did
 	std::fflush(nullptr);
 	if (g_out >= 0)                            // the launcher that starts again writes where this one did
@@ -92,7 +93,7 @@ GameStart prepare_game(const Paths& paths)
 }
 
 #ifdef _WIN32
-void run_in_process(GameStart&, const Paths&, SDL_Window*) { std::abort(); }   // prepare_game never offers it
+void run_in_process(GameStart&, const Paths&, SDL_Window*, bool) { std::abort(); }   // prepare_game never offers it
 
 int run_child(const Paths& paths, SDL_Window* window)
 {
@@ -108,8 +109,9 @@ int run_child(const Paths& paths, SDL_Window* window)
 	return code;
 }
 #else
-void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window)
+void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bool relaunch)
 {
+	g_relaunch = relaunch;
 	using HostMain = int (*)(int, char**);
 	auto host_main = reinterpret_cast<HostMain>(dlsym(start.host, "wt_host_main"));
 	auto exit_hook = static_cast<void (**)(int)>(dlsym(start.host, "plat_exit_hook"));

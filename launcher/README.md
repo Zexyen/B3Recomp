@@ -46,7 +46,7 @@ driver ("Build (Windows)" in the main README).
 - **Play in the same window.** The runtime link step also makes `build/libwitchtime.so`. The launcher loads it, hands its
   SDL window over (SDL global property `witchtime.window`, which `runtime/display.c` adopts) and calls `wt_host_main`.
   When the game exits through `ExitProcess`, `plat_exit_hook` starts the launcher again (`witch-time --returned
-  <code>`), unless the player closed the window. If `libwitchtime.so` is missing or fails to load, the launcher hides its
+  <code>`), unless the player closed the window or it was started with `--play`. If `libwitchtime.so` is missing or fails to load, the launcher hides its
   window and runs `build/witch-time-game` instead. On Windows the game always runs that way, as
   `build\witch-time-game.exe` with its own window. Either way the game's output goes to `build/run/witch-time-game.log`.
 - **Updates.** A release build (`WT_VERSION` `vX.Y.Z`) asks GitHub for the latest release at start and, if it is
@@ -55,6 +55,9 @@ driver ("Build (Windows)" in the main README).
   `curl` and `tar`), moves its files over the installed ones (keeping the player's `config/`) and starts the new
   launcher. The replaced files wait in `build/update` until the next start. The next build redoes the steps the new
   sources feed (`REDO_ON_UPDATE` in `tools/wtbuild/src/setup.rs`).
+- **Straight to the game.** `witch-time --play` (on Windows `witch-time.exe --play`) starts the game at once and ends
+  when it does, for a Steam shortcut (Steam Deck game mode) or a desktop entry. If the game is not built yet, the
+  launcher stays open and says so.
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 

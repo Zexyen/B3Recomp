@@ -63,7 +63,8 @@ const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
 		{"resolution_scale", "Internal resolution", "Takes effect at the next start",
-			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"}}},
+			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"},
+				{"0.4", "0.4× · 360p"}, {"0.6", "0.6× · 540p"}, {"0.8", "0.8× · 720p"}}},   // after 2.4: the first option is the default, and left from 1.0 goes down
 		{"cutscene_fps", "Cutscene frame rate", "Menus and cutscenes; movies keep their own", {{"30", "30"}, {"60", "60"}}},
 		{"window", "Display mode", "How the game uses the window", {{"windowed", "Window"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}},
 		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
@@ -101,11 +102,13 @@ std::string minutes(double s)
 bool App::init(int argc, char** argv)
 {
 	paths = Paths::find(argv[0]);
-	for (int i = 1; i + 1 < argc; i++)
-		if (!std::strcmp(argv[i], "--returned"))
-			returned_code = std::atoi(argv[i + 1]);
 	for (int i = 1; i < argc; i++)
-		updated = updated || !std::strcmp(argv[i], "--updated");
+		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
+			returned_code = std::atoi(argv[i + 1]);
+		else if (!std::strcmp(argv[i], "--play"))
+			want_play = play_only = true;
+		else if (!std::strcmp(argv[i], "--updated"))
+			updated = true;
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -252,6 +255,8 @@ void App::bind_model()
 	c.Bind("checking", &checking);
 	c.Bind("verified", &verified);
 	c.Bind("move_dump", &move_dump);
+	c.Bind("dump_modified", &dump_modified);
+	c.Bind("accept_modified", &accept_modified);
 	c.Bind("checks", &checks);
 	c.Bind("building", &building);
 	c.Bind("progress", &progress);
@@ -283,6 +288,13 @@ void App::bind_model()
 	c.BindEventCallback("toggle_move", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		move_dump = !move_dump;
 		model.DirtyVariable("move_dump");
+	});
+	c.BindEventCallback("toggle_accept_modified", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		if (runner.running())
+			return;
+		accept_modified = !accept_modified;
+		model.DirtyVariable("accept_modified");
+		check_dump();    // the verdict depends on it
 	});
 	c.BindEventCallback("start_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { start_build(); });
 	c.BindEventCallback("stop_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { runner.stop(); });
@@ -710,7 +722,10 @@ void App::check_dump()
 	}
 	verified = false;
 	checks = {{"Starting the checks", "", "run"}};
-	if (runner.start(paths.repo, {"--dump", dump, "--only", "verify"}))
+	std::vector<std::string> args = {"--dump", dump, "--only", "verify"};
+	if (accept_modified)
+		args.push_back("--accept-modified");
+	if (runner.start(paths.repo, args))
 	{
 		job = Job::verify;
 		checking = true;
@@ -730,6 +745,8 @@ void App::start_build()
 		args = {"--dump", dump};
 	if (move_dump)
 		args.push_back("--move-dump");
+	if (accept_modified)
+		args.push_back("--accept-modified");
 	build_error.clear();
 	mods_rebuild = false;
 	if (runner.start(paths.repo, args))
@@ -764,8 +781,9 @@ void App::tick()
 			picked = false;
 			dump = picked_folder;
 			verified = false;
-			model.DirtyVariable("dump");
-			model.DirtyVariable("verified");
+			dump_modified = accept_modified = false;    // a new folder is checked as it is
+			for (const char* v : {"dump", "verified", "dump_modified", "accept_modified"})
+				model.DirtyVariable(v);
 		}
 	}
 	{
@@ -785,11 +803,20 @@ void App::tick()
 	if (job == Job::verify)
 	{
 		checks.clear();
+		bool modified = false;
 		for (const std::string& l : runner.lines)
 		{
 			std::string t = l.substr(std::min(l.size(), l.find_first_not_of(' ')));
+			modified |= t.find("--accept-modified") != std::string::npos || t.rfind("warning:", 0) == 0;
+			if (t.find("--accept-modified") != std::string::npos)    // the command-line advice; the switch above is the launcher's way
+				t = "The dump differs from the supported version. Turn on \"Use a modified dump\" to build it anyway.";
 			if (!t.empty() && t.rfind("setup:", 0) != 0 && t.rfind("Start the game:", 0) != 0)    // wtbuild's closing lines are not checks
 				checks.push_back({t, "", "done"});
+		}
+		if (modified && !dump_modified)
+		{
+			dump_modified = true;
+			model.DirtyVariable("dump_modified");
 		}
 		if (checks.size() > 8)
 			checks.erase(checks.begin(), checks.end() - 8);
@@ -857,6 +884,7 @@ void App::play()
 	GameStart g = prepare_game(paths);
 	if (!g.error.empty())
 	{
+		play_only = false;                       // nothing to play: the launcher stays, and says why
 		go("title");
 		status_bad = true;
 		status_title = "NOT READY";
@@ -868,8 +896,10 @@ void App::play()
 	if (g.in_process)
 	{
 		release_window();
-		run_in_process(g, paths, window);        // does not come back
+		run_in_process(g, paths, window, !play_only);    // does not come back
 	}
 	returned_code = run_child(paths, window);
+	if (play_only)
+		running = false;
 	refresh_title();
 }
