@@ -3,6 +3,7 @@
  * nro_catch_call for the functions that have a catch handler. The host finds game_eh_bind with GetProcAddress
  * (nncxxrt.c), so an exe works with either kind of DLL. */
 #include "game_shim.c"
+#include "scene_step.h"
 
 typedef struct { uint64_t lp; void (*fn)(Ctx *, uint64_t); } NroResume;
 extern const NroResume resume_table_main[];
@@ -105,9 +106,8 @@ void h_fps_mode_set(Ctx *c) {
  * stores the last frame's length in ms at clock+0xf0 and keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a
  * ratio of the measured frame time, with w1 = 0 (the title, menus and cutscenes: the game's state flags 28 and 30) s0 as it
  * is, 1.0 a frame, in those scenes a 30 Hz frame (a cutscene advances one step per frame: 2,758 frames whether shown at 30
- * or at 60). Such a scene follows real time at any frame rate (#45, #47: the sound does, it never waits for a late frame):
- * the step is the frame's measured length in 30 Hz frames, 0.5 at 60, 1.0 at 30; what a stall owes is paid at up to 2.0 a
- * frame. (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
+ * or at 60). Such a scene follows real time at any frame rate (#45, #47: its long sounds do, they never wait for a late frame):
+ * the step stays even, 0.5 at 60, 1.0 at 30, and what late frames owe is paid off gently (scene_step.h). (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
  * follows the real frame time already. */
 void f_7100c1f600(Ctx *c);
 /* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WT_FPS_CENSUS=1 calls
@@ -269,17 +269,16 @@ void h_frame_clock(Ctx *c) {
     g_fixed_step = fixed;
     f_7100c1f600(c);
     {
-        static float owed;                         /* 30 Hz frames of real time the scene is behind */
+        static float owed;                         /* 30 Hz frames of real time the scene is behind (scene_step.h) */
         static int was_fixed;
         if (fixed) {
             float v, ms;
             memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
-            float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : g_fps_forced ? 0.5f : 1.0f;
-            if (!was_fixed) { owed = 0.0f; if (due > 1.0f) due = 1.0f; }      /* the load before a scene is not the scene's time */
-            owed += due;
-            if (owed > 90.0f) owed = 90.0f;        /* a window held for minutes must not fast-forward the scene for minutes */
-            float k = owed < 2.0f ? owed : 2.0f;
-            owed -= k;
+            float even = g_fps_forced ? 0.5f : 1.0f;   /* the step of a frame on time; above 60 fps a frame is shorter */
+            float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : even;
+            if (uncap_on() && due < even) even = due;
+            if (!was_fixed) { owed = 0.0f; due = even; }      /* the load before a scene is not the scene's time */
+            float k = scene_step(&owed, due, even);
             v *= k;
             memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
         }

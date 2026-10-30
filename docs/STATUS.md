@@ -459,6 +459,19 @@ cutscenes in the game's 60 fps mode.
   holds 0.22 / 0.17 s (8.8 / 9.8 s before), preparation 66-72 s (56 s before), 7 % more cache, a normal restart 91.76 s.
   The marker is `prepared_v13_int2`: existing players prepare once more. RX 9070 XT, RADV, muted, one cutscene. A stall of about
   2.3 s once a run, outside the cutscene, is not a pipeline wait and not explained yet.
+- **What the sound does, measured (2026-10-30, #47)**: a reporter found v0.4.2 worse, the sound following the picture (after a
+  rebuild they no longer could; in their clip a 333 ms freeze of the picture does not stop the sound). Mixer
+  output captured whole (`SSBU_WAV` with a longer limit) against a run without stalls, Shibuya cutscene at 30, 300 ms stalls:
+  no gaps and no change of speed in any run, every offset a whole number of Wwise's 10.67 ms ticks. With the old fixed step
+  the sound stays on real time for 75 s while the picture falls up to 5 s behind, then the timeline starts the next stream
+  about 4.8 s late, and about 6 s late after that. So long streams run on real time, but the timeline starts them, and it starts its
+  other sounds too; the catch-up is right, a racing timeline takes those along. The step at clock+0xe0 is not a playback speed: the game's
+  sound code reads it only for delayed stops, one listener fade and a stage parameter.
+  `scene_step` (`runtime/scene_step.h`) replaces the 2.0 burst and the frame-by-frame measured step: even on time, up to one
+  even step stays owed, past that an eighth of the rest a frame. No stalls at 30: 98.7 % of frames take exactly 1.0, the
+  longest step 1.02, 91.98 s. 80 ms stall every 30 frames: longest step 2.0 -> 1.31, frames at 1.5 or more 168 -> 0, length
+  92.31 s -> 92.35 s, later streams about 40-60 ms later than v0.4.2. 300 ms stalls: 92.39 s at 30, 92.01 s at 60.
+  Linux, not by ear, not run on Windows; reporters' Windows logs show the output at real time, dips only at silent loads and pauses.
 
 ## Resolution scale (2026-10-25)
 
