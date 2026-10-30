@@ -1,7 +1,7 @@
 # Witch Time for Android
 
 In progress: on an AYN Thor (Snapdragon 8 Gen 2, Adreno 740, Android 13) the game reaches its title and first menus, with
-sound, at about 20 fps. Nothing past them has been played yet. AArch64 (arm64-v8a), Android 10 or newer, a GPU with
+sound, at 1280x720 and a steady 30 fps. Nothing past them has been played yet. AArch64 (arm64-v8a), Android 10 or newer, a GPU with
 Vulkan 1.1 (the Adreno 740 is the only one tried).
 
 The app (`WitchTime-<version>-android.apk`) holds the runtime and the libraries it uses, nothing from the game. Your PC
@@ -17,8 +17,8 @@ builds the game library for it from your dump, as it does for itself:
    - `build/game.so`: your PC's `build/android/game.so`
    - `config/` (optional: `graphics.ini`, `controllers.ini`)
 4. Start the app. It copies `build/game.so` into its own storage (code cannot run from the shared storage) and starts
-   the game; the runtime's log is `build/run/witch-time-game.log`, saves go to `build/userdata`. The first start compiles
-   the game's shaders behind a black screen, about 15 minutes on the Thor; they are kept for the next starts.
+   the game; the runtime's log is `build/run/witch-time-game.log`, saves go to `build/userdata`. The first start prepares
+   the game's shaders behind a progress screen, about two minutes on the Thor; they are kept for the next starts.
 
 `config/env.txt` (optional, `KEY=value` lines) sets environment variables for the runtime, as a shell does on a PC: the
 `SSBU_*` test switches. Copying with `adb push`: it cannot make folders inside the app's folder, so make them with

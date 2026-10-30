@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
     snprintf(exe, sizeof exe, "%s/build/witch-time-game", dir);
     if (chdir(run)) { SDL_Log("witch-time: %s: cannot open it", run); return 2; }
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");   /* the window is windowed and resizable (display.c) */
+    SDL_SetHint(SDL_HINT_POLL_SENTINEL, "0");          /* SDL's Android event wait wakes itself on its own sentinel: without this the window thread spins a whole core */
     freopen("witch-time-game.log", "w", stdout);   /* the runtime reports on stdout and stderr: logcat shows neither */
     setvbuf(stdout, NULL, _IOLBF, 0);
     dup2(fileno(stdout), 2);
