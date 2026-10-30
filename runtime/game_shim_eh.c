@@ -81,6 +81,7 @@ void f_7100d02de0(Ctx *c);
 /* frame_rate above 60 (graphics.ini; gfx_options.c sets RECOMPS_UNCAP=1): the clock below measures real time below 1.0 */
 static int uncap_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMPS_UNCAP"); v = e && atoi(e); } return v; }
 static int g_fps_forced;                           /* the game asked for 30 fps and runs at 60 (cutscene_fps = 60) */
+static int g_fixed_step;                           /* h_frame_clock, called just before: this frame's step is fixed (the game's state flags 28 and 30) */
 __declspec(dllexport) volatile int game_cutscene_fps;      /* 0 = not read yet, 30 / 60; the PC menu (pcmenu.c) changes it while the game runs */
 void h_fps_mode_set(Ctx *c) {
     static int last = -1;
@@ -94,7 +95,9 @@ void h_fps_mode_set(Ctx *c) {
         fflush(stdout);
         last = want;
     }
-    g_fps_forced = (sixty || uncap_on()) && want == 1;      /* above 60 fps the 30 fps scenes run at frame_rate too (real time) */
+    /* above 60 fps the 30 fps scenes run at frame_rate too (real time). Only fixed-step ones: the chapter 3 spider ride is
+     * gameplay the game asks 30 for (#45: flags 0x00810000, cutscenes 0x50000008); at 60 its frame counters ran twice as fast */
+    g_fps_forced = (sixty || uncap_on()) && want == 1 && g_fixed_step;
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }
@@ -102,10 +105,10 @@ void h_fps_mode_set(Ctx *c) {
  * stores the last frame's length in ms at clock+0xf0 and keeps the frame's step at clock+0xe0: with w1 = 1 (gameplay) a
  * ratio of the measured frame time, with w1 = 0 (the title, menus and cutscenes: the game's state flags 28 and 30) s0 as it
  * is, 1.0 a frame, in those scenes a 30 Hz frame (a cutscene advances one step per frame: 2,758 frames whether shown at 30
- * or at 60). While such a scene runs at 60 (g_fps_forced, set by the frame before) the step is the frame's measured length
- * in 30 Hz frames, at most 1.0 (the console's step at 30): 0.5 on time, more for a late frame, so the scene keeps real
- * time while frames are late too; one longer than 33 ms slows it as on the console. (A fixed 0.5: 92.3 s for the 92.1 s
- * cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1) follows the real frame time already. */
+ * or at 60). Such a scene follows real time at any frame rate (#45, #47: the sound does, it never waits for a late frame):
+ * the step is the frame's measured length in 30 Hz frames, 0.5 at 60, 1.0 at 30; what a stall owes is paid at up to 2.0 a
+ * frame. (A fixed 0.5: 92.3 s for the 92.1 s cutscene at 60 fps, but 97.9 s at 56 fps in 4K.) A measured step (w1 = 1)
+ * follows the real frame time already. */
 void f_7100c1f600(Ctx *c);
 /* The frame-counter census (docs/STATUS.md, "Frame rates above 60"): a build lifted with WT_FPS_CENSUS=1 calls
  * fps_census before the store of every counter site (tools/wtbuild/src/lifter/fps.rs, the list in gen_eh/fps_sites.txt).
@@ -263,13 +266,24 @@ void h_frame_clock(Ctx *c) {
     uint64_t obj = c->x[0];
     g_clock_ctx = c;
     int fixed = (uint32_t)c->x[1] == 0;
+    g_fixed_step = fixed;
     f_7100c1f600(c);
-    if (g_fps_forced && fixed) {
-        float v, ms;
-        memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
-        float k = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : 0.5f;
-        v *= k < 1.0f ? k : 1.0f;
-        memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
+    {
+        static float owed;                         /* 30 Hz frames of real time the scene is behind */
+        static int was_fixed;
+        if (fixed) {
+            float v, ms;
+            memcpy(&v, (void *)(uintptr_t)(obj + 0xe0), 4); memcpy(&ms, (void *)(uintptr_t)(obj + 0xf0), 4);
+            float due = ms > 0.0f && ms == ms ? ms / (1000.0f / 30.0f) : g_fps_forced ? 0.5f : 1.0f;
+            if (!was_fixed) { owed = 0.0f; if (due > 1.0f) due = 1.0f; }      /* the load before a scene is not the scene's time */
+            owed += due;
+            if (owed > 90.0f) owed = 90.0f;        /* a window held for minutes must not fast-forward the scene for minutes */
+            float k = owed < 2.0f ? owed : 2.0f;
+            owed -= k;
+            v *= k;
+            memcpy((void *)(uintptr_t)(obj + 0xe0), &v, 4);
+        }
+        was_fixed = fixed;
     }
     /* frame_rate above 60: a measured step (w1 = 1) is this frame's ms / the ms of a 60 Hz frame (+0xec) with the floor 1.0
      * lowered to 1/16 (960 fps) and no carry; the 2.0 ceiling (slow below 30 fps) and the global override (7100ba3300's float,
