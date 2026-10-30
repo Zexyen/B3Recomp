@@ -49,6 +49,12 @@ driver ("Build (Windows)" in the main README).
   <code>`), unless the player closed the window. If `libwitchtime.so` is missing or fails to load, the launcher hides its
   window and runs `build/witch-time-game` instead. On Windows the game always runs that way, as
   `build\witch-time-game.exe` with its own window. Either way the game's output goes to `build/run/witch-time-game.log`.
+- **Updates.** A release build (`WT_VERSION` `vX.Y.Z`) asks GitHub for the latest release at start and, if it is
+  newer, offers "Update to vX.Y.Z" on the title menu. That downloads this platform's archive with the system's `curl`,
+  checks it against the release's `.sha256` (`build/wtbuild sha256`), unpacks it with `tar` (Windows 10 and 11 ship
+  `curl` and `tar`), moves its files over the installed ones (keeping the player's `config/`) and starts the new
+  launcher. The replaced files wait in `build/update` until the next start. The next build redoes the steps the new
+  sources feed (`REDO_ON_UPDATE` in `tools/wtbuild/src/setup.rs`).
 - **Input.** Mouse, keyboard (arrows, Enter, Escape) and controllers (d-pad or stick, A/Cross select, B/Circle back;
   left and right change a setting).
 

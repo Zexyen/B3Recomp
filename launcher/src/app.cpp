@@ -2,6 +2,7 @@
 #include "game_host.h"
 #include "platform.h"
 #include "ui_render.h"
+#include "update.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -103,6 +104,8 @@ bool App::init(int argc, char** argv)
 	for (int i = 1; i + 1 < argc; i++)
 		if (!std::strcmp(argv[i], "--returned"))
 			returned_code = std::atoi(argv[i + 1]);
+	for (int i = 1; i < argc; i++)
+		updated = updated || !std::strcmp(argv[i], "--updated");
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -115,6 +118,7 @@ bool App::init(int argc, char** argv)
 	dump = st.dump;
 	refresh_title();
 	refresh_build();
+	update::check(paths);
 	if (const char* s = std::getenv("WITCHTIME_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -243,6 +247,7 @@ void App::bind_model()
 	c.Bind("status_title", &status_title);
 	c.Bind("status_line", &status_line);
 	c.Bind("footer_info", &footer_info);
+	c.Bind("update_tag", &update_tag);
 	c.Bind("dump", &dump);
 	c.Bind("checking", &checking);
 	c.Bind("verified", &verified);
@@ -268,6 +273,10 @@ void App::bind_model()
 			go(a[0].Get<Rml::String>());
 	});
 	c.BindEventCallback("play", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { want_play = true; });
+	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		if (!runner.running())
+			update::start(paths);
+	});
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
@@ -316,6 +325,9 @@ int App::run()
 	release_window();
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+	std::string tag, message;
+	if (update::state(tag, message) == update::State::done)
+		update::restart(paths);
 	return 0;
 }
 
@@ -491,7 +503,26 @@ void App::refresh_title()
 	built = file_exists(paths.build + "/" + GAME_EXE) && file_exists(paths.build + "/" + GAME_LIB) &&
 		file_exists(paths.repo + "/targets/exefs/main.elf");
 	status_bad = false;
-	if (returned_code > 0)
+	std::string tag, message;
+	const update::State us = update::state(tag, message);
+	update_tag = us == update::State::available || us == update::State::failed ? tag : "";
+	if (us == update::State::working)
+	{
+		status_title = "UPDATING";
+		status_line = message;
+	}
+	else if (us == update::State::failed)
+	{
+		status_bad = true;
+		status_title = "UPDATE FAILED";
+		status_line = message;
+	}
+	else if (updated && built)
+	{
+		status_title = "UPDATED";
+		status_line = "Now " WT_VERSION ". Rebuild before you play";
+	}
+	else if (returned_code > 0)
 	{
 		status_bad = true;
 		status_title = "THE GAME STOPPED";
@@ -520,6 +551,7 @@ void App::refresh_title()
 	model.DirtyVariable("status_title");
 	model.DirtyVariable("status_line");
 	model.DirtyVariable("footer_info");
+	model.DirtyVariable("update_tag");
 }
 
 void App::refresh_build()
@@ -736,6 +768,18 @@ void App::tick()
 			model.DirtyVariable("verified");
 		}
 	}
+	{
+		std::string tag, message;
+		const update::State us = update::state(tag, message);
+		if (us == update::State::done)
+			running = false;               // run() then starts the new launcher
+		else if (int(us) != update_seen || message != update_message)
+		{
+			update_seen = int(us);
+			update_message = message;
+			refresh_title();
+		}
+	}
 	if (!runner.poll() && !(job == Job::build && runner.running()))
 		return;
 	if (job == Job::verify)
@@ -781,6 +825,8 @@ void App::tick()
 			if (build_error.empty())
 				build_error = runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
+		else
+			updated = false;                   // rebuilt with the update
 		refresh_title();
 	}
 	refresh_build();

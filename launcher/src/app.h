@@ -39,6 +39,8 @@ private:
 	bool built = false, status_bad = false;
 	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
 	Rml::String status_title, status_line, footer_info;
+	Rml::String update_tag;            // a newer release to install, or empty
+	bool updated = false;              // --updated: this run is the newly installed release
 	Rml::String dump;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
@@ -63,6 +65,8 @@ private:
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
 	bool picked = false;
+	int update_seen = 0;               // the update's state and line as the title last showed them
+	Rml::String update_message;
 
 	bool create_window();
 	bool create_ui();

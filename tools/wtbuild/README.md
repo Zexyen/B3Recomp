@@ -32,7 +32,7 @@ The launcher runs `build/wtbuild` (a release) or `tools/wtbuild/target/release/w
 
 Other commands, mostly for developers: `nso2elf <in> <out>`, `lift <main.elf> <outdir> [--no-patches]`,
 `tables <repo>`, `compile [--jobs N]`, `link`, `runtime --out <dir>` (the prebuilt runtime, CI), `text [--romfs <folder>] [--dump <folder>] [--out <mods folder>]`,
-`mods-tree <mods folder> [<main NSO>] [--ini=<mods.ini>]` (the launcher's Mods window), `mods-apply`, `lift-words`.
+`mods-tree <mods folder> [<main NSO>] [--ini=<mods.ini>]` (the launcher's Mods window), `mods-apply`, `lift-words`, `sha256 <file>` (the launcher's updater).
 `--repo <folder>` names the checkout (default: the current folder).
 
 ## Prebuilt runtime

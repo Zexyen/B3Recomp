@@ -19,6 +19,7 @@
 				<div class="item autofocus" data-if="built" data-event-click="play()"><div class="mark"></div><span>PLAY</span><div class="trail"></div></div>
 				<div class="item autofocus" data-if="!built" data-event-click="go('setup')"><div class="mark"></div><span>SET UP</span><div class="trail"></div></div>
 				<div class="item" data-if="built" data-event-click="go('build')"><div class="mark"></div><span>REBUILD</span><div class="trail"></div></div>
+				<div class="item" data-if="update_tag != '' &amp;&amp; !building" data-event-click="update()"><div class="mark"></div><span>UPDATE TO {{ update_tag }}</span><div class="trail"></div></div>
 				<div class="item" data-event-click="go('mods')"><div class="mark"></div><span>MODS</span><div class="trail"></div></div>
 				<div class="item" data-event-click="go('settings')"><div class="mark"></div><span>SETTINGS</span><div class="trail"></div></div>
 				<div class="item" data-if="built" data-event-click="go('setup')"><div class="mark"></div><span>CHANGE DUMP</span><div class="trail"></div></div>
