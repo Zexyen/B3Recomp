@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/plat_posix.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/plat_ww_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -50,3 +50,8 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_loop_guard_test"
           "$RUNNER_TEMP/mx_loop_guard_test"
+
+      - name: The write watch by page faults (runtime/plat_posix.c)
+        run: |
+          clang -O2 -Wall -I runtime -I runtime/posix tests/plat_ww_test.c runtime/plat_posix.c -lm -ldl -pthread -o "$RUNNER_TEMP/plat_ww_test"
+          "$RUNNER_TEMP/plat_ww_test"

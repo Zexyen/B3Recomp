@@ -577,9 +577,8 @@ static void stacks_signal(int sig) {
     if (d) closedir(d);
 }
 void host_dump_stacks(void) { stacks_signal(0); }   /* [witchtime] SSBU_STACKS_AT: Android's runtime takes SIGUSR1 itself */
-int (*host_fault_hook)(uintptr_t addr);              /* [witchtime] a write fault the runtime expects (nvn_vk_draw.c, cg_ro): 1 = handled, the write runs again */
 static void segv_signal(int sig, siginfo_t *si, void *uc) {
-    if (host_fault_hook && host_fault_hook((uintptr_t)si->si_addr)) return;
+    if (plat_ww_fault((uintptr_t)si->si_addr)) return;   /* [witchtime] the software write watch (plat_posix.c) */
     signal(sig, SIG_DFL);                             /* SA_RESETHAND's effect, for the crash report */
     crash_signal(sig, si, uc);
 }
