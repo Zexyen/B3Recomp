@@ -58,6 +58,7 @@ typedef struct {
     int target;
     int no_int64;                    /* Vulkan: the GPU has no shaderInt64 (Adreno): 64-bit integer ops in 32-bit halves */
     int no_switch;                   /* the jump dispatcher as an if-chain, not a switch (Qualcomm's compiler gets the switch wrong) */
+    int no_fc;                       /* Vulkan: no SignedZeroInfNanPreserve execution mode (the driver does not offer it for 32-bit floats) */
     int nan_exact;                   /* Vulkan: the GPU's min / max / clamp are not known to answer NaN as Maxwell does (FMNMX gives the
                                       * other operand, .SAT gives 0): spelled out with isnan (Adreno) */
     unsigned tex_base;

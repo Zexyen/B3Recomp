@@ -129,6 +129,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (!D.f2.features.shaderInt64) h = fnv(h, "i32", 3);
     if (D.nan_exact) h = fnv(h, "nan", 3);                  /* [witchtime] MxIn.nan_exact: another text; on AMD / NVIDIA / Intel the hash is the one it always was */
     if (D.no_switch) h = fnv(h, "nsw", 3);                  /* [witchtime] MxIn.no_switch (Qualcomm): another text */
+    if (D.no_fc) h = fnv(h, "nfc", 3);                      /* [witchtime] MxIn.no_fc: another text */
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -245,7 +246,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
         in.stage = s; in.code = src->code; in.code_len = src->code_len; in.cdata = src->cdata; in.cdata_size = src->cdata ? src->cdata_size : 0;
         in.int_attrs = v->key[0]; in.sint_attrs = v->key[1]; in.int_tex = v->key[2]; in.sint_tex = v->key[3]; in.force_out = v->fo;
-        in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.nan_exact = D.nan_exact; in.no_switch = D.no_switch; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+        in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.nan_exact = D.nan_exact; in.no_switch = D.no_switch; in.no_fc = D.no_fc; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
         if (s == 5) {                              /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;

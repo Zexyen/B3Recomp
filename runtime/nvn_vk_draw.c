@@ -46,6 +46,7 @@ static struct {
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, debug;
     int no_switch;                                 /* [witchtime] MxIn.no_switch: Qualcomm (SSBU_VK_NOSWITCH=0/1 forces it) */
+    int no_fc;                                     /* [witchtime] MxIn.no_fc: the driver has no shaderSignedZeroInfNanPreserveFloat32 (SSBU_VK_NOFC=0/1 forces it) */
     int nan_exact;                                 /* [witchtime] MxIn.nan_exact: not AMD / NVIDIA / Intel (SSBU_VK_NANEXACT=0/1 forces it) */
     int has_gpl, ext_gpl, ext_so;
     VkPhysicalDeviceMemoryProperties mp;
@@ -127,9 +128,13 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     printf("nvn_vk: texture compression: BC %d, ETC2 %d, ASTC LDR %d\n", (int)D.f2.features.textureCompressionBC, (int)D.f2.features.textureCompressionETC2, (int)D.f2.features.textureCompressionASTC_LDR);
     {   /* [witchtime] the subgroups the translated shaders' warp operations (SHFL / VOTE / lane masks) run in */
         PFN_vkGetPhysicalDeviceProperties2 gp2 = vk_sym("vkGetPhysicalDeviceProperties2");
-        VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        VkPhysicalDeviceFloatControlsProperties fc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
+        VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &fc};
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sg};
         if (gp2) { gp2(V.gpu, &p2); printf("nvn_vk: subgroups: size %u, stages 0x%x (fragment %d, compute %d), operations 0x%x (ballot %d, shuffle %d, vote %d), quad operations in all stages %d\n", sg.subgroupSize, (unsigned)sg.supportedStages, !!(sg.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT), !!(sg.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT), (unsigned)sg.supportedOperations, !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT), (int)sg.quadOperationsInAllStages); }
+        D.no_fc = gp2 && !fc.shaderSignedZeroInfNanPreserveFloat32;
+        if (getenv("SSBU_VK_NOFC")) D.no_fc = atoi(getenv("SSBU_VK_NOFC")) != 0;
+        printf("nvn_vk: float controls: 32-bit SignedZeroInfNanPreserve offered %d, in the shaders %d\n", (int)fc.shaderSignedZeroInfNanPreserveFloat32, !D.no_fc);
     }
     di->enabledExtensionCount = D.next; di->ppEnabledExtensionNames = D.exts; di->pNext = &D.f2;
     printf("nvn_vk: features: vertex input dynamic %d, custom border colour %d, provoking vertex last %d, 8-bit indices %d, list restart %d, ASTC %d, depth clamp %d, wide lines %d, robust buffers %d\n",
