@@ -421,8 +421,8 @@ cutscenes in the game's 60 fps mode.
   played the same cutscene in 46.6 s instead of 92.1 s.
 - **What is done**: two host overrides (`lifter/recomp_eh.py` `HOST_OVERRIDES`, `runtime/game_shim_eh.c`):
   `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` replaces the fixed step while such a scene runs at 60 by the last
-  frame's measured length (the clock's own, +0xf0) in 30 Hz frames, at most 1.0: 0.5 on time, more for a late frame, so the
-  scene keeps real time when frames are late; a frame longer than 33 ms slows it as on the console (a measured gameplay
+  frame's measured length (the clock's own, +0xf0) in 30 Hz frames, 0.5 on time, more for a late frame, so the
+  scene keeps real time when frames are late (at most 1.0 at first; see "Late frames" below; a measured gameplay
   step is left alone). (A fixed 0.5, the first version: 97.9 s for the cutscene at 56 fps in 4K.) The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
   mode the game asks for is logged with the wall-clock time ("fps mode:" lines).
 - **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `SSBU_FRAMETIMES` has the wall clock
@@ -433,8 +433,24 @@ cutscenes in the game's 60 fps mode.
   times: the same (`/tmp/shots/title_30_vs_60.png`). The pause menu is mode 0 anyway (not changed). The prologue movie
   (`ev0000.webm`, VP9, 30 fps): movie time against wall clock, 160.0 s -> 160.11 s at 30 and 160.09 s at 60, all 4,900
   frames: movies keep their rate (the game's player times them by the system clock).
+- **Gameplay the game asks 30 for (2026-10-30, #45)**: the chapter 3 spider ride is mode 1 from state bit 16 (flags
+  `0x00810000`), bits 28 and 30 clear, so its step is measured; cutscenes are `0x50000008`. `cutscene_fps = 60` and
+  frame_rate above 60 forced it to 60 too, and its frame counters ran at twice the console's rate (the reported third
+  jump prompt of under a second, not reached by a test: a blind script dies on the ride). Only fixed-step scenes are
+  forced now; the ride runs at 30 as on the console.
+  A ride at 60 needs its frame counters at half rate (a counter there is 30 Hz; the frames due at step / 2 while the
+  ride is forced, the sites listed). Census of the first 200 s of the ride, 30 against 60: 115 frame-locked sites, 22 on
+  the game's thread, mostly the engine's own frame numbers. The QTE's counter is not among them: the script never reaches
+  it, so the ride stays at 30 until a census by hand has it.
 - Not checked by ear: audio is muted in the test runs; the cutscene's timeline keeps wall-clock time, which is what
   the voice and lip sync follow.
+- **Late frames (2026-10-30, #45, #47)**: the sound runs on real time and never waits, but a frame over 33 ms lost its
+  excess for good at 60, and at 30 every late frame did (a fixed step). A reporter's log has 0.5-2 s of excess per 1-3 minute mode-1 scene, an
+  upper guess for cutscenes: it has no flags, and some of those scenes may be gameplay (below), which is measured. `h_frame_clock` now gives every fixed-step
+  scene, at 30 too, the measured step and keeps what a stall owes, paid at up to 2.0 a frame (at most 90 30 Hz frames
+  owed; reset on entering a scene). The Shibuya cutscene with a 300 ms stall every 120 fixed frames (test build only):
+  at 60 104.64 s -> 91.83 s, at 30 98.58 s -> 92.33 s; at 60 without stalls 91.74 s. Muted; steps above 1.0 not looked
+  at by eye; the frame counters still run per frame (2,758 at 30 before, 2,588 now with the stalls).
 
 ## Resolution scale (2026-10-25)
 
