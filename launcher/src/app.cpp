@@ -101,9 +101,11 @@ std::string minutes(double s)
 bool App::init(int argc, char** argv)
 {
 	paths = Paths::find(argv[0]);
-	for (int i = 1; i + 1 < argc; i++)
-		if (!std::strcmp(argv[i], "--returned"))
+	for (int i = 1; i < argc; i++)
+		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
 			returned_code = std::atoi(argv[i + 1]);
+		else if (!std::strcmp(argv[i], "--play"))
+			want_play = play_only = true;
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -836,6 +838,7 @@ void App::play()
 	GameStart g = prepare_game(paths);
 	if (!g.error.empty())
 	{
+		play_only = false;                       // nothing to play: the launcher stays, and says why
 		go("title");
 		status_bad = true;
 		status_title = "NOT READY";
@@ -847,8 +850,10 @@ void App::play()
 	if (g.in_process)
 	{
 		release_window();
-		run_in_process(g, paths, window);        // does not come back
+		run_in_process(g, paths, window, !play_only);    // does not come back
 	}
 	returned_code = run_child(paths, window);
+	if (play_only)
+		running = false;
 	refresh_title();
 }

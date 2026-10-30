@@ -61,6 +61,7 @@ private:
 	BuildRunner runner;
 	enum class Job { none, verify, build } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
+	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
