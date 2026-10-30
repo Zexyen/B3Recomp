@@ -10,6 +10,7 @@ int wt_host_main(int argc, char **argv);
 #include <SDL3/SDL_main.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
@@ -21,12 +22,21 @@ int main(int argc, char **argv) {
     snprintf(elf, sizeof elf, "%s/targets/exefs/main.elf", dir);
     snprintf(rom, sizeof rom, "%s/targets/romfs", dir);
     snprintf(run, sizeof run, "%s/build", dir);
-    mkdir(run, 0755);
+    mkdir(run, 0777);
     snprintf(run, sizeof run, "%s/build/run", dir);
-    mkdir(run, 0755);
+    mkdir(run, 0777);
     setenv("SSBU_ROMFS", rom, 0);
     setenv("SSBU_TITLE", "Witch Time", 0);
     setenv("SSBU_VK_MISSING", "warn", 0);
+    snprintf(exe, sizeof exe, "%s/config/env.txt", dir);   /* KEY=value lines: the variables a PC sets in its shell */
+    FILE *env = fopen(exe, "r");
+    for (char line[1024]; env && fgets(line, sizeof line, env);) {
+        line[strcspn(line, "\r\n")] = 0;
+        char *eq = strchr(line, '=');
+        if (eq && line[0] != '#') { *eq = 0; setenv(line, eq + 1, 1); }
+    }
+    if (env) fclose(env);
+    snprintf(exe, sizeof exe, "%s/build/witch-time-game", dir);
     if (chdir(run)) { SDL_Log("witch-time: %s: cannot open it", run); return 2; }
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");   /* the window is windowed and resizable (display.c) */
     freopen("witch-time-game.log", "w", stdout);   /* the runtime reports on stdout and stderr: logcat shows neither */

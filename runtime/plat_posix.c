@@ -362,7 +362,7 @@ static int ww_available(void) {
     pthread_mutex_lock(&g_reg_lock);
     if (!g_ww_state) {
         struct uffdio_api api = { .api = UFFD_API, .features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED };
-        g_uffd = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
+        g_uffd = getenv("SSBU_NO_UFFD") ? -1 : (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);      /* [witchtime] TEST: SSBU_NO_UFFD=1, as Android (no userfaultfd) */
         if (g_uffd >= 0 && ioctl(g_uffd, UFFDIO_API, &api) == 0) g_pagemap = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
         g_ww_state = g_pagemap >= 0 ? 1 : 2;
         if (g_ww_state == 2) {
@@ -607,7 +607,7 @@ FILE *plat_fopen(const char *path, const char *mode) {
     return fopen(plat_path(path, p, sizeof p), mode);
 }
 #define PATH(var, in) char var##_buf[4096]; const char *var = plat_path((in), var##_buf, sizeof var##_buf)
-BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); return mkdir(p, 0755) == 0; }
+BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); return mkdir(p, 0777) == 0; }
 BOOL RemoveDirectoryA(LPCSTR path) { PATH(p, path); return rmdir(p) == 0; }
 BOOL DeleteFileA(LPCSTR path) { PATH(p, path); return unlink(p) == 0; }
 BOOL MoveFileExA(LPCSTR from, LPCSTR to, DWORD flags) {

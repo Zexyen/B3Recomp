@@ -18,7 +18,7 @@ def prebuilt = need('witchtime.prebuilt')
 def jni = layout.buildDirectory.dir('witchtime-jni')
 def copyJni = tasks.register('copyWitchTimeLibs', Sync) {
     from(prebuilt) {
-        include 'libwitchtime.so', 'libssbu_glslang.so', 'libSDL3.so', 'libav*.so', 'libsw*.so', 'libopus.so'
+        include 'libwitchtime.so', 'libssbu_glslang.so', 'libSDL3.so', 'libav*.so', 'libsw*.so', 'libopus.so', 'libVkLayer_*.so'
     }
     into jni.map { it.dir('arm64-v8a') }
 }

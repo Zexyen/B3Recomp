@@ -186,7 +186,7 @@ static void setcc_int(Mx *e, const char *res) { e->uses_cc = 1; emit(e, " cz = %
 /* float result with optional saturation and condition code */
 static void fres(Mx *e, uint64_t i, const char *expr, int sat, int cc) {
     emit(e, "float f = %s;", expr);
-    if (sat) emit(e, " f = clamp(f, 0.0, 1.0);");
+    if (sat) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
     emit(e, " %s = U(f);", DST);
     if (cc) { e->uses_cc = 1; emit(e, " cz = f == 0.0 || isnan(f); cs = f < 0.0 || isnan(f); ccf = false; cov = false;"); }
 }
@@ -653,7 +653,7 @@ static const char *HX(Mx *e, const char *r, unsigned sw, int absv, int neg) {
 static void hres(Mx *e, uint64_t i, const char *expr, int sat, unsigned merge, int fmz_zero, const char *za, const char *zb, const char *zc) {
     emit(e, "vec2 h = %s;", expr);
     if (fmz_zero && !sat) emit(e, " h = mix(h, %s, bvec2(%s.x == 0.0 || %s.x == 0.0, %s.y == 0.0 || %s.y == 0.0));", zc, za, zb, za, zb);
-    if (sat) emit(e, " h = clamp(h, 0.0, 1.0);");
+    if (sat) emit(e, e->in->nan_exact ? " h = mix(clamp(h, 0.0, 1.0), vec2(0.0), isnan(h));" : " h = clamp(h, 0.0, 1.0);");
     unsigned rd = MXB(i, 0, 8);
     emit(e, " %s = HM(%s, h, %uu);", D(e, rd), X(e, rd), merge);
 }
@@ -920,6 +920,9 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_FMNMX_reg: case MXOP_FMNMX_cbuf: case MXOP_FMNMX_imm: {
         b = op == MXOP_FMNMX_reg ? R20 : op == MXOP_FMNMX_cbuf ? CB(e, i) : F20(e, i);
         const char *fa = FN(e, A8, MXB(i, 46, 1), MXB(i, 48, 1)), *fb = FN(e, b, MXB(i, 49, 1), MXB(i, 45, 1));
+        if (e->in->nan_exact)                   /* [witchtime] Maxwell's FMNMX: a NaN operand gives the other one (GLSL leaves it undefined) */
+            fres(e, i, S(e, "isnan(%s) ? %s : isnan(%s) ? %s : %s ? min(%s, %s) : max(%s, %s)", fa, fb, fb, fa, PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)), fa, fb, fa, fb), 0, MXB(i, 47, 1));
+        else
         fres(e, i, S(e, "%s ? min(%s, %s) : max(%s, %s)", PR(e, MXB(i, 39, 3), (int)MXB(i, 42, 1)), fa, fb, fa, fb), 0, MXB(i, 47, 1));
         break;
     }
@@ -972,7 +975,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         if (MXB(i, 45, 1)) src = S(e, "(-%s)", src);
         emit(e, "float f = %s;", src);
         if (ssz == dsz && rop >= 8) emit(e, " f = %s(f);", rnd[rop & 3]);
-        if (MXB(i, 50, 1)) emit(e, " f = clamp(f, 0.0, 1.0);");
+        if (MXB(i, 50, 1)) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
         if (dsz == 1) emit(e, " %s = packHalf2x16(vec2(f, 0.0));", DST); else emit(e, " %s = U(f);", DST);
         if (MXB(i, 47, 1)) { e->uses_cc = 1; emit(e, " cz = f == 0.0 || isnan(f); cs = f < 0.0 || isnan(f); ccf = false; cov = false;"); }
         break;
@@ -1151,7 +1154,15 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned ms = MXB(i, 37, 2);
         if (MXB(i, 47, 1) || MXB(i, 48, 2) || ms == 1) { fail(e, "SHF", "SHF with CC/X or undefined max shift"); break; }
         b = (op == MXOP_SHF_l_reg || op == MXOP_SHF_r_reg) ? R20 : I20(e, i);
-        emit(e, "uint sh = %s; sh = %s; uint64_t v = packUint2x32(uvec2(%s, %s));", b, MXB(i, 50, 1) ? (ms == 0 ? "sh & 31u" : "sh & 63u") : (ms == 0 ? "min(sh, 32u)" : "min(sh, 63u)"), A8, R39);
+        const char *shc = MXB(i, 50, 1) ? (ms == 0 ? "sh & 31u" : "sh & 63u") : (ms == 0 ? "min(sh, 32u)" : "min(sh, 63u)");
+        if (e->in->no_int64) {                              /* hi:lo shifted by 0..64, one word of it (a shift by 32 is undefined in GLSL) */
+            emit(e, "uint sh = %s; sh = %s; uint lo = %s, hi = %s;", b, shc, A8, R39);
+            if (!right) emit(e, " %s = sh == 0u ? hi : sh < 32u ? (hi << sh) | (lo >> (32u - sh)) : sh < 64u ? lo << (sh - 32u) : 0u;", DST);
+            else if (ms == 3) emit(e, " %s = sh == 0u ? lo : sh < 32u ? (lo >> sh) | (hi << (32u - sh)) : uint(int(hi) >> int(sh - 32u));", DST);
+            else emit(e, " %s = sh == 0u ? lo : sh < 32u ? (lo >> sh) | (hi << (32u - sh)) : sh < 64u ? hi >> (sh - 32u) : 0u;", DST);
+            break;
+        }
+        emit(e, "uint sh = %s; sh = %s; uint64_t v = packUint2x32(uvec2(%s, %s));", b, shc, A8, R39);
         if (!right) emit(e, " v = sh >= 64u ? 0ul : v << sh; %s = unpackUint2x32(v).y;", DST);
         else if (ms == 3) emit(e, " v = uint64_t(int64_t(v) >> sh); %s = unpackUint2x32(v).x;", DST);
         else emit(e, " v = sh >= 64u ? 0ul : v >> sh; %s = unpackUint2x32(v).x;", DST);
@@ -1285,7 +1296,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             if (eff == 2 || eff == 0) emit(e, " f *= gl_FragCoord.w;");      /* hardware IPA returns attribute / w; the shader multiplies by w */
         }
         if (mode == 1) emit(e, " f *= F(%s);", R20);
-        if (MXB(i, 51, 1)) emit(e, " f = clamp(f, 0.0, 1.0);");
+        if (MXB(i, 51, 1)) emit(e, e->in->nan_exact ? " f = isnan(f) ? 0.0 : clamp(f, 0.0, 1.0);" : " f = clamp(f, 0.0, 1.0);");
         emit(e, " %s = U(f);", DST);
         break;
     }
@@ -1364,6 +1375,11 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned scale = cbuf ? MXB(i, 51, 5) : MXB(i, 28, 5), neg = cbuf ? MXB(i, 56, 1) : MXB(i, 37, 1), x = cbuf ? MXB(i, 57, 1) : MXB(i, 38, 1);
         if (x || MXB(i, 47, 1) || MXB(i, 48, 3) != 7) { fail(e, "LEA.HI X/CC/P", "LEA.HI with extend, condition code or predicate output"); break; }
         b = cbuf ? CB(e, i) : R20;
+        if (e->in->no_int64) {                              /* the 64-bit negate and shift in 32-bit halves */
+            emit(e, "uint lo = %s, hi = %s;%s %s = %s + %s;", A8, R39, neg ? " hi = ~hi + (lo == 0u ? 1u : 0u); lo = ~lo + 1u;" : "", DST, b,
+                 scale == 0 ? "hi" : S(e, "((lo >> %uu) | (hi << %uu))", 32 - scale, scale));
+            break;
+        }
         emit(e, "uint64_t lo = packUint2x32(uvec2(%s, %s));%s %s = %s + unpackUint2x32(lo >> %uu).x;", A8, R39, neg ? " lo = ~lo + 1ul;" : "", DST, b, 32 - scale);
         break;
     }
@@ -1754,7 +1770,12 @@ int mx_translate(const MxIn *in, MxOut *out) {
     if (!e->fail) analyze(e);
     for (unsigned pc = 1; pc < e->words && !e->fail; pc++) {
         if (!e->reach[pc]) continue;
-        if (e->leader[pc] && e->any_jump) { emit(e, "case %uu:\n", pc); e->blocks++; }
+        if (e->leader[pc] && e->any_jump) {
+            if (!e->in->no_switch) emit(e, "case %uu:\n", pc);
+            else if (e->blocks) emit(e, "pc = %uu; }\nif (pc == %uu) {\n", pc, pc);     /* [witchtime] falls into the next block as the switch did */
+            else emit(e, "if (pc == %uu) {\n", pc);
+            e->blocks++;
+        }
         insn(e, pc, MXW(pc));
     }
     if (e->fail) {
@@ -1888,13 +1909,14 @@ int mx_translate(const MxIn *in, MxOut *out) {
         any = 0;
         for (unsigned p = 0; p < 7; p++) if (e->preds[p]) { emit(&h, "%s p%u = false", any ? "," : " bool", p); any = 1; }
         if (any) emit(&h, ";\n");
-        if (e->any_jump) emit(&h, " uint pc = 1u;\n for (;;) { switch (pc) {\n");
+        if (e->any_jump) emit(&h, e->in->no_switch ? " uint pc = 1u;\n for (;;) {\n" : " uint pc = 1u;\n for (;;) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 256;
         res = malloc(need);
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, " default: %s return;\n } }\n}\n", e->exitcode);
+        if (e->any_jump && e->in->no_switch) n += (size_t)sprintf(res + n, "%s %s return;\n }\n}\n", e->blocks ? " }\n" : "", e->exitcode);
+        else if (e->any_jump) n += (size_t)sprintf(res + n, " default: %s return;\n } }\n}\n", e->exitcode);
         else n += (size_t)sprintf(res + n, " %s\n}\n", e->exitcode);
         res[n] = 0;
         free(h.s);

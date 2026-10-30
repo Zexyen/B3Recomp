@@ -77,7 +77,12 @@ static const char *const k_default_ini =
 "; console_mode = docked | handheld\r\n"
 ";   What nn::oe::GetOperationMode answers. MEASURED on 13.0.4 (2026-10-09): with handheld the game still makes its\r\n"
 ";   1920x1080 window texture, so this alone does not lower the render size; kept for study, leave it at docked.\r\n"
+#ifdef __ANDROID__
+";   Android: handheld, as on the console in the hand (measured on an Adreno 740: about a third less GPU time).\r\n"
+"console_mode = handheld\r\n"
+#else
 "console_mode = docked\r\n"
+#endif
 "\r\n"
 "; resolution_scale = 1.0\r\n"
 /* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
@@ -196,6 +201,9 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
+#ifdef __ANDROID__
+    o->handheld = 1;                               /* [witchtime] the default of a handheld (the ini written above says so too) */
+#endif
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
     opt_path(o->path);
     FILE *f = fopen(o->path, "rb");

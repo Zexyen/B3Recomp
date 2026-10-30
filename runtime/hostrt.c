@@ -576,6 +576,7 @@ static void stacks_signal(int sig) {
     }
     if (d) closedir(d);
 }
+void host_dump_stacks(void) { stacks_signal(0); }   /* [witchtime] SSBU_STACKS_AT: Android's runtime takes SIGUSR1 itself */
 static void install_crash_handler(void) {
     signal(SIGUSR1, stacks_signal);
     signal(SIGUSR2, stack_signal);
