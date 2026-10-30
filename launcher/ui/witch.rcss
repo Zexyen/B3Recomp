@@ -64,6 +64,7 @@ body {
 .footer { display: flex; flex-direction: row; align-items: center; gap: 26dp; height: 64dp; margin: 0 48dp; border-top: 1dp #c9a35a66; font-size: 16dp; letter-spacing: 1dp; color: #b9aabd; flex-shrink: 0; }
 .footer .spacer { flex: 1; }
 .hint { display: flex; flex-direction: row; align-items: center; gap: 10dp; }
+.glyph { width: 30dp; height: 30dp; }
 .key { width: 26dp; height: 26dp; border: 1dp #efe6d8; border-radius: 13dp; text-align: center; line-height: 24dp; font-size: 14dp; font-weight: 600; color: #efe6d8; }
 .key.wide { width: auto; padding: 0 8dp; border-radius: 4dp; font-size: 13dp; }
 

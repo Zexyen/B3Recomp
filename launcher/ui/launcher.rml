@@ -59,8 +59,8 @@
 	<div class="footer">
 		<div>{{ footer_info }}</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -111,8 +111,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -159,7 +159,7 @@
 	<div class="footer">
 		<div>You can close the window; the build picks up where it stopped.</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -192,8 +192,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Turn on or off</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -222,7 +222,7 @@
 	<div class="footer">
 		<div class="spacer"></div>
 		<div class="hint"><div class="key wide">&lt; &gt;</div><span>Change</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 

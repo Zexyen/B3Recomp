@@ -311,7 +311,7 @@ static void rom_mods_init(void) {
             if (chosen < 0) chosen = nnpad_button_prompts();
             if (fam == chosen && !prompt[0]) snprintf(prompt, sizeof prompt, "%s", romfs);
             else printf("romfs mods: %s holds %s button prompts, not used (button_prompts = %s)\n", names[i],
-                        fam == 2 ? "PlayStation" : "Xbox", chosen == 2 ? "playstation" : chosen == 3 ? "xbox" : "switch");
+                        fam == 2 ? "PlayStation" : "Xbox", chosen == 2 ? "playstation" : chosen == 3 ? "xbox" : chosen == 4 ? "keyboard" : "switch");
             continue;
         }
         if (nroots < 64) snprintf(roots[nroots++], MAX_PATH, "%s", romfs);

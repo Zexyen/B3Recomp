@@ -14,7 +14,8 @@ typedef struct {
     float gyro[3];              /* in revolutions per second, same axes */
 } NnPadState;
 
-int  nnpad_button_prompts(void);                /* [Recomps#1] [general] button_prompts: 1 switch, 2 playstation, 3 xbox (auto resolved) */
+int  nnpad_button_prompts(void);                /* [Recomps#1] [general] button_prompts: 1 switch, 2 playstation, 3 xbox, 4 keyboard (auto resolved) */
+void nnpad_prompts_used(int keyboard);          /* player 1 used a pad (0) or the keyboard / mouse (1): button_prompts = auto follows */
 int  nnpad_prompts_by_letter(void);             /* [Recomps#1] finding 148: player 1's face buttons by printed letter (A = the bottom button) */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */

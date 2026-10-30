@@ -32,6 +32,10 @@ private:
 	Rml::Context* ctx = nullptr;
 	Rml::DataModelHandle model;
 	std::vector<SDL_Gamepad*> pads;
+	int prompts = 4;                // footer hints: 1 Switch, 2 PlayStation, 3 Xbox, 4 keyboard
+	bool prompts_fixed = false;     // [general] button_prompts names one; else they follow what was used last
+	void prompts_use(int family);
+	void prompts_use(SDL_Gamepad* pad);
 	std::vector<std::vector<Rml::byte>> font_data;
 
 	// what the screens show (the data model "wt")
