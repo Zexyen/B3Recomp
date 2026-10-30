@@ -1536,20 +1536,19 @@ static void job_scan(Job *j) {                     /* session 7: a container met
  * stays in memory (measured, run s10n1: 9,324 stage libraries kept = 4.5 GB more private memory on NVIDIA; the game has about
  * 25,000 stage variants). When the game later hands the container over, each stage is a record read and its library a hit
  * of the pipeline cache. A code the game has handed over itself is left to that path. Compute stages are few: made and kept. */
-typedef struct { uint64_t key; uint32_t in_attr, out_attr; int ok, done; } PrepSt;
+typedef struct { uint64_t key; uint32_t in_attr, out_attr, dep; int ok, done; } PrepSt;
 static PrepSt g_prep_st[1 << 17];
 static LONG64 g_prep_stages, g_prep_fromrec, g_prep_dup, g_prep_had, g_prep_libs, g_prep_tr_tk, g_prep_lib_tk;
-static PrepSt prep_stage(const SSrc *src, uint32_t fo, int alone) {
-    static const uint32_t zero[4];
+static PrepSt prep_stage(const SSrc *src, const uint32_t *vkey, uint32_t fo, int alone) {
     PrepSt r;
-    uint64_t hb = ssrc_hb(src), key = fnv(fnv(hb, &fo, 4), &src->stage, 4) * 2 + (uint64_t)(alone != 0);
+    uint64_t hb = ssrc_hb(src), key = fnv(fnv(fnv(hb, &fo, 4), &src->stage, 4), vkey, 16) * 2 + (uint64_t)(alone != 0);
     VStage *busy = NULL, *v;
     unsigned i = (unsigned)(key * 0x9E3779B97F4A7C15ull >> 47);
     int how;
     memset(&r, 0, sizeof r);
     if (!key) key = 2;
     EnterCriticalSection(&g_sh_lock);
-    v = vstage_find(hb, src->stage, src->code_len, zero, fo, &busy);
+    v = vstage_find(hb, src->stage, src->code_len, vkey, fo, &busy);
     if (!v && !busy) {
         for (;; i = (i + 1) & ((1u << 17) - 1)) {
             if (g_prep_st[i].key == key) { while (!g_prep_st[i].done) WD_SLEEP(&g_sh_cv, &g_sh_lock, INFINITE); r = g_prep_st[i]; g_prep_dup++; LeaveCriticalSection(&g_sh_lock); return r; }
@@ -1558,14 +1557,15 @@ static PrepSt prep_stage(const SSrc *src, uint32_t fo, int alone) {
     }
     LeaveCriticalSection(&g_sh_lock);
     if (v || busy) {                               /* the game handed this code over itself */
-        v = stage_ensure(src, hb, zero, fo, &how);
-        r.ok = v->ok; r.in_attr = v->in_attr; r.out_attr = v->out_attr; r.done = 1;
+        v = stage_ensure(src, hb, vkey, fo, &how);
+        r.ok = v->ok; r.in_attr = v->in_attr; r.out_attr = v->out_attr; r.dep = v->dep; r.done = 1;
         InterlockedIncrement64(&g_prep_had);
         return r;
     }
     VStage *t = calloc(1, sizeof *t);
     LONG64 t0 = tk();
     t->hb = hb; t->stage = src->stage; t->code_len = src->code_len; t->fo = fo; t->state = 1; t->temp = 1;
+    memcpy(t->key, vkey, 16);
     vstage_build(t, src);
     LONG64 t1 = tk();
     InterlockedIncrement64(&g_prep_stages); if (t->from_rec) InterlockedIncrement64(&g_prep_fromrec);
@@ -1579,7 +1579,7 @@ static PrepSt prep_stage(const SSrc *src, uint32_t fo, int alone) {
     if (t->lib) vkDestroyPipeline(V.device, t->lib, NULL);
     if (t->lib2) vkDestroyPipeline(V.device, t->lib2, NULL);
     if (t->mod) vkDestroyShaderModule(V.device, t->mod, NULL);
-    r.key = key; r.ok = t->ok; r.in_attr = t->in_attr; r.out_attr = t->out_attr; r.done = 1;
+    r.key = key; r.ok = t->ok; r.in_attr = t->in_attr; r.out_attr = t->out_attr; r.dep = t->dep; r.done = 1;
     free(t);
     EnterCriticalSection(&g_sh_lock);
     g_prep_st[i] = r;
@@ -1588,17 +1588,24 @@ static PrepSt prep_stage(const SSrc *src, uint32_t fo, int alone) {
     return r;
 }
 static void job_prep(Job *j) {
-    static const uint32_t zero[4];
+    static const uint32_t zero[4], int2[4] = {4, 0, 0, 0};
     if (j->has[2]) {
         int how;
         VStage *c = stage_ensure(&j->src[2], ssrc_hb(&j->src[2]), zero, 0, &how);
         if (c->ok && !c->images && c->nsmp <= 32) compute_pipe_ensure(c);
     }
-    if (!j->has[0]) { if (j->has[1]) prep_stage(&j->src[1], 0, 0); return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
-    PrepSt vs = prep_stage(&j->src[0], 0, !j->has[1]), fs;
+    if (!j->has[0]) { if (j->has[1]) prep_stage(&j->src[1], zero, 0, 0); return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
+    PrepSt vs = prep_stage(&j->src[0], zero, 0, !j->has[1]), fs;
     memset(&fs, 0, sizeof fs);
-    if (j->has[1]) fs = prep_stage(&j->src[1], 0, 0);
-    if (vs.ok && fs.ok && (fs.in_attr & ~vs.out_attr)) prep_stage(&j->src[0], fs.in_attr & ~vs.out_attr, 0);      /* fragment inputs the vertex code never writes: the variant that declares them */
+    if (j->has[1]) fs = prep_stage(&j->src[1], zero, 0, 0);
+    uint32_t need = vs.ok && fs.ok ? fs.in_attr & ~vs.out_attr : 0;
+    if (need) prep_stage(&j->src[0], zero, need, 0);      /* fragment inputs the vertex code never writes: the variant that declares them */
+    /* [issue 54] Attribute 2 as integers: skinned draws, whose variant was first compiled at the draw: a frame of 8-9 s in a cutscene.
+     * shortcut: only attribute 2, the one integer key in the .var files of the scenes run so far; add others if .var files show them */
+    if (vs.ok && (vs.dep & 4)) {
+        prep_stage(&j->src[0], int2, 0, !j->has[1]);
+        if (need) prep_stage(&j->src[0], int2, need, 0);
+    }
 }
 static DWORD WINAPI pw_main(void *arg) {
     (void)arg;
@@ -2772,7 +2779,7 @@ static void prep_start(void) {
 #define VK_KEYS_VERSION 1
     char kv[16] = "";
     if (VK_KEYS_VERSION > 1) snprintf(kv, sizeof kv, "_k%d", VK_KEYS_VERSION);
-    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 1 : 0, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
+    snprintf(g_prep_marker, sizeof g_prep_marker, "%s/prepared_v%u_int2%s_s%d_%s_%04x_%04x_%08x.txt", vkc_dir(), MX_VK_VERSION, kv, RS_ON ? 1 : 0, D.has_gpl && gpl_sep() ? "lib" : "nolib" /* a pass without libraries (SSBU_VK_PREP=1, run s10n0) must not make a later run with libraries skip theirs */, (unsigned)V.props.vendorID, (unsigned)V.props.deviceID, (unsigned)V.props.driverVersion);
     if (on && GetFileAttributesA(g_prep_marker) != INVALID_FILE_ATTRIBUTES && !(e && atoi(e) == 2)) {
         printf("nvn_vk_prep: every container of the game's data was prepared for this GPU and driver by an earlier run (%s): only the %d container(s) kept in memory are made again, from their records (SSBU_VK_PREP=2 does everything again)\n", g_prep_marker, g_prep_keep > 0 ? g_prep_keep : 0);
         g_prep_marked = 1;
