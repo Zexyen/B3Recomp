@@ -282,6 +282,7 @@ static struct {
     int scissor[4], have_viewport, have_scissor, rast_discard, depth_clamp, restart, render_off;
     int dbounds_on; float dbounds[2];             /* [witchtime] nvnCommandBufferSetDepthBounds */
     uint64_t nvn_img[6][8]; int pass_stores;      /* [witchtime] image handles bound per stage (nvnCommandBufferBindImage); the open pass has storage image writes */
+    int cmd_wrote, cmd_cs;                         /* [witchtime] the command buffer being recorded writes compute buffers (cmd_submit makes that visible to the CPU) / has a dispatch (pass_begin gives it to the GPU) */
     int null_w, null_h;                            /* [witchtime] size of a pass without render targets (from the viewport of its draw) */
     int ncol; TargetRef col[8], depth; int have_targets;
     int64_t row_stride, image_stride;
@@ -487,6 +488,7 @@ static struct { int n, fight, last_what; uint8_t kind[PT_MAX]; LONG64 d0; } g_pt
 static LONG64 g_fu_fr_n, g_fu_fr_linked, g_fu_fr_made, g_fu_fr_tk, g_fu_fr_newsig;
 static LONG64 g_fu_frames, g_fu_total, g_fu_linked, g_fu_made, g_fu_newsig, g_fu_tk, g_fu_slow, g_fu_fight_frames, g_fu_fight_slow, g_fu_slow_tex;
 #define VK_SPLIT_DEFAULT 0
+#define VK_SPLIT_QUALCOMM 20                       /* [witchtime] a phone's GPU is the slow half of a frame: it starts while the CPU records the rest, and compute at once (indirect_src waits for it) */
 static LONG64 g_tl_t0, g_tl_first, g_tl_last, g_tl_sum[8], g_tl_n;      /* sums: 0 first submission, 1 last submission, 2 present job, 3 fence waits (count), 4 fence wait ticks, 5 end of a fence wait after the batch start */
 void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.done moved, a game thread may wait for it */
 static void slot_wait(Slot *s) {
@@ -581,6 +583,12 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (!R.recording) { if (!wait && !signal) return R.serial; cmd_begin(); }
     pass_end();
     Slot *s = &R.slot[R.cur];
+    if (R.cmd_wrote) {                             /* [witchtime] indirect_src reads them through the mapping, perhaps long after this submission */
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(s->cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+    R.cmd_wrote = R.cmd_cs = 0;
     if (g_ts_on > 0) vkCmdWriteTimestamp(s->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_ts_pool, (uint32_t)R.cur * 2 + 1);
     if (g_pt_on > 0 && g_pt_slot[R.cur].n) g_pt_draws[g_pt_slot[R.cur].kind[g_pt_slot[R.cur].n - 1]] += g_cmd_draws - g_pt_slot[R.cur].d0;
     if (g_tl_t0) { LONG64 now = tk(); if (!g_tl_first) g_tl_first = now; g_tl_last = now; }
@@ -1668,8 +1676,8 @@ static int pass_begin(void) {
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     int w = 0, h = 0;
     if (R.in_pass) return 1;
-    if (g_split < 0) { const char *e = getenv("SSBU_VK_SPLIT"); g_split = e ? atoi(e) : VK_SPLIT_DEFAULT; }
-    if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
+    if (g_split < 0) { const char *e = getenv("SSBU_VK_SPLIT"); g_split = e ? atoi(e) : V.props.vendorID == 0x5143 ? VK_SPLIT_QUALCOMM : VK_SPLIT_DEFAULT; }
+    if (g_split > 0 && R.recording && (g_cmd_draws >= g_split || R.cmd_cs)) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
     memset(ca, 0, sizeof ca); memset(&da, 0, sizeof da);
@@ -2022,7 +2030,7 @@ static void set_dynamic_state3(int samples) {
  * when the render thread is idle or a sync is waited for. The OpenGL path copies back before the next draw; what guest
  * memory holds once the batch is done is the same. Anything that reads guest memory through a range that only partly lies
  * in a CB forces the copy-back at once (cb_sync: submit, wait; counted). */
-typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (SSBU_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it */
+typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial, wserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (SSBU_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it; wserial: the submission holding the last GPU write recorded into it */
 static int g_cb_merge = -1;                        /* SSBU_VK_CBMERGE=0: the whole range is copied back as before session 5 */
 /* Round 16 (P3 section 15), SSBU_VK_CBKEEP=1 (0 = before: every buffer is filled from guest memory at its first dispatch of
  * a batch, twice, and merged back after the batch): a compute-written buffer STAYS on the GPU side between batches.
@@ -2453,24 +2461,18 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
     if (g_cb_nkept) cb_kept_range(addr, size, 3);
 }
 /* [witchtime] Where the CPU reads indirect draw / dispatch records. GPU-driven culling writes them with compute: a CB of this
- * batch that holds the whole range is read through its mapping once the GPU has run what is recorded so far (submit + wait:
- * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
+ * batch that holds the whole range is read through its mapping once the GPU has run the submission with its last write (on
+ * an Adreno, waiting for all that was recorded so far cost 22 of a frame's 34 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
  * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
-static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [witchtime] dispatches / storing draws recorded; the count at the last wait of indirect_src */
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
-    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) return (const uint8_t *)c->mem.map + (addr - c->addr);      /* nothing written since the last wait */
     if (c && c->mem.map) {
-        if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
-            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            pass_end();
-            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-            vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        if (c->wserial > R.done) {
+            if (c->wserial > R.serial) cmd_submit(NULL, NULL);      /* still being recorded */
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->wserial) slot_wait(&R.slot[i]);
+            if (R.done < c->wserial) R.done = c->wserial;
+            R.cb_waits++;
         }
-        uint64_t sr = cmd_submit(NULL, NULL);
-        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
-        if (R.done < sr) R.done = sr;
-        R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
         return (const uint8_t *)c->mem.map + (addr - c->addr);
     }
     if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
@@ -2559,7 +2561,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VKC(vkBindBufferMemory(V.device, c->buf, c->mem.mem, c->mem.off));
         R.cb_made++;
     }
-    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0; cb_live_add(c);
+    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0; c->wserial = 0; cb_live_add(c);
     if (addr < g_live_lo) g_live_lo = addr;
     if (addr + size > g_live_hi) g_live_hi = addr + size;
     if ((int)(c - g_cb) + 1 > g_cb_hi) g_cb_hi = (int)(c - g_cb) + 1;
@@ -2996,7 +2998,11 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
     ckpt(2, NULL, NULL, NULL);
-    g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
+    R.cmd_cs = 1;                                  /* [witchtime] */
+    if (v->ssbo_w) {
+        R.cmd_wrote = 1;
+        for (unsigned k = 0; k < 16; k++) if (v->ssbo_w >> k & 1 && wcb[k] >= 0) g_cb[wcb[k]].wserial = R.serial + 1;
+    }
     if (v->images) storage_barrier();              /* [witchtime] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -3091,7 +3097,8 @@ static int draw_prepare(unsigned prim) {
     g_ndtex = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: SSBU_VK_WATCHFS */
-    int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
+    int stores = 0, nstored = 0;                   /* [witchtime] storage images, after the samplers in g_dtex */
+    CB *stored[80];                                /* [witchtime] 5 stages of 16 buffers */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
     PT(1);
     /* 2. buffers: every range the draw reads, into the ring (may wrap the ring = submit) */
@@ -3121,6 +3128,7 @@ static int draw_prepare(unsigned prim) {
                 if (c && (r.addr - c->addr) % sal) c = NULL;
                 if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
                 b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1;
+                if (nstored < 80) stored[nstored++] = c;
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
@@ -3311,7 +3319,10 @@ static int draw_prepare(unsigned prim) {
             printf("\n");
         }
     }
-    if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
+    if (stores) {                                  /* [witchtime] pass_end makes the writes visible */
+        R.pass_stores = 1; R.cmd_wrote = 1;
+        for (int i = 0; i < nstored; i++) stored[i]->wserial = R.serial + 1;      /* here, not above: a ring wrap in between submits */
+    }
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
     return 1;
 }
