@@ -73,6 +73,7 @@ const HOST_SOURCES: &[&str] = &[
     "gamedll.c",
     "pcmenu.c",
     "options_row.c",
+    "prompts.c",
 ];
 const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values

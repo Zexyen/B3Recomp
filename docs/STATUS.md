@@ -629,8 +629,20 @@ Bayonetta 2's. Now:
   full, times `mouse_sensitivity`; `mouse_invert_y`). The pointer is captured (SDL relative mode) after a click into
   the window (at once when fullscreen); that click is not given to the game; Esc or losing the focus releases it.
 - **Pad and keyboard together**: both drive player 1 at once (buttons add up; a pad's stick wins while it is off
-  centre), so switching is just using the other device. The button prompts stay the game's Switch ones: there are
-  no keyboard pictures in the game (pad prompts: `button_prompts` as before, chosen at start).
+  centre), so switching is just using the other device. The button prompts are chosen at start (`button_prompts`, below).
+- **Button prompts** (`runtime/prompts.c`, no mod): all prompts come from one atlas (`core_sys_btn`, texture 0
+  of `core.wtp` in `ui_core*.dtt`; ASTC 4x4, BC3 in `ui_core_gb`). `nvn_gl.c` `tex_initialize` paints over it in memory when
+  the texture is made, in the texture's own format, and `prompts_tick` (player 1's pad poll) again when the choice changes,
+  then `nvn_gl_memory_written` has the renderers read it again; only the two atlases known by hash are touched. `auto`
+  follows the device player 1 used last (pad: a button or a stick past half; keyboard: a key, or the mouse past a quarter),
+  a pad plugged in or out, and `controllers.ini` as it is saved. Each set is painted once (keyboard 18 ms) and kept. PlayStation / Xbox: face buttons, L / R / ZL / ZR, Plus / Minus (by position or by printed letter). Keyboard: the
+  same cells and the stick cells show the keys bound in `[keyboard]` (first key of a binding; left, right, wheel mouse buttons as
+  a mouse), from `auto` when there is no pad. The two grey four-dot pictures, the d-pad and the coloured action icons stay.
+  Checked in the running game (Options help screen, Vulkan): PlayStation, Xbox, by letter, keyboard with a rebound key, Switch
+  untouched, all changed while it ran; keyboard <-> pad and hot-plug with a uinput Xbox pad under headless gamescope (the
+  game takes input only with a focused window); `tests/prompts_test.c`. The launcher's footer uses the same drawings
+  (`runtime/prompt_art.h`, `gen:glyph`) and the same rule: its fixed Enter / Esc, or A / B or Cross / Circle by the label on
+  the button, which is how it takes confirm and back. Native ASTC is checked only through our decoder (desktop GPUs have none).
 - **Linux key state** comes from the window's SDL events (window thread), not from SDL_GetKeyboardState on the game's
   thread; cleared when the focus goes.
 - Fixed on the way: with a pad on the keyboard's player, a vertical-only mouse move was replaced by the pad's centred

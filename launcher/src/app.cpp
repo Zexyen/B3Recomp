@@ -208,6 +208,12 @@ bool App::create_ui()
 
 void App::bind_model()
 {
+	const std::string shown = ini_get(paths.config + "/controllers.ini", "general", "button_prompts", "auto");
+	if (int f = shown == "switch" ? 1 : shown == "playstation" ? 2 : shown == "xbox" ? 3 : shown == "keyboard" ? 4 : 0)
+	{
+		prompts = f;
+		prompts_fixed = true;
+	}
 	Rml::DataModelConstructor c = ctx->CreateDataModel("wt");
 	if (auto h = c.RegisterStruct<CheckRow>())
 	{
@@ -271,7 +277,9 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
-	c.BindFunc("pad", [this](Rml::Variant& v) { v = !pads.empty(); });    // footer hints: pad buttons, else keys
+	// footer hints: by the label on the button, as confirm and back in handle() go
+	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter" : prompts == 2 ? "gen:glyph?n=cross" : "gen:glyph?n=a"); });
+	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc" : prompts == 2 ? "gen:glyph?n=circle" : "gen:glyph?n=b"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
@@ -396,6 +404,24 @@ void App::focus_first()
 }
 
 // ---------------------------------------------------------------------------------------------------- input
+void App::prompts_use(int family)
+{
+	if (prompts_fixed || family == prompts)
+		return;
+	prompts = family;
+	model.DirtyVariable("glyph_ok");
+	model.DirtyVariable("glyph_back");
+}
+
+void App::prompts_use(SDL_Gamepad* pad)
+{
+	if (!pad)
+		return;
+	const SDL_GamepadType t = SDL_GetGamepadType(pad);
+	prompts_use(t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2
+		: t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 3 : 1);
+}
+
 void App::handle(SDL_Event& ev)
 {
 	switch (ev.type)
@@ -403,19 +429,23 @@ void App::handle(SDL_Event& ev)
 	case SDL_EVENT_QUIT: running = false; return;
 	case SDL_EVENT_GAMEPAD_ADDED:
 		if (SDL_Gamepad* p = SDL_OpenGamepad(ev.gdevice.which))
+		{
 			pads.push_back(p);
-		model.DirtyVariable("pad");
+			prompts_use(p);
+		}
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_REMOVED:
 		for (auto it = pads.begin(); it != pads.end();)
 			it = SDL_GetGamepadID(*it) == ev.gdevice.which ? (SDL_CloseGamepad(*it), pads.erase(it)) : it + 1;
-		model.DirtyVariable("pad");
+		if (pads.empty())
+			prompts_use(4);
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
 	{
 		SDL_Gamepad* pad = SDL_GetGamepadFromID(ev.gbutton.which);
+		prompts_use(pad);
 		auto button = SDL_GamepadButton(ev.gbutton.button);
 		SDL_GamepadButtonLabel label = pad ? SDL_GetGamepadButtonLabel(pad, button) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
 		using namespace Rml::Input;
@@ -434,8 +464,14 @@ void App::handle(SDL_Event& ev)
 			key(KI_RIGHT);
 		return;
 	}
+	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+		if (std::abs(int(ev.gaxis.value)) > 16384)            // past half, as the game: a drifting stick is not use
+			prompts_use(SDL_GetGamepadFromID(ev.gaxis.which));
+		return;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN: prompts_use(4); break;
 	case SDL_EVENT_KEY_DOWN:
 	{
+		prompts_use(4);
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
 		if (k == Rml::Input::KI_ESCAPE)
 		{

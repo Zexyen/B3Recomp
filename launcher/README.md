@@ -41,6 +41,8 @@ driver ("Build (Windows)" in the main README).
 - **Build.** Runs `wtbuild setup` (`build/wtbuild` in a release, `tools/wtbuild/target/release/wtbuild` in a checkout;
   without either, `python3 scripts/setup.py`) and reads its `[i/10]` step lines and `build/logs/compile.log` for
   progress. Stop sends SIGTERM (on Windows it ends the build's job object); the next build resumes.
+- **Button hints.** The footer shows the game's own prompts (`gen:glyph`, drawn by `runtime/prompt_art.h`): those of the
+  device used last, or of `button_prompts` in `config/controllers.ini` when that names one (read at start).
 - **Mods.** Listed with `wtbuild mods-tree` (or `scripts/pchtxt.py tree`); switches are written to `config/mods.ini`. Code mods need a rebuild
   from the mods step, data mods apply at the next start.
 - **Play in the same window.** The runtime link step also makes `build/libwitchtime.so`. The launcher loads it, hands its

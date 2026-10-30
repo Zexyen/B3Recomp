@@ -603,7 +603,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         {0, BTN_STICK_L}, {0, BTN_STICK_R},                      /* no fixed key for the test scripts; bindable keys only */
     };
     uint64_t buttons = 0;
-    int lx = 0, ly = 0, rx = 0, ry = 0, wired = 1;
+    int lx = 0, ly = 0, rx = 0, ry = 0, wired = 1, prompts_used = -1;         /* [witchtime] the device player 1 just used: 0 pad, 1 keyboard / mouse */
     if (!(g_x_synth == 1 && id == 0) && !(g_x_synth == 2 && id == 1) &&
         ((int)id == g_keyboard_player || (id == 0 && scripted_run()))) {    /* keyboard, and the test scripts on player 1 */
         for (size_t i = 0; i < sizeof map / sizeof map[0]; i++) if (key_for(id, map[i].vk, map[i].bit)) buttons |= 1ull << map[i].bit;
@@ -619,6 +619,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             if (rx > STICK_MAX) rx = STICK_MAX; if (rx < -STICK_MAX) rx = -STICK_MAX;
             if (ry > STICK_MAX) ry = STICK_MAX; if (ry < -STICK_MAX) ry = -STICK_MAX;
         }
+        if (buttons || lx || ly || abs(rx) > STICK_MAX / 4 || abs(ry) > STICK_MAX / 4) prompts_used = 1;     /* a nudged mouse is not use */
     }
     int slot = g_source[id];
     if (sdl_on()) {
@@ -626,6 +627,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         if (nnpad_get((int)id, &ps)) {
             wired = ps.wired;
             if (devices_live()) {
+                if (ps.buttons || abs(ps.lx) > STICK_MAX / 2 || abs(ps.ly) > STICK_MAX / 2 || abs(ps.rx) > STICK_MAX / 2 || abs(ps.ry) > STICK_MAX / 2) prompts_used = 0;   /* a drifting stick is not use */
                 buttons |= ps.buttons;
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
                 if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [witchtime] was !rx: a vertical-only mouse move was lost */
@@ -647,6 +649,13 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         rx = g->rx < -STICK_MAX ? -STICK_MAX : g->rx;
         ry = g->ry < -STICK_MAX ? -STICK_MAX : g->ry;
         wired = !g_x[slot].wireless;
+    }
+    if (id == 0) {                                            /* [witchtime] button prompts follow the device: at once when it changes, else a few times a second */
+        void prompts_tick(void);
+        static int used = -1, polls;
+        int changed = prompts_used >= 0 && prompts_used != used;
+        if (changed) { used = prompts_used; nnpad_prompts_used(used); }
+        if (changed || !(++polls & 15)) prompts_tick();
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
     if (id == 0 && r1_on()) r1_pad(&buttons, &lx, &ly, &rx, &ry);

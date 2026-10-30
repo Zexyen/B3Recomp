@@ -4529,6 +4529,8 @@ static void texb_get_depth(Ctx *c) { RET(TB->depth); }
 static void texb_get_levels(Ctx *c) { RET(TB->levels); }
 static void texb_get_samples(Ctx *c) { RET(TB->samples); }
 
+void prompts_texture(uint8_t *mem, const uint8_t *limit, int format, int width, int height);   /* prompts.c */
+void prompts_texture_gone(const uint8_t *mem);
 static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
     Tex *t = hnew(A0, K_TEX, sizeof *t);
     uint64_t mem = 0, size = 0;
@@ -4536,6 +4538,7 @@ static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
     if (t->b.pool && nvn_pool_range(t->b.pool, &mem, &size) && mem) { t->mem = (uint8_t *)P(mem) + t->b.offset; t->limit = (uint8_t *)P(mem) + size; }
     t->storage = tex_storage_size2(&t->b, &t->data_size);
     t->guest = A0;
+    prompts_texture(t->mem, t->limit, t->b.format, t->b.width, t->b.height);
     do { t->all_next = g_all_tex; } while (InterlockedCompareExchangePointer((void *volatile *)&g_all_tex, t, t->all_next) != t->all_next);
     RET(1);
 }
@@ -4543,6 +4546,7 @@ static void tex_finalize(Ctx *c) {
     gl_barrier();
     Tex *t = hobj(A0, K_TEX);
     if (!t) return;
+    prompts_texture_gone(t->mem);
     InterlockedExchange(&t->dead, 1);
     InterlockedIncrement(&g_tex_dead_gen);              /* nvn_gl_memory_written's index drops it */
     wr32(A0 + 8, 0);

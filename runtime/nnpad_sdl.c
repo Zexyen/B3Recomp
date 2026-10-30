@@ -159,9 +159,9 @@ static const char *const g_default_ini =
 "; Vibration: on / off and a strength factor (0..2)\r\n"
 "rumble = on\r\n"
 "rumble_strength = 1.0\r\n"
-"; Button prompts the game shows: auto (by player 1's controller when the game starts: PlayStation pads -> playstation, Xbox\r\n"
-";   pads -> xbox, all others -> switch), switch, playstation, xbox. playstation / xbox need a prompt mod of your own in mods\\\r\n"
-";   (BUILDING.md, \"RomFS mods\"); without one the game's own Switch prompts stay.\r\n"
+"; Button prompts the game shows: auto (follows what you use, at once: a PlayStation pad -> playstation, an Xbox pad -> xbox,\r\n"
+";   other pads -> switch, keyboard or mouse -> keyboard, and no pad -> keyboard), switch, playstation, xbox, keyboard (the keys\r\n"
+";   bound in [keyboard] below). All built in, no mod needed.\r\n"
 "button_prompts = auto\r\n"
 "; Which input the game takes: both (pads and the keyboard + mouse, merged), keyboard (pads are ignored), controller (the\r\n"
 ";   keyboard and mouse are ignored). The keyboard part takes effect when the game starts, the pads part at once.\r\n"
@@ -337,7 +337,7 @@ static void cfg_parse(Cfg *c, char *text) {
         if (sect == 1 && !_stricmp(key, "input"))                                              /* [Recomps#1] */
             c->input = !_stricmp(val, "keyboard") ? 1 : !_stricmp(val, "controller") ? 2 : 0;
         else if (sect == 1 && !_stricmp(key, "button_prompts"))                                /* [Recomps#1] */
-            c->prompts = !_stricmp(val, "switch") ? 1 : !_stricmp(val, "playstation") ? 2 : !_stricmp(val, "xbox") ? 3 : 0;
+            c->prompts = !_stricmp(val, "switch") ? 1 : !_stricmp(val, "playstation") ? 2 : !_stricmp(val, "xbox") ? 3 : !_stricmp(val, "keyboard") ? 4 : 0;
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
         else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
@@ -759,12 +759,15 @@ int nnpad_mouse_cfg(float *sens, int *invert) {      /* [Recomps#1] mouse_camera
     if (invert) *invert = g_cfg.mouse_inv;
     return g_cfg.mouse_cam;
 }
-/* [Recomps#1] button_prompts of [general] -> 1 switch, 2 playstation, 3 xbox. auto: the SDL gamepad type of player 1's pad
- * (else of the first pad) at the moment of the call -- nnfs.c asks once, when it sets up the RomFS mods at the first file
- * access. Scripted runs (SSBU_SEQ) and the XInput backend never read pads, so auto means switch there. */
+/* [Recomps#1] button_prompts of [general] -> 1 switch, 2 playstation, 3 xbox, 4 keyboard. auto: the keyboard when it was used
+ * last, else the SDL gamepad type of player 1's pad (else of the first pad) at the moment of the call, the keyboard without
+ * one. prompts.c asks all the time; nnfs.c once, when it sets up the RomFS mods at the first file access. Scripted runs (SSBU_SEQ) and the XInput backend never read pads, so auto means switch there. */
+static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
+void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }
 int nnpad_button_prompts(void) {
-    lock(); if (!g_cfg.path[0]) cfg_load(1); int p = g_cfg.prompts; unlock();
+    lock(); if (!g_cfg.path[0]) cfg_load(1); int p = g_cfg.prompts, kb_only = g_cfg.input == 1; unlock();
     if (p) return p;
+    if (kb_only || g_prompts_kb) return 4;
     const char *seq = getenv("SSBU_SEQ"), *backend = getenv("SSBU_PAD_BACKEND");
     if ((seq && seq[0]) || (backend && !_stricmp(backend, "xinput")) || !nnpad_init()) return 1;
     lock();
@@ -780,7 +783,7 @@ int nnpad_button_prompts(void) {
     switch (t) {
     case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return 2;
     case SDL_GAMEPAD_TYPE_XBOX360: case SDL_GAMEPAD_TYPE_XBOXONE: return 3;
-    default: return 1;
+    default: return best || nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
     }
 }
 /* [Recomps#1] finding 148: do player 1's face buttons go by printed letter, A being the bottom button (Xbox A, PlayStation
