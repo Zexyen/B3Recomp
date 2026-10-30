@@ -2760,7 +2760,7 @@ static DWORD WINAPI sweep_main(void *arg) {
 static void prep_start(void) {
     const char *e = getenv("SSBU_VK_PREP");
     if (getenv("SSBU_VK_SWEEP_LOG") && atoi(getenv("SSBU_VK_SWEEP_LOG"))) CloseHandle(CreateThread(NULL, 0, sweep_main, NULL, 0, NULL));
-    int on = e ? atoi(e) != 0 : (D.has_gpl && gpl_sep());
+    int on = !e || atoi(e) != 0;                   /* without libraries (RX 400/500 on Windows, #50) it still translates every stage ahead: only the driver's pipeline compile is left for a first use */
     if (getenv("SSBU_VK_PREP_FIGHT")) g_prep_fight_cap = atoi(getenv("SSBU_VK_PREP_FIGHT"));
     g_prep_cap = g_pw_nthread > 1 ? g_pw_nthread / 2 : 1;
     if (getenv("SSBU_VK_PREP_WORKERS") && atoi(getenv("SSBU_VK_PREP_WORKERS")) > 0) g_prep_cap = atoi(getenv("SSBU_VK_PREP_WORKERS"));
@@ -2779,7 +2779,7 @@ static void prep_start(void) {
         /* session 11: the thread still runs: it makes the INDEX (hashing, under a second), so that a container is announced
          * whole at its loading screen on every start; it queues nothing (before: no thread, so no index, on a marked start) */
     }
-    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e ? "SSBU_VK_PREP=0" : "no stage libraries: SSBU_VK_GPL is not 2 or the driver lacks VK_EXT_graphics_pipeline_library"); return; }
+    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e && !atoi(e) ? "SSBU_VK_PREP=0" : "SSBU_VK_HANDOVER=0"); return; }
     g_prep_thread = CreateThread(NULL, 0, prep_main, NULL, 0, NULL);
 }
 /* `ssbu_vk1.exe --prepare-shaders [folder]` (boot.c): no game, no window, no Vulkan device. Every *.bnsh file of the folder

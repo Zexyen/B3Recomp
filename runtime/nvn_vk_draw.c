@@ -4643,7 +4643,7 @@ static void prep_first_hold(LONG64 frame) {
     static int done, mode = -1;
     if (done) return;
     if (mode < 0) { const char *e = getenv("SSBU_VK_PREPARE"); mode = e ? (!_stricmp(e, "background") ? 1 : !_stricmp(e, "off") ? 2 : 0) : gfx_options()->shader_prepare; }
-    if (mode || !g_prep_thread || g_prep_marked || g_prep_limited || !g_ovl.bar_arg) { done = 1; if (frame < 3) printf("nvn_vk_prep: first-run screen not shown: %s\n", mode == 1 ? "shader_prepare = background" : mode == 2 ? "shader_prepare = off" : !g_prep_thread ? "no preparation on this device (no stage libraries)" : g_prep_marked ? "the marker of an earlier run is there: everything was prepared for this GPU, driver and version; straight to the game" : "test limit"); return; }
+    if (mode || !g_prep_thread || g_prep_marked || g_prep_limited || !g_ovl.bar_arg) { done = 1; if (frame < 3) printf("nvn_vk_prep: first-run screen not shown: %s\n", mode == 1 ? "shader_prepare = background" : mode == 2 ? "shader_prepare = off" : !g_prep_thread ? "the preparation is off" : g_prep_marked ? "the marker of an earlier run is there: everything was prepared for this GPU, driver and version; straight to the game" : "test limit"); return; }
     if (g_prep_state == 2 || g_prep_state == 3) { done = 1; return; }
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     LONG64 t0 = tk(), tlog = t0;
