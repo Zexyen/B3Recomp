@@ -40,6 +40,7 @@ typedef struct {
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
+    int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
@@ -87,6 +88,21 @@ static void fail(Mx *e, const char *op, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(e->why, sizeof e->why, fmt, ap);
     va_end(ap);
+}
+
+/* [issue 26] A jump back to an earlier instruction (a loop) in a vertex, fragment or tessellation stage is counted; after
+ * MX_LOOP_MAX of them (MxIn.loopdebug, if set) the stage ends as at its EXIT, with the outputs it has. On an RTX 5070 the GPU
+ * hung in one of B3's lighting fragment stages (VK_ERROR_DEVICE_LOST at the end of the opening movie); a wrong pixel beats a lost
+ * device. Compute stages are left alone: they may loop over a whole buffer.
+ * shortcut: the limit is a guess above the longest loop seen (that lighting stage: 2 x 32 lights x (32 bits + 2 BRX), about
+ * 2,240 jumps back at most); raise it if a stage loses detail. */
+#define MX_LOOP_MAX 4096u
+static void loop_guard(Mx *e, int back) {
+    if (!back || e->in->stage == MX_COMPUTE) return;
+    e->uses_guard = 1;
+    int magenta = e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ");
+    emit(e, "if (++mx_back > %uu) { %s%s return; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->exitcode,
+         magenta ? "frag0 = vec4(1.0, 0.0, 1.0, 1.0); " : "");
 }
 
 /* ---------------------------------------------------------------- operands */
@@ -1535,13 +1551,13 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         unsigned tgt = (unsigned)((int)pc + 1 + off / 8);
         if ((tgt & 3) == 0) tgt++;
         if (MXB(i, 0, 5) == 0 || MXB(i, 0, 5) == 28) break;       /* never taken (the analysis did not follow it either) */
-        emit(e, "if (%s) { pc = %uu; continue; }", FLOW(e, MXB(i, 0, 5)), tgt);
+        emit(e, "if (%s) { ", FLOW(e, MXB(i, 0, 5))); loop_guard(e, tgt <= pc); emit(e, "pc = %uu; continue; }", tgt);
         break;
     }
     case MXOP_SYNC: case MXOP_BRK: case MXOP_CONT:
         if (MXB(i, 0, 5) == 0 || MXB(i, 0, 5) == 28) break;
         if (!e->jt[pc]) { fail(e, mx_op_name[op], "%s without a matching token at word %u", mx_op_name[op], pc); break; }
-        emit(e, "if (%s) { pc = %uu; continue; }", FLOW(e, MXB(i, 0, 5)), e->jt[pc]);
+        emit(e, "if (%s) { ", FLOW(e, MXB(i, 0, 5))); loop_guard(e, e->jt[pc] <= pc); emit(e, "pc = %uu; continue; }", e->jt[pc]);
         break;
     case MXOP_BRX: {
         int off = (int)(MXB(i, 20, 24) << 8) >> 8;
@@ -1551,7 +1567,8 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
          * outputs at their defaults. Found 2026-10-09 (bounded round): the layout shader's "window frame" texture
          * coordinate table (13 entries) has entries on scheduling words; frame kind 12 = the body of the header pill of the
          * stage select screen left the stage with texture coordinate (0,0) = a transparent texel. */
-        emit(e, "if (%s) { pc = (%uu + %s + 0x%08xu) >> 3; if ((pc & 3u) == 0u) pc++; continue; }", FLOW(e, MXB(i, 0, 5)), pc * 8 + 8, A8, (uint32_t)off);
+        emit(e, "if (%s) { ", FLOW(e, MXB(i, 0, 5))); loop_guard(e, 1);      /* the target is known only at run time: counted as a step back */
+        emit(e, "pc = (%uu + %s + 0x%08xu) >> 3; if ((pc & 3u) == 0u) pc++; continue; }", pc * 8 + 8, A8, (uint32_t)off);
         break;
     }
     case MXOP_EXIT:
@@ -1891,6 +1908,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         any = 0;
         for (unsigned p = 0; p < 7; p++) if (e->preds[p]) { emit(&h, "%s p%u = false", any ? "," : " bool", p); any = 1; }
         if (any) emit(&h, ";\n");
+        if (e->uses_guard) emit(&h, " uint mx_back = 0u;\n");
         if (e->any_jump) emit(&h, " uint pc = 1u;\n for (;;) { switch (pc) {\n");
         size_t need = h.len + e->len + strlen(e->exitcode) + 256;
         res = malloc(need);

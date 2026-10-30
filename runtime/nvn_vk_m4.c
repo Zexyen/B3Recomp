@@ -26,7 +26,7 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
-#define MX_VK_VERSION 11u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 12u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
@@ -112,13 +112,21 @@ static int ssrc_of(SSrc *o, const Prog *p, int s) {
     memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
 }
+/* [issue 26] TEST: SSBU_VK_LOOPDEBUG=<n>: graphics stages are ended after n jumps back (0 or empty: the usual limit) and a
+ * fragment stage ended so writes magenta. Part of the stage hash, so the cache keeps the two translations apart. */
+static unsigned vk_loopdebug(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("SSBU_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: SSBU_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
+    return (unsigned)v;
+}
 static uint64_t ssrc_hb(const SSrc *o) {
-    uint32_t ver = MX_VK_VERSION;
+    uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
+    if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
@@ -237,6 +245,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         if (s == 4) { in.tess_prim = src->tess[0]; in.tess_spacing = src->tess[1]; in.tess_point = src->tess[2]; in.tess_order = src->tess[3]; }
         snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
         if (s == 1 && RS_ON) in.screen_scale = 1;
+        if (s != 5) in.loopdebug = vk_loopdebug();
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
             uint64_t spv_hash = 0;
