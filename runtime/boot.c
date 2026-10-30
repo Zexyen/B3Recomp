@@ -294,6 +294,16 @@ static DWORD WINAPI guest_main(LPVOID arg) {
 static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (argc <= 1) {    /* started by hand with no path (issues #17, #20): say how it is started instead of "cannot open main.elf" */
+        FILE *f = fopen(g_elf, "rb");
+        if (!f) {
+            fprintf(stderr, "witch-time-game: no main.elf given. Start the game with the launcher (witch-time, its Play button): it passes\n"
+                            "the path of targets/exefs/main.elf and the game's folders and settings. By hand, as the launcher does, from build/run:\n"
+                            "  SSBU_ROMFS=<Witch Time folder>/targets/romfs ../witch-time-game ../../targets/exefs/main.elf\n");
+            return 1;
+        }
+        fclose(f);
+    }
 #ifdef __linux__
     prctl(PR_SET_NAME, "Witch Time");          /* [witchtime] process name (B2recomp's is also game_native); threads made later inherit it */
 #endif
