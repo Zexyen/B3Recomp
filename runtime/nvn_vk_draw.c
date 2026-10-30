@@ -1314,7 +1314,7 @@ typedef struct { long long frame; uint32_t draw; uint8_t kind; uint64_t hb[3]; }
 static CkRec g_ck[CK_N];
 static uint32_t g_ckn;                             /* records made; marker = 1 + the record's number */
 static void ckpt(int kind, const VStage *a, const VStage *b, const VStage *c) {
-    if (!g_ck_on || !vkCmdSetCheckpointNV_) return;
+    if (!g_ck_on || !vkCmdSetCheckpointNV_ || !R.cmd) return;
     uint32_t i = g_ckn++ % CK_N;
     g_ck[i].frame = nvn_front_frame_next(); g_ck[i].draw = (uint32_t)R.frame_draws; g_ck[i].kind = (uint8_t)kind;
     g_ck[i].hb[0] = a ? a->hb : 0; g_ck[i].hb[1] = b ? b->hb : 0; g_ck[i].hb[2] = c ? c->hb : 0;
@@ -1324,7 +1324,7 @@ static void ckpt_print(const char *what, uint32_t m) {
     if (!m || m > g_ckn || g_ckn - m >= CK_N) { printf("  %s: marker %u (no record)\n", what, m); return; }
     const CkRec *k = &g_ck[(m - 1) % CK_N];
     printf("  %s: marker %u of %u: frame %lld, draw %u of the frame, %s, stages hb %016llx %016llx %016llx\n", what, m, g_ckn, k->frame, k->draw,
-           k->kind ? "compute dispatch" : "draw (vertex, fragment, tessellation evaluation)", (unsigned long long)k->hb[0], (unsigned long long)k->hb[1], (unsigned long long)k->hb[2]);
+           k->kind == 2 ? "END of that draw or dispatch" : k->kind ? "before a compute dispatch" : k->hb[2] ? "before a draw (vertex, fragment, tessellation evaluation)" : "before a draw (vertex, fragment)", (unsigned long long)k->hb[0], (unsigned long long)k->hb[1], (unsigned long long)k->hb[2]);
 }
 static void ckpt_dump(void) {
     if (!g_ck_on || !vkGetQueueCheckpointDataNV_) return;
@@ -1340,9 +1340,15 @@ static void ckpt_dump(void) {
         uint32_t m = (uint32_t)(uintptr_t)d[i].pCheckpointMarker;
         char what[64]; snprintf(what, sizeof what, "passed at pipeline stage 0x%x", (unsigned)d[i].stage);
         ckpt_print(what, m);
-        if (!lo || m < lo) lo = m;
+        if (m && (!lo || m < lo)) lo = m;
     }
-    if (lo) ckpt_print("the record after the oldest of them (likely the draw that hangs)", lo + 1);
+    /* Markers stand before each draw / dispatch and at its end (kind 2). Everything before the oldest marker passed has finished
+     * (#26: the next draw was blamed). A "before" marker: the GPU is in that draw; an "end" marker: in the commands after it
+     * (copies, clears, barriers, a pass change) or at the start of the next one. */
+    if (lo && lo <= g_ckn && g_ckn - lo < CK_N) {
+        if (g_ck[(lo - 1) % CK_N].kind != 2) ckpt_print("STOPPED IN this draw or dispatch (the oldest marker passed is the one before it)", lo);
+        else { ckpt_print("STOPPED AFTER the end of this draw or dispatch, in the commands that follow it, before", lo); ckpt_print("the next marker", lo + 1); }
+    }
     fflush(stdout);
 }
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
@@ -2952,6 +2958,7 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
     ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
+    ckpt(2, NULL, NULL, NULL);
     g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
     if (v->images) storage_barrier();              /* [witchtime] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
@@ -3864,6 +3871,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
@@ -3877,6 +3885,7 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
@@ -3909,6 +3918,7 @@ static void exec(const Cmd *m, int depth) {
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
             R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         }
+        ckpt(2, NULL, NULL, NULL);                 /* [issue 26] the end of the indirect draws (one "before" marker for all of them) */
         break;
     }
     case OP_COPY_BUF_TEX: cb_sync(); if (g_cb_nkept) cb_kept_all(3); copy_buf_tex(m); break;
