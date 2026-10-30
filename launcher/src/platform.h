@@ -11,6 +11,7 @@
 #define WT_EXE ""
 #endif
 // the files the build makes in build/ (tools/wtbuild/src/target.rs)
+#define BUILT_VERSION "built_version"    // in build/: the launcher release that last finished a build
 inline const char* const GAME_EXE = "witch-time-game" WT_EXE;
 #ifdef _WIN32
 inline const char* const GAME_LIB = "game.dll";

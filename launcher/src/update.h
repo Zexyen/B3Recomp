@@ -17,7 +17,7 @@ void check(const Paths& paths);
 void start(const Paths& paths);
 // where it is: the release's tag, and a line for the screen
 State state(std::string& tag, std::string& message);
-// starts this program again (the new one), with --updated
+// starts this program again (the new one)
 void restart(const Paths& paths);
 
 }

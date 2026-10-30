@@ -140,7 +140,7 @@
 			</div>
 			<div style="display: flex; flex-direction: row; gap: 14dp;">
 				<div class="button small autofocus" data-if="building" data-event-click="stop_build()">STOP</div>
-				<div class="button small primary autofocus" data-if="!building &amp;&amp; built" data-event-click="play()">PLAY</div>
+				<div class="button small primary autofocus" data-if="!building &amp;&amp; built &amp;&amp; !stale" data-event-click="play()">PLAY</div>
 				<div class="button small autofocus" data-if="!building" data-event-click="start_build()">{{ built ? 'REBUILD' : 'BUILD' }}</div>
 			</div>
 		</div>
