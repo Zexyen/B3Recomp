@@ -359,7 +359,15 @@ static inline char *_strlwr(char *s) { for (char *p = s; *p; p++) *p = (char)tol
 
 static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    return p == (void *)(uintptr_t)addr ? p : NULL;   /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p == (void *)(uintptr_t)addr) return p;       /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p != MAP_FAILED) munmap(p, size);
+    FILE *m = fopen("/proc/self/maps", "r");          /* what holds the spot, for the log */
+    char line[512];
+    unsigned long long lo, hi;
+    while (m && fgets(line, sizeof line, m))
+        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && lo < addr + size && hi > addr) fprintf(stderr, "in the way of 0x%llx: %s", (unsigned long long)addr, line);
+    if (m) fclose(m);
+    return NULL;
 }
 static inline void *plat_alloc(size_t size) {
     void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
