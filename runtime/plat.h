@@ -20,6 +20,7 @@ static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = VirtualAlloc((void *)(uintptr_t)addr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     return p == (void *)(uintptr_t)addr ? p : NULL;
 }
+static inline int plat_write_watch_tracked(void) { return 1; }
 static inline void *plat_alloc(size_t size) { return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
 static inline void *plat_reserve(size_t size) { return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS); }
 static inline int plat_commit(void *p, size_t size) { return VirtualAlloc(p, size, MEM_COMMIT, PAGE_READWRITE) == p; }
@@ -357,6 +358,7 @@ FILE *plat_fopen(const char *path, const char *mode);
 #define _putenv_s(k, v) setenv((k), (v), 1)
 static inline char *_strlwr(char *s) { for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p); return s; }
 
+int plat_write_watch_tracked(void);                    /* 0: a write-watched region answers "every page written" (Android) */
 static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (p == (void *)(uintptr_t)addr) return p;       /* kernels before 4.17 ignore the flag and may map elsewhere */

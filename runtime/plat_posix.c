@@ -378,6 +378,7 @@ static int ww_protect(uintptr_t a, size_t n) {         /* from now on [a, a+n) c
     struct uffdio_writeprotect wp = { .range = { a, n }, .mode = UFFDIO_WRITEPROTECT_MODE_WP };
     return ioctl(g_uffd, UFFDIO_WRITEPROTECT, &wp) == 0;
 }
+int plat_write_watch_tracked(void) { return ww_available(); }
 static int ww_of(uintptr_t a, size_t n) {              /* the write watch of the region holding [a, a+n), 0 = none */
     int ww = 0;
     pthread_mutex_lock(&g_reg_lock);
@@ -692,11 +693,21 @@ BOOL ReadFile(HANDLE h, LPVOID buf, DWORD n, DWORD *got, OVERLAPPED *ov) {
     int fd = file_fd(h);
     if (got) *got = 0;
     size_t done = 0;
+    int touched = 0;
     off_t off = ov ? (off_t)(((uint64_t)ov->OffsetHigh << 32) | ov->Offset) : 0;
     while (done < n) {   /* like ReadFile on a disk file: everything up to the end, short only at the end */
         ssize_t r = ov ? pread(fd, (uint8_t *)buf + done, n - done, off + (off_t)done) : read(fd, (uint8_t *)buf + done, n - done);
-        if (r < 0) { if (errno == EINTR) continue; fail_errno(); if (got) *got = (DWORD)done; return FALSE; }
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EFAULT && !touched) {         /* [witchtime] a read-only page (nvn_vk_draw.c, cg_ro): the kernel raises no signal for a read into it, a write of ours does */
+                touched = 1;
+                for (uintptr_t a = ((uintptr_t)buf + done) & ~(uintptr_t)4095; a < (uintptr_t)buf + n; a += 4096) { volatile uint8_t *b = (volatile uint8_t *)a; *b = *b; }
+                continue;
+            }
+            fail_errno(); if (got) *got = (DWORD)done; return FALSE;
+        }
         if (r == 0) break;
+        touched = 0;
         done += (size_t)r;
     }
     if (got) *got = (DWORD)done;

@@ -2034,6 +2034,69 @@ static void watch_fs(VStage *fs) {                 /* render thread, at a draw *
     }
     if (g_wf_phi && InterlockedExchange(&g_wf_open, 0)) { DWORD old; VirtualProtect((void *)g_wf_plo, g_wf_phi - g_wf_plo, PAGE_READONLY, &old); }
 }
+/* [witchtime] No write watch (Android; SSBU_NO_UFFD=1 on a PC): nvn_front_mem_newest answers "written" for every page, so a
+ * kept buffer would land and be filled again at every check: 26 MB each way per frame at the title and a wait for the GPU,
+ * though the game never writes these ranges (tracked: 0 such landings). So the whole pages of a buffer are made read-only
+ * from its fill until it lands, and a CPU write is what the check asks about: the fault flags the buffer and opens its
+ * pages. The partial pages at its ends stay with the snapshot comparison of cb_guest_wrote. SSBU_VK_CBRO=0: off. */
+#ifndef _WIN32
+extern int (*host_fault_hook)(uintptr_t addr);     /* hostrt.c */
+static int g_cg_ro = -1;
+static volatile int g_cgr_spin;                    /* not an SRWLOCK: the fault handler takes it. Nothing inside it touches guest memory */
+static struct { uintptr_t lo, hi; } g_cgr[CB_N];
+static volatile uint8_t g_cgr_wrote[CB_N];
+static uintptr_t g_cgr_span_lo = ~(uintptr_t)0, g_cgr_span_hi;
+static void cgr_lock(void) { while (__atomic_exchange_n(&g_cgr_spin, 1, __ATOMIC_ACQUIRE)) YieldProcessor(); }
+static void cgr_unlock(void) { __atomic_store_n(&g_cgr_spin, 0, __ATOMIC_RELEASE); }
+static int cgr_fault(uintptr_t a) {                /* in the signal handler, on any thread */
+    static _Thread_local uintptr_t last;
+    if (a < g_cgr_span_lo || a >= g_cgr_span_hi) return 0;
+    int hit = 0;
+    cgr_lock();
+    for (int i = 0; i < CB_N && !hit; i++) {
+        if (a < g_cgr[i].lo || a >= g_cgr[i].hi) continue;
+        mprotect((void *)g_cgr[i].lo, g_cgr[i].hi - g_cgr[i].lo, PROT_READ | PROT_WRITE);
+        g_cgr[i].lo = g_cgr[i].hi = 0; g_cgr_wrote[i] = 1; hit = 1;
+    }
+    cgr_unlock();
+    if (hit) { last = 0; return 1; }
+    if (last == a) return 0;                       /* no guard there, the second time: a real crash */
+    last = a; return 1;                            /* opened by the render thread between the fault and here: once more */
+}
+static int cg_ro(void) {
+    if (g_cg_ro < 0) {
+        g_cg_ro = !plat_write_watch_tracked() && !(getenv("SSBU_VK_CBRO") && !atoi(getenv("SSBU_VK_CBRO")));
+        if (g_cg_ro) { host_fault_hook = cgr_fault; printf("nvn_vk: no write watch: kept compute ranges are read-only, a CPU write lands them (SSBU_VK_CBRO=0: off)\n"); }
+    }
+    return g_cg_ro;
+}
+static void cgr_guard(int i, uint64_t addr, uint64_t size) {     /* render thread, before the fill copies guest memory */
+    uintptr_t lo = ((uintptr_t)addr + 4095) & ~(uintptr_t)4095, hi = (uintptr_t)(addr + size) & ~(uintptr_t)4095;
+    g_cgr_wrote[i] = 0;
+    if (hi <= lo) return;                          /* no whole page: the snapshot sees all of it */
+    cgr_lock();
+    int free_of_others = 1;
+    for (int j = 0; j < CB_N && free_of_others; j++) if (j != i && g_cgr[j].lo < hi && g_cgr[j].hi > lo) free_of_others = 0;
+    if (g_cgr[i].hi) { mprotect((void *)g_cgr[i].lo, g_cgr[i].hi - g_cgr[i].lo, PROT_READ | PROT_WRITE); g_cgr[i].lo = g_cgr[i].hi = 0; }
+    if (lo < g_cgr_span_lo) g_cgr_span_lo = lo;
+    if (hi > g_cgr_span_hi) g_cgr_span_hi = hi;
+    if (free_of_others && mprotect((void *)lo, hi - lo, PROT_READ) == 0) { g_cgr[i].lo = lo; g_cgr[i].hi = hi; }
+    else { g_cgr_wrote[i] = 1; g_ck_guard_fail++; }  /* cannot be watched: counts as written, as without this */
+    cgr_unlock();
+}
+static void cgr_unguard(int i) {
+    if (!g_cgr[i].hi) return;
+    cgr_lock();
+    if (g_cgr[i].hi) { mprotect((void *)g_cgr[i].lo, g_cgr[i].hi - g_cgr[i].lo, PROT_READ | PROT_WRITE); g_cgr[i].lo = g_cgr[i].hi = 0; }
+    cgr_unlock();
+}
+static int cgr_wrote(int i) { return g_cgr_wrote[i]; }
+#else
+static int cg_ro(void) { return 0; }
+static void cgr_guard(int i, uint64_t addr, uint64_t size) { (void)i; (void)addr; (void)size; }
+static void cgr_unguard(int i) { (void)i; }
+static int cgr_wrote(int i) { (void)i; return 0; }
+#endif
 static int cb_keep_mode(void) {
     if (g_cb_keep < 0) {
         const char *e = getenv("SSBU_VK_CBKEEP");
@@ -2057,6 +2120,7 @@ static void cg_guard(int i, uint64_t addr, uint64_t size) {
     ReleaseSRWLockExclusive(&g_cg_lock);
 }
 static void cg_unguard(int i) {
+    if (cg_ro()) cgr_unguard(i);
     if (g_cb_keep != 2) return;
     AcquireSRWLockExclusive(&g_cg_lock);
     if (g_cg[i].hi) { DWORD old; VirtualProtect((void *)g_cg[i].lo, g_cg[i].hi - g_cg[i].lo, g_cg[i].old, &old); g_cg[i].lo = g_cg[i].hi = 0; }
@@ -2271,6 +2335,7 @@ static int cb_guest_wrote(CB *k) {
         if (hi <= lo) return memcmp((void *)a, k->snap, (size_t)k->size) != 0;
         if (lo > a && memcmp((void *)a, k->snap, lo - a)) return 1;
         if (e > hi && memcmp((void *)hi, k->snap + (hi - a), e - hi)) return 1;
+        if (cg_ro()) return cgr_wrote((int)(k - g_cb));
     }
     uint64_t nw = cb_ww_query(k);
     if (!nw) { g_ck_unwatched++; return 0; }
@@ -2485,7 +2550,8 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
     if ((int)(c - g_cb) + 1 > g_cb_hi) g_cb_hi = (int)(c - g_cb) + 1;
     if (g_cb_merge < 0) g_cb_merge = !(getenv("SSBU_VK_CBMERGE") && !atoi(getenv("SSBU_VK_CBMERGE")));
     if (g_cb_ww < 0) g_cb_ww = !(getenv("SSBU_VK_CBWW") && !atoi(getenv("SSBU_VK_CBWW")));
-    if (g_cb_keep > 0 && g_cb_ww) c->ww = cb_ww_query(c);      /* BEFORE the copy: a write between this question and the copy is in the copy and is also seen at the next question (the buffer is then filled once more) */
+    if (g_cb_keep > 0 && g_cb_ww && cg_ro()) cgr_guard((int)(c - g_cb), addr, size);
+    else if (g_cb_keep > 0 && g_cb_ww) c->ww = cb_ww_query(c);      /* BEFORE the copy: a write between this question and the copy is in the copy and is also seen at the next question (the buffer is then filled once more) */
     if (g_cb_merge) {                              /* the snapshot the copy-back is compared with (cb_land) */
         if (c->snap_cap < size) { free(c->snap); c->snap_cap = (size + 4095) & ~(uint64_t)4095; c->snap = malloc((size_t)c->snap_cap); }
         memcpy(c->snap, P(addr), (size_t)size);

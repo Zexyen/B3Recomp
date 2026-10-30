@@ -577,6 +577,12 @@ static void stacks_signal(int sig) {
     if (d) closedir(d);
 }
 void host_dump_stacks(void) { stacks_signal(0); }   /* [witchtime] SSBU_STACKS_AT: Android's runtime takes SIGUSR1 itself */
+int (*host_fault_hook)(uintptr_t addr);              /* [witchtime] a write fault the runtime expects (nvn_vk_draw.c, cg_ro): 1 = handled, the write runs again */
+static void segv_signal(int sig, siginfo_t *si, void *uc) {
+    if (host_fault_hook && host_fault_hook((uintptr_t)si->si_addr)) return;
+    signal(sig, SIG_DFL);                             /* SA_RESETHAND's effect, for the crash report */
+    crash_signal(sig, si, uc);
+}
 static void install_crash_handler(void) {
     signal(SIGUSR1, stacks_signal);
     signal(SIGUSR2, stack_signal);
@@ -585,7 +591,9 @@ static void install_crash_handler(void) {
     sigaltstack(&ss, NULL);
     struct sigaction sa = { .sa_sigaction = crash_signal, .sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND };
     sigemptyset(&sa.sa_mask);
-    for (int sig = 0, sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT }; sig < 5; sig++) sigaction(sigs[sig], &sa, NULL);
+    for (int sig = 0, sigs[] = { SIGBUS, SIGILL, SIGFPE, SIGABRT }; sig < 4; sig++) sigaction(sigs[sig], &sa, NULL);
+    sa.sa_sigaction = segv_signal; sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sigaction(SIGSEGV, &sa, NULL);
 }
 #else
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *ep) {
