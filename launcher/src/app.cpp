@@ -62,7 +62,8 @@ const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
 		{"resolution_scale", "Internal resolution", "Takes effect at the next start",
-			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"}}},
+			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"},
+				{"0.4", "0.4× · 360p"}, {"0.6", "0.6× · 540p"}, {"0.8", "0.8× · 720p"}}},   // after 2.4: the first option is the default, and left from 1.0 goes down
 		{"cutscene_fps", "Cutscene frame rate", "Menus and cutscenes; movies keep their own", {{"30", "30"}, {"60", "60"}}},
 		{"window", "Display mode", "How the game uses the window", {{"windowed", "Window"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}},
 		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
