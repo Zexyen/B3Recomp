@@ -2,12 +2,14 @@
 #include "game_host.h"
 #include "platform.h"
 #include "ui_render.h"
+#include "update.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <sys/stat.h>
 
 namespace {
@@ -56,18 +58,22 @@ const char* phase_of(const std::string& step)
 
 struct SettingDef {
 	const char *key, *name, *note;
-	std::vector<std::pair<const char*, const char*>> options;   // value in graphics.ini, what the screen shows
+	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
+	const char *file = "/graphics.ini", *section = "";
 };
 const std::vector<SettingDef>& setting_defs()
 {
 	static const std::vector<SettingDef> d = {
 		{"resolution_scale", "Internal resolution", "Takes effect at the next start",
-			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"}}},
+			{{"1.0", "1.0× · 900p"}, {"1.2", "1.2× · 1080p"}, {"1.4", "1.4× · 1260p"}, {"1.6", "1.6× · 1440p"}, {"2.0", "2.0× · 1800p"}, {"2.4", "2.4× · 4K"},
+				{"0.4", "0.4× · 360p"}, {"0.6", "0.6× · 540p"}, {"0.8", "0.8× · 720p"}}},   // after 2.4: the first option is the default, and left from 1.0 goes down
 		{"cutscene_fps", "Cutscene frame rate", "Menus and cutscenes; movies keep their own", {{"30", "30"}, {"60", "60"}}},
 		{"window", "Display mode", "How the game uses the window", {{"windowed", "Window"}, {"borderless", "Borderless"}, {"fullscreen", "Fullscreen"}}},
 		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
 		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at an angle", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}},
 		{"aspect", "Aspect", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}},
+		{"button_prompts", "Button prompts", "Auto follows what you use",
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -100,9 +106,11 @@ std::string minutes(double s)
 bool App::init(int argc, char** argv)
 {
 	paths = Paths::find(argv[0]);
-	for (int i = 1; i + 1 < argc; i++)
-		if (!std::strcmp(argv[i], "--returned"))
+	for (int i = 1; i < argc; i++)
+		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
 			returned_code = std::atoi(argv[i + 1]);
+		else if (!std::strcmp(argv[i], "--play"))
+			want_play = play_only = true;
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -115,6 +123,7 @@ bool App::init(int argc, char** argv)
 	dump = st.dump;
 	refresh_title();
 	refresh_build();
+	update::check(paths);
 	if (const char* s = std::getenv("WITCHTIME_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -202,6 +211,7 @@ bool App::create_ui()
 
 void App::bind_model()
 {
+	prompts_read();
 	Rml::DataModelConstructor c = ctx->CreateDataModel("wt");
 	if (auto h = c.RegisterStruct<CheckRow>())
 	{
@@ -237,14 +247,20 @@ void App::bind_model()
 	c.RegisterArray<std::vector<Rml::String>>();
 	c.Bind("screen", &screen);
 	c.Bind("built", &built);
+	c.Bind("stale", &stale);
+	c.Bind("hour_deg", &hour_deg);
+	c.Bind("minute_deg", &minute_deg);
 	c.Bind("status_bad", &status_bad);
 	c.Bind("status_title", &status_title);
 	c.Bind("status_line", &status_line);
 	c.Bind("footer_info", &footer_info);
+	c.Bind("update_tag", &update_tag);
 	c.Bind("dump", &dump);
 	c.Bind("checking", &checking);
 	c.Bind("verified", &verified);
 	c.Bind("move_dump", &move_dump);
+	c.Bind("dump_modified", &dump_modified);
+	c.Bind("accept_modified", &accept_modified);
 	c.Bind("checks", &checks);
 	c.Bind("building", &building);
 	c.Bind("progress", &progress);
@@ -259,19 +275,32 @@ void App::bind_model()
 	c.Bind("mods_error", &mods_error);
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
-	c.BindFunc("pad", [this](Rml::Variant& v) { v = !pads.empty(); });    // footer hints: pad buttons, else keys
+	// footer hints: by the label on the button, as confirm and back in handle() go
+	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter" : prompts == 2 ? "gen:glyph?n=cross" : "gen:glyph?n=a"); });
+	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc" : prompts == 2 ? "gen:glyph?n=circle" : "gen:glyph?n=b"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
 			go(a[0].Get<Rml::String>());
 	});
 	c.BindEventCallback("play", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { want_play = true; });
+	c.BindEventCallback("update", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		if (!runner.running())
+			update::start(paths);
+	});
 	c.BindEventCallback("quit", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { running = false; });
 	c.BindEventCallback("browse", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { browse(); });
 	c.BindEventCallback("check_dump", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { check_dump(); });
 	c.BindEventCallback("toggle_move", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		move_dump = !move_dump;
 		model.DirtyVariable("move_dump");
+	});
+	c.BindEventCallback("toggle_accept_modified", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+		if (runner.running())
+			return;
+		accept_modified = !accept_modified;
+		model.DirtyVariable("accept_modified");
+		check_dump();    // the verdict depends on it
 	});
 	c.BindEventCallback("start_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { start_build(); });
 	c.BindEventCallback("stop_build", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { runner.stop(); });
@@ -293,7 +322,9 @@ int App::run()
 	while (running)
 	{
 		SDL_Event ev;
-		if (SDL_WaitEventTimeout(&ev, runner.running() ? 30 : 50))
+		// while an animation plays RmlUi asks for the next frame at once; the swapchain's vsync paces it
+		const int wait = ctx->GetNextUpdateDelay() <= 0 ? 1 : runner.running() ? 30 : 50;
+		if (SDL_WaitEventTimeout(&ev, wait))
 		{
 			handle(ev);
 			while (running && SDL_PollEvent(&ev))
@@ -312,6 +343,9 @@ int App::run()
 	release_window();
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+	std::string tag, message;
+	if (update::state(tag, message) == update::State::done)
+		update::restart(paths);
 	return 0;
 }
 
@@ -368,6 +402,41 @@ void App::focus_first()
 }
 
 // ---------------------------------------------------------------------------------------------------- input
+void App::prompts_read()
+{
+	const std::string shown = ini_get(paths.config + "/controllers.ini", "general", "button_prompts", "auto");
+	const int f = shown == "switch" ? 1 : shown == "playstation" ? 2 : shown == "xbox" ? 3 : shown == "keyboard" ? 4 : 0;
+	prompts_fixed = false;
+	if (f)
+		prompts_use(f);
+	else if (!pads.empty())
+		prompts_use(pads.back());
+	else
+		prompts_use(4);
+	prompts_fixed = f != 0;
+}
+
+void App::prompts_use(int family)
+{
+	if (prompts_fixed || family == prompts)
+		return;
+	prompts = family;
+	if (model)
+	{
+		model.DirtyVariable("glyph_ok");
+		model.DirtyVariable("glyph_back");
+	}
+}
+
+void App::prompts_use(SDL_Gamepad* pad)
+{
+	if (!pad)
+		return;
+	const SDL_GamepadType t = SDL_GetGamepadType(pad);
+	prompts_use(t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2
+		: t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 3 : 1);
+}
+
 void App::handle(SDL_Event& ev)
 {
 	switch (ev.type)
@@ -375,19 +444,23 @@ void App::handle(SDL_Event& ev)
 	case SDL_EVENT_QUIT: running = false; return;
 	case SDL_EVENT_GAMEPAD_ADDED:
 		if (SDL_Gamepad* p = SDL_OpenGamepad(ev.gdevice.which))
+		{
 			pads.push_back(p);
-		model.DirtyVariable("pad");
+			prompts_use(p);
+		}
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_REMOVED:
 		for (auto it = pads.begin(); it != pads.end();)
 			it = SDL_GetGamepadID(*it) == ev.gdevice.which ? (SDL_CloseGamepad(*it), pads.erase(it)) : it + 1;
-		model.DirtyVariable("pad");
+		if (pads.empty())
+			prompts_use(4);
 		refresh_title();
 		return;
 	case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
 	{
 		SDL_Gamepad* pad = SDL_GetGamepadFromID(ev.gbutton.which);
+		prompts_use(pad);
 		auto button = SDL_GamepadButton(ev.gbutton.button);
 		SDL_GamepadButtonLabel label = pad ? SDL_GetGamepadButtonLabel(pad, button) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
 		using namespace Rml::Input;
@@ -406,8 +479,14 @@ void App::handle(SDL_Event& ev)
 			key(KI_RIGHT);
 		return;
 	}
+	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+		if (std::abs(int(ev.gaxis.value)) > 16384)            // past half, as the game: a drifting stick is not use
+			prompts_use(SDL_GetGamepadFromID(ev.gaxis.which));
+		return;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN: prompts_use(4); break;
 	case SDL_EVENT_KEY_DOWN:
 	{
+		prompts_use(4);
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
 		if (k == Rml::Input::KI_ESCAPE)
 		{
@@ -486,8 +565,31 @@ void App::refresh_title()
 {
 	built = file_exists(paths.build + "/" + GAME_EXE) && file_exists(paths.build + "/" + GAME_LIB) &&
 		file_exists(paths.repo + "/targets/exefs/main.elf");
+	std::string built_version;
+	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
+	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
+	stale = built && WT_VERSION[0] == 'v' && built_version != WT_VERSION;
 	status_bad = false;
-	if (returned_code > 0)
+	std::string tag, message;
+	const update::State us = update::state(tag, message);
+	update_tag = us == update::State::available || us == update::State::failed ? tag : "";
+	if (us == update::State::working)
+	{
+		status_title = "UPDATING";
+		status_line = message;
+	}
+	else if (us == update::State::failed)
+	{
+		status_bad = true;
+		status_title = "UPDATE FAILED";
+		status_line = message;
+	}
+	else if (stale)
+	{
+		status_title = "UPDATED";
+		status_line = "Now " WT_VERSION ". Rebuild before you play";
+	}
+	else if (returned_code > 0)
 	{
 		status_bad = true;
 		status_title = "THE GAME STOPPED";
@@ -512,10 +614,12 @@ void App::refresh_title()
 	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
 	model.DirtyVariable("built");
+	model.DirtyVariable("stale");
 	model.DirtyVariable("status_bad");
 	model.DirtyVariable("status_title");
 	model.DirtyVariable("status_line");
 	model.DirtyVariable("footer_info");
+	model.DirtyVariable("update_tag");
 }
 
 void App::refresh_build()
@@ -620,11 +724,10 @@ void App::toggle_mod(int index)
 
 void App::refresh_settings()
 {
-	const std::string ini = paths.config + "/graphics.ini";
 	settings.clear();
 	for (const SettingDef& d : setting_defs())
 	{
-		std::string v = ini_get(ini, "", d.key, d.options.front().first);
+		std::string v = ini_get(paths.config + d.file, d.section, d.key, d.options.front().first);
 		int i = option_index(d, v);
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v});
 	}
@@ -637,12 +740,13 @@ void App::step_setting(int index, int dir)
 	if (index < 0 || index >= int(defs.size()))
 		return;
 	const SettingDef& d = defs[size_t(index)];
-	const std::string ini = paths.config + "/graphics.ini";
-	int i = option_index(d, ini_get(ini, "", d.key, d.options.front().first));
+	const std::string ini = paths.config + d.file;
+	int i = option_index(d, ini_get(ini, d.section, d.key, d.options.front().first));
 	int n = int(d.options.size());
 	i = i < 0 ? 0 : (i + dir + n) % n;
-	ini_set(ini, "", d.key, d.options[size_t(i)].first);
+	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
 	refresh_settings();
+	prompts_read();
 }
 
 // ---------------------------------------------------------------------------------------------------- work
@@ -674,7 +778,10 @@ void App::check_dump()
 	}
 	verified = false;
 	checks = {{"Starting the checks", "", "run"}};
-	if (runner.start(paths.repo, {"--dump", dump, "--only", "verify"}))
+	std::vector<std::string> args = {"--dump", dump, "--only", "verify"};
+	if (accept_modified)
+		args.push_back("--accept-modified");
+	if (runner.start(paths.repo, args))
 	{
 		job = Job::verify;
 		checking = true;
@@ -694,6 +801,8 @@ void App::start_build()
 		args = {"--dump", dump};
 	if (move_dump)
 		args.push_back("--move-dump");
+	if (accept_modified)
+		args.push_back("--accept-modified");
 	build_error.clear();
 	mods_rebuild = false;
 	if (runner.start(paths.repo, args))
@@ -703,8 +812,24 @@ void App::start_build()
 	go("build");
 }
 
+void App::tick_clock()
+{
+	std::time_t now = std::time(nullptr);
+	std::tm* t = std::localtime(&now);
+	if (!t)
+		return;
+	const float m = t->tm_min * 6 + t->tm_sec * 0.1f, h = (t->tm_hour % 12) * 30 + t->tm_min * 0.5f;
+	if (m == minute_deg && h == hour_deg)
+		return;
+	minute_deg = m;
+	hour_deg = h;
+	model.DirtyVariable("minute_deg");
+	model.DirtyVariable("hour_deg");
+}
+
 void App::tick()
 {
+	tick_clock();
 	{
 		std::lock_guard<std::mutex> lock(picked_mutex);
 		if (picked)
@@ -712,8 +837,21 @@ void App::tick()
 			picked = false;
 			dump = picked_folder;
 			verified = false;
-			model.DirtyVariable("dump");
-			model.DirtyVariable("verified");
+			dump_modified = accept_modified = false;    // a new folder is checked as it is
+			for (const char* v : {"dump", "verified", "dump_modified", "accept_modified"})
+				model.DirtyVariable(v);
+		}
+	}
+	{
+		std::string tag, message;
+		const update::State us = update::state(tag, message);
+		if (us == update::State::done)
+			running = false;               // run() then starts the new launcher
+		else if (int(us) != update_seen || message != update_message)
+		{
+			update_seen = int(us);
+			update_message = message;
+			refresh_title();
 		}
 	}
 	if (!runner.poll() && !(job == Job::build && runner.running()))
@@ -721,11 +859,20 @@ void App::tick()
 	if (job == Job::verify)
 	{
 		checks.clear();
+		bool modified = false;
 		for (const std::string& l : runner.lines)
 		{
 			std::string t = l.substr(std::min(l.size(), l.find_first_not_of(' ')));
+			modified |= t.find("--accept-modified") != std::string::npos || t.rfind("warning:", 0) == 0;
+			if (t.find("--accept-modified") != std::string::npos)    // the command-line advice; the switch above is the launcher's way
+				t = "The dump differs from the supported version. Turn on \"Use a modified dump\" to build it anyway.";
 			if (!t.empty() && t.rfind("setup:", 0) != 0 && t.rfind("Start the game:", 0) != 0)    // wtbuild's closing lines are not checks
 				checks.push_back({t, "", "done"});
+		}
+		if (modified && !dump_modified)
+		{
+			dump_modified = true;
+			model.DirtyVariable("dump_modified");
 		}
 		if (checks.size() > 8)
 			checks.erase(checks.begin(), checks.end() - 8);
@@ -761,6 +908,8 @@ void App::tick()
 			if (build_error.empty())
 				build_error = runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
+		else
+			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
 		refresh_title();
 	}
 	refresh_build();
@@ -788,9 +937,18 @@ void App::play()
 {
 	if (runner.running())
 		return;
+	if (stale)
+	{
+		play_only = false;                       // the launcher stays until the game matches it
+		go("build");
+		build_error = "This game was built by an older version. Press REBUILD to update it.";
+		model.DirtyVariable("build_error");
+		return;
+	}
 	GameStart g = prepare_game(paths);
 	if (!g.error.empty())
 	{
+		play_only = false;                       // nothing to play: the launcher stays, and says why
 		go("title");
 		status_bad = true;
 		status_title = "NOT READY";
@@ -802,8 +960,10 @@ void App::play()
 	if (g.in_process)
 	{
 		release_window();
-		run_in_process(g, paths, window);        // does not come back
+		run_in_process(g, paths, window, !play_only);    // does not come back
 	}
 	returned_code = run_child(paths, window);
+	if (play_only)
+		running = false;
 	refresh_title();
 }

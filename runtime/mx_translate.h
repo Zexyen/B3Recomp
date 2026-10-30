@@ -74,6 +74,9 @@ typedef struct {
      * +0x73c spacing, +0x740 point mode, +0x744 vertex order; OpenGL enums: GL_TRIANGLES / GL_QUADS / GL_ISOLINES, GL_EQUAL /
      * GL_FRACTIONAL_ODD / GL_FRACTIONAL_EVEN, GL_CW / GL_CCW). The control stage's output vertices come from its program header. */
     uint32_t tess_prim, tess_spacing, tess_point, tess_order;
+    /* [issue 26] graphics stages: jumps back allowed before the stage is ended (0 = MX_LOOP_MAX of mx_translate.c); a fragment
+     * stage ended that way writes magenta, so a picture shows the pixels whose loop ran away. */
+    unsigned loopdebug;
 } MxIn;
 
 typedef struct {

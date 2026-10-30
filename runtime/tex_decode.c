@@ -1408,3 +1408,51 @@ int tex_write_png(const char *path, const uint8_t *rgba, int w, int h) {
     fclose(fp);
     return 0;
 }
+
+/* [issue 22] RGBA8 -> BC3, for the ASTC textures a GPU without ASTC gets decoded: 1 byte a texel instead of 4. Fast and
+ * simple (bounding box inset by 1/16, the diagonal by the sign of the red / blue covariance with green; alpha min..max),
+ * the quality of a real-time DXT encoder. Edge blocks repeat the last row / column. */
+static uint16_t to565(int r, int g, int b) { return (uint16_t)((r * 31 + 127) / 255 << 11 | (g * 63 + 127) / 255 << 5 | (b * 31 + 127) / 255); }
+static void from565(uint16_t c, int *o) { o[0] = (c >> 11) * 255 / 31; o[1] = (c >> 5 & 63) * 255 / 63; o[2] = (c & 31) * 255 / 31; }
+static void bc3_block_enc(const uint8_t px[16][4], uint8_t *out) {
+    int mn[4] = {255, 255, 255, 255}, mx[4] = {0, 0, 0, 0}, mean[3] = {0, 0, 0};
+    for (int i = 0; i < 16; i++) for (int c = 0; c < 4; c++) { if (px[i][c] < mn[c]) mn[c] = px[i][c]; if (px[i][c] > mx[c]) mx[c] = px[i][c]; }
+    /* alpha: a0 = max, a1 = min; code 0 = a0, 1 = a1, k = 2..7 = ((8-k) a0 + (k-1) a1) / 7 */
+    out[0] = (uint8_t)mx[3]; out[1] = (uint8_t)mn[3];
+    uint64_t ai = 0;
+    if (mx[3] > mn[3])
+        for (int i = 0; i < 16; i++) { int t = ((px[i][3] - mn[3]) * 14 + (mx[3] - mn[3])) / (2 * (mx[3] - mn[3])); ai |= (uint64_t)(t == 7 ? 0 : t == 0 ? 1 : 8 - t) << (3 * i); }
+    for (int k = 0; k < 6; k++) out[2 + k] = (uint8_t)(ai >> (8 * k));
+    /* colour */
+    for (int i = 0; i < 16; i++) for (int c = 0; c < 3; c++) mean[c] += px[i][c];
+    int cov[3] = {0, 0, 0};
+    for (int i = 0; i < 16; i++) { int g = px[i][1] * 16 - mean[1]; cov[0] += (px[i][0] * 16 - mean[0]) * g; cov[2] += (px[i][2] * 16 - mean[2]) * g; }
+    for (int c = 0; c < 3; c++) { int in = (mx[c] - mn[c]) >> 4; mn[c] += in; mx[c] -= in; }
+    for (int c = 0; c < 3; c += 2) if (cov[c] < 0) { int t = mn[c]; mn[c] = mx[c]; mx[c] = t; }
+    uint16_t c0 = to565(mx[0], mx[1], mx[2]), c1 = to565(mn[0], mn[1], mn[2]);
+    uint32_t ci = 0;
+    if (c0 < c1) { uint16_t t = c0; c0 = c1; c1 = t; }
+    if (c0 != c1) {      /* four colours: code 0 = c0, 1 = c1, 2 = (2 c0 + c1) / 3, 3 = (c0 + 2 c1) / 3 */
+        int e0[3], e1[3], d[3], dd = 0;
+        from565(c0, e0); from565(c1, e1);
+        for (int c = 0; c < 3; c++) { d[c] = e0[c] - e1[c]; dd += d[c] * d[c]; }
+        for (int i = 0; i < 16; i++) {
+            int p = 0;
+            for (int c = 0; c < 3; c++) p += (px[i][c] - e1[c]) * d[c];
+            int t = (p * 6 + dd) / (2 * dd);      /* 0..3 from c1 to c0, rounded */
+            if (t < 0) t = 0; if (t > 3) t = 3;
+            static const uint8_t code[4] = {1, 3, 2, 0};
+            ci |= (uint32_t)code[t] << (2 * i);
+        }
+    }
+    out[8] = (uint8_t)c0; out[9] = (uint8_t)(c0 >> 8); out[10] = (uint8_t)c1; out[11] = (uint8_t)(c1 >> 8);
+    for (int k = 0; k < 4; k++) out[12 + k] = (uint8_t)(ci >> (8 * k));
+}
+void tex_encode_bc3(const uint8_t *rgba, int w, int h, uint8_t *dst) {
+    uint8_t px[16][4];
+    for (int by = 0; by < h; by += 4)
+        for (int bx = 0; bx < w; bx += 4, dst += 16) {
+            for (int i = 0; i < 16; i++) { int x = bx + (i & 3), y = by + (i >> 2); memcpy(px[i], rgba + ((size_t)(y < h ? y : h - 1) * w + (x < w ? x : w - 1)) * 4, 4); }
+            bc3_block_enc((const uint8_t (*)[4])px, dst);
+        }
+}

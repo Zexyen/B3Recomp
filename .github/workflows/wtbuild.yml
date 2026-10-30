@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'tests/plat_hash_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -45,3 +45,8 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
           "$RUNNER_TEMP/plat_hash_test"
+
+      - name: The shader translator's loop guard (runtime/mx_translate.c, issue 26)
+        run: |
+          clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_loop_guard_test"
+          "$RUNNER_TEMP/mx_loop_guard_test"

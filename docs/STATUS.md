@@ -35,8 +35,9 @@ SSBU_FOCUS_NOTIFY=0 SSBU_VK_MISSING=warn SSBU_ROMFS=$PWD/../../targets/romfs SSB
 clash with B2recomp: `pgrep -x "Witch Time"` finds it. The executable is `build/witch-time-game` (`witch-time-game.exe` on Windows; it was
 `game_native`, the same name as B2recomp's, until 2026-10-24, then `b3-game` until 2026-10-27).
 
-- `SSBU_FOCUS_NOTIFY=0`: without it the applet model (nnmisc.c) **suspends the game whenever its window is not in the
-  foreground** (mode 3, as on the console); a run on a desktop where the window loses the focus then looks hung.
+- `SSBU_FOCUS_NOTIFY=0`: turns off the applet model's focus tracking (nnmisc.c), so the game is never told it lost the
+  focus. Losing the focus no longer suspends the game either way (that freeze silenced it whenever another window was in
+  front; removed 2026-10-29).
 - `SSBU_VK_MISSING=warn`: without it the Vulkan back end stops at the first operation it cannot do (see the blockers below);
   with it those are skipped and logged once each.
 - Test aids used for the results below: `SSBU_SHOW=0` (window off screen), `SSBU_SHOT_EVERY=<n> SSBU_SHOT_DIR=<dir>` (a .bmp
@@ -420,8 +421,8 @@ cutscenes in the game's 60 fps mode.
   played the same cutscene in 46.6 s instead of 92.1 s.
 - **What is done**: two host overrides (`lifter/recomp_eh.py` `HOST_OVERRIDES`, `runtime/game_shim_eh.c`):
   `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` replaces the fixed step while such a scene runs at 60 by the last
-  frame's measured length (the clock's own, +0xf0) in 30 Hz frames, at most 1.0: 0.5 on time, more for a late frame, so the
-  scene keeps real time when frames are late; a frame longer than 33 ms slows it as on the console (a measured gameplay
+  frame's measured length (the clock's own, +0xf0) in 30 Hz frames, 0.5 on time, more for a late frame, so the
+  scene keeps real time when frames are late (at most 1.0 at first; see "Late frames" below; a measured gameplay
   step is left alone). (A fixed 0.5, the first version: 97.9 s for the cutscene at 56 fps in 4K.) The game's frames-to-seconds conversion (`7100cb4f54`) reads the mode it now has. Each change of the
   mode the game asks for is logged with the wall-clock time ("fps mode:" lines).
 - **Measured** (Shibuya save, the cutscene that starts after 75 s on the street; `SSBU_FRAMETIMES` has the wall clock
@@ -432,8 +433,24 @@ cutscenes in the game's 60 fps mode.
   times: the same (`/tmp/shots/title_30_vs_60.png`). The pause menu is mode 0 anyway (not changed). The prologue movie
   (`ev0000.webm`, VP9, 30 fps): movie time against wall clock, 160.0 s -> 160.11 s at 30 and 160.09 s at 60, all 4,900
   frames: movies keep their rate (the game's player times them by the system clock).
+- **Gameplay the game asks 30 for (2026-10-30, #45)**: the chapter 3 spider ride is mode 1 from state bit 16 (flags
+  `0x00810000`), bits 28 and 30 clear, so its step is measured; cutscenes are `0x50000008`. `cutscene_fps = 60` and
+  frame_rate above 60 forced it to 60 too, and its frame counters ran at twice the console's rate (the reported third
+  jump prompt of under a second, not reached by a test: a blind script dies on the ride). Only fixed-step scenes are
+  forced now; the ride runs at 30 as on the console.
+  A ride at 60 needs its frame counters at half rate (a counter there is 30 Hz; the frames due at step / 2 while the
+  ride is forced, the sites listed). Census of the first 200 s of the ride, 30 against 60: 115 frame-locked sites, 22 on
+  the game's thread, mostly the engine's own frame numbers. The QTE's counter is not among them: the script never reaches
+  it, so the ride stays at 30 until a census by hand has it.
 - Not checked by ear: audio is muted in the test runs; the cutscene's timeline keeps wall-clock time, which is what
   the voice and lip sync follow.
+- **Late frames (2026-10-30, #45, #47)**: the sound runs on real time and never waits, but a frame over 33 ms lost its
+  excess for good at 60, and at 30 every late frame did (a fixed step). A reporter's log has 0.5-2 s of excess per 1-3 minute mode-1 scene, an
+  upper guess for cutscenes: it has no flags, and some of those scenes may be gameplay (below), which is measured. `h_frame_clock` now gives every fixed-step
+  scene, at 30 too, the measured step and keeps what a stall owes, paid at up to 2.0 a frame (at most 90 30 Hz frames
+  owed; reset on entering a scene). The Shibuya cutscene with a 300 ms stall every 120 fixed frames (test build only):
+  at 60 104.64 s -> 91.83 s, at 30 98.58 s -> 92.33 s; at 60 without stalls 91.74 s. Muted; steps above 1.0 not looked
+  at by eye; the frame counters still run per frame (2,758 at 30 before, 2,588 now with the stalls).
 
 ## Resolution scale (2026-10-25)
 
@@ -628,8 +645,20 @@ Bayonetta 2's. Now:
   full, times `mouse_sensitivity`; `mouse_invert_y`). The pointer is captured (SDL relative mode) after a click into
   the window (at once when fullscreen); that click is not given to the game; Esc or losing the focus releases it.
 - **Pad and keyboard together**: both drive player 1 at once (buttons add up; a pad's stick wins while it is off
-  centre), so switching is just using the other device. The button prompts stay the game's Switch ones: there are
-  no keyboard pictures in the game (pad prompts: `button_prompts` as before, chosen at start).
+  centre), so switching is just using the other device. The button prompts are chosen at start (`button_prompts`, below).
+- **Button prompts** (`runtime/prompts.c`, no mod): all prompts come from one atlas (`core_sys_btn`, texture 0
+  of `core.wtp` in `ui_core*.dtt`; ASTC 4x4, BC3 in `ui_core_gb`). `nvn_gl.c` `tex_initialize` paints over it in memory when
+  the texture is made, in the texture's own format, and `prompts_tick` (player 1's pad poll) again when the choice changes,
+  then `nvn_gl_memory_written` has the renderers read it again; only the two atlases known by hash are touched. `auto`
+  follows the device player 1 used last (pad: a button or a stick past half; keyboard: a key, or the mouse past a quarter),
+  a pad plugged in or out, and `controllers.ini` as it is saved. Each set is painted once (keyboard 18 ms) and kept. PlayStation / Xbox: face buttons, L / R / ZL / ZR, Plus / Minus (by position or by printed letter). Keyboard: the
+  same cells and the stick cells show the keys bound in `[keyboard]` (first key of a binding; left, right, wheel mouse buttons as
+  a mouse), from `auto` when there is no pad. The two grey four-dot pictures, the d-pad and the coloured action icons stay.
+  Checked in the running game (Options help screen, Vulkan): PlayStation, Xbox, by letter, keyboard with a rebound key, Switch
+  untouched, all changed while it ran; keyboard <-> pad and hot-plug with a uinput Xbox pad under headless gamescope (the
+  game takes input only with a focused window); `tests/prompts_test.c`. `button_prompts` is also a row of the PC settings panel and of the launcher's Settings; it is written to `controllers.ini`. The launcher's footer uses the same drawings
+  (`runtime/prompt_art.h`, `gen:glyph`) and the same rule: its fixed Enter / Esc, or A / B or Cross / Circle by the label on
+  the button, which is how it takes confirm and back. Native ASTC is checked only through our decoder (desktop GPUs have none).
 - **Linux key state** comes from the window's SDL events (window thread), not from SDL_GetKeyboardState on the game's
   thread; cleared when the focus goes.
 - Fixed on the way: with a pad on the keyboard's player, a vertical-only mouse move was replaced by the pad's centred
@@ -665,7 +694,7 @@ then a runtime overlay, then a tie to the game's menus). `runtime/pcmenu.c`, `ru
 - **Open / close**: F1, or L3 + R3 on player 1's controller (seen at the game's own pad reads, `pcmenu_gate` in nnhid.c);
   B / Escape / F1 close it. Up / down choose a row, left / right change it (they stop at the ends), A / Enter go round;
   the mouse points at a row and clicks the value ('‹' for the one before). While it is open the **game is held** with the
-  console's suspension (`g_guest_frozen`, as for a minimised window; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
+  console's suspension (`g_guest_frozen`; by the code its sound queue runs dry: not heard, the runs are muted), the render thread presents the
   game's last picture again with the panel about 60 times a second, and the game reads an idle pad, also after closing
   until the buttons that closed it are let go.
 - **Rows and how they apply**: display mode and window size (live on Linux through the window thread; Windows: at the

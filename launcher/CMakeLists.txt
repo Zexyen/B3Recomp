@@ -42,6 +42,7 @@ add_executable(witch-time
 	src/game_host.cpp
 	src/platform.cpp
 	src/ui_render.cpp
+	src/update.cpp
 	"${RMLUI_BACKENDS}/RmlUi_Platform_SDL.cpp"
 	"${RMLUI_BACKENDS}/RmlUi_Renderer_SDL_GPU.cpp")
 # src/shim: <SDL3_image/SDL_image.h> for RmlUi's SDL GPU renderer, without the SDL3_image library (ui_render.cpp

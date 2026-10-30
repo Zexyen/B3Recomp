@@ -26,7 +26,7 @@ typedef struct VStage {
     uint32_t vlay;                                 /* finding 116, a GPU without dynamic vertex input: the vertex layout this vertex stage was last drawn with (predictions take it) */
     uint16_t img_fmt[8]; uint8_t img_type[8];      /* [witchtime] storage image k: the shader's typed format (GL internal format, 0 = the texture's own) and its type (MxOut) */
 } VStage;
-#define MX_VK_VERSION 10u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
+#define MX_VK_VERSION 13u                        /* part of every hash: change it when mx_translate's Vulkan text or these records change */
 typedef struct { uint32_t magic; int32_t stage, code_len; uint32_t key[4], fo; uint64_t spv, hb; uint32_t cbufs, ssbos, ssbo_w, images, dep, tex_units, in_attr, out_attr; int32_t uses_alpha, nsmp; VSmp smp[64]; uint16_t img_fmt[8]; uint8_t img_type[8]; } StageRec;
 typedef struct { uint32_t magic, key[4], fo, dep, tex; uint64_t vh; } VarRec;      /* ..\cache\vk\stage\<stage>_<hb>.var: the variants of one code */
 #define STAGEREC_MAGIC (0x52545356u + MX_VK_VERSION)
@@ -112,8 +112,15 @@ static int ssrc_of(SSrc *o, const Prog *p, int s) {
     memcpy(o->local, st->local, sizeof o->local); o->smem = st->smem_bytes; o->lmem = st->lmem_bytes; memcpy(o->tess, st->tess, sizeof o->tess);
     return 1;
 }
+/* [issue 26] TEST: SSBU_VK_LOOPDEBUG=<n>: graphics stages are ended after n jumps back (0 or empty: the usual limit) and a
+ * fragment stage ended so writes magenta. Part of the stage hash, so the cache keeps the two translations apart. */
+static unsigned vk_loopdebug(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("SSBU_VK_LOOPDEBUG"); v = e ? (atoi(e) > 0 ? atoi(e) : 4096) : 0; if (v) printf("nvn_vk: SSBU_VK_LOOPDEBUG: graphics stages end after %d jumps back; fragment stages that do write magenta\n", v); }
+    return (unsigned)v;
+}
 static uint64_t ssrc_hb(const SSrc *o) {
-    uint32_t ver = MX_VK_VERSION;
+    uint32_t ver = MX_VK_VERSION, ld = vk_loopdebug();
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)o->stage, o->code, (size_t)o->code_len);
     if (o->stage == 5) { h = fnv(h, o->local, sizeof o->local); h = fnv(h, &o->smem, 4); h = fnv(h, &o->lmem, 4); }
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
@@ -122,6 +129,7 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (!D.f2.features.shaderInt64) h = fnv(h, "i32", 3);
     if (D.nan_exact) h = fnv(h, "nan", 3);                  /* [witchtime] MxIn.nan_exact: another text; on AMD / NVIDIA / Intel the hash is the one it always was */
     if (D.no_switch) h = fnv(h, "nsw", 3);                  /* [witchtime] MxIn.no_switch (Qualcomm): another text */
+    if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
 }
@@ -245,6 +253,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         if (s == 4) { in.tess_prim = src->tess[0]; in.tess_spacing = src->tess[1]; in.tess_point = src->tess[2]; in.tess_order = src->tess[3]; }
         snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
         if (s == 1 && RS_ON) in.screen_scale = 1;
+        if (s != 5) in.loopdebug = vk_loopdebug();
         if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); }
         else {
             uint64_t spv_hash = 0;
@@ -1577,7 +1586,7 @@ static PrepSt prep_stage(const SSrc *src, uint32_t fo, int alone) {
     LONG64 t1 = tk();
     InterlockedIncrement64(&g_prep_stages); if (t->from_rec) InterlockedIncrement64(&g_prep_fromrec);
     InterlockedAdd64(&g_prep_tr_tk, t1 - t0);
-    if (t->ok && D.has_gpl && gpl_sep() && stage_fits_universal(t)) {
+    if (t->ok && t->stage <= 1 && D.has_gpl && gpl_sep() && stage_fits_universal(t)) {      /* [witchtime] a library is a vertex or fragment stage's (dat_walk also queues tessellation stages: translated only) */
         int lh;
         stagelib_ensure(t, 0, &lh); InterlockedIncrement64(&g_prep_libs);
         if (alone) { stagelib_ensure(t, 1, &lh); InterlockedIncrement64(&g_prep_libs); }
@@ -1601,7 +1610,7 @@ static void job_prep(Job *j) {
         VStage *c = stage_ensure(&j->src[2], ssrc_hb(&j->src[2]), zero, 0, &how);
         if (c->ok && !c->images && c->nsmp <= 32) compute_pipe_ensure(c);
     }
-    if (!j->has[0]) return;
+    if (!j->has[0]) { if (j->has[1]) prep_stage(&j->src[1], 0, 0); return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
     PrepSt vs = prep_stage(&j->src[0], 0, !j->has[1]), fs;
     memset(&fs, 0, sizeof fs);
     if (j->has[1]) fs = prep_stage(&j->src[1], 0, 0);
@@ -2503,13 +2512,68 @@ static int prep_list(const char *dir) {
     char pat[300];
     WIN32_FIND_DATAA fd;
     g_prep_nfiles = 0;
-    snprintf(pat, sizeof pat, "%s/*.bnsh", dir);
-    HANDLE h = FindFirstFileA(pat, &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do { if (g_prep_nfiles < 1024 && strlen(fd.cFileName) < 40) { strcpy(g_prep_file[g_prep_nfiles].name, fd.cFileName); g_prep_file[g_prep_nfiles++].size = fd.nFileSizeLow; } } while (FindNextFileA(h, &fd));
-        FindClose(h);
+    for (int k = 0; k < 2; k++) {                  /* [witchtime] *.dat: B3's shader archives (dat_walk) */
+        snprintf(pat, sizeof pat, k ? "%s/*.dat" : "%s/*.bnsh", dir);
+        HANDLE h = FindFirstFileA(pat, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do { if (g_prep_nfiles < 1024 && strlen(fd.cFileName) < 40) { strcpy(g_prep_file[g_prep_nfiles].name, fd.cFileName); g_prep_file[g_prep_nfiles++].size = fd.nFileSizeLow; } } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
     }
     return g_prep_nfiles;
+}
+/* [witchtime] B3's shaders are not BNSH containers: root_000.pkz holds PlatinumGames DAT archives (shader.dat, shadereff*.dat,
+ * ...; vks_build_pkz copies them to the store) whose .vso / .pso / .hso / .dso / .cso entries are each ONE stage as
+ * nvnProgramSetShaders gets it: at +8 u32 control size, control offset, data size, data offset. The SSrc is built as
+ * nvn_gl.c's prog_set_shaders_ + ssrc_of build it, so the hash is the game's own (7,812 of the 8,024 stages were in the
+ * cache of a played run). The files hold no pairs: each stage is queued alone (a vertex stage gets both libraries).
+ * Returns the stages queued, -1 when the file is not a DAT archive. The file is untrusted: every offset is checked. */
+static int dat_walk(const uint8_t *b, uint64_t n, int *njobs) {
+    static const int8_t stage_of_type[16] = {-1, 0, 3, 4, 2, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+    uint64_t a = (uint64_t)(uintptr_t)b;
+    if (n < 0x20 || g32(a) != 0x00544144u) return -1;
+    uint32_t cnt = g32(a + 4), oo = g32(a + 8), so = g32(a + 0x14);
+    if ((uint64_t)oo + cnt * 4ull > n || (uint64_t)so + cnt * 4ull > n) return -1;
+    int nv = 0;
+    for (uint32_t i = 0; i < cnt && !g_m4_quit; i++) {
+        uint32_t off = g32(a + oo + i * 4ull), sz = g32(a + so + i * 4ull);
+        if (off > n || sz > n - off || sz < 0x18) continue;
+        uint64_t f = a + off;
+        uint32_t csz = g32(f + 8), coff = g32(f + 12), dsz = g32(f + 16), doff = g32(f + 20);
+        if (coff > sz || csz > sz - coff || csz < 0x760 || doff > sz || dsz > sz - doff || dsz < 0x40 || g32(f + coff) != 0x98761234u) continue;
+        uint64_t ctl = f + coff, data = f + doff;
+        uint32_t len = g32(ctl + 0x6f8), csize = g32(ctl + 0x6fc), cofs = g32(ctl + 0x700), at;
+        SSrc s;
+        int slot, has_c;
+        memset(&s, 0, sizeof s);
+        if (g32(ctl + 0x714) == 5) {               /* compute: the code at control +0x708 (nvn_gl.c compute_code), no program header */
+            at = g32(ctl + 0x708);
+            if (at >= (1u << 20)) at = 0;
+            if (cofs >= at) cofs -= at;
+            has_c = cofs != 0;
+            s.stage = 5; slot = 2;
+            for (int k = 0; k < 3; k++) s.local[k] = g32(ctl + 0x748 + k * 4ull);
+            s.smem = g32(ctl + 0x754); s.lmem = g32(ctl + 0x758);
+        } else {
+            if (g32(data) != 0x12345678u || (s.stage = stage_of_type[(g32(data + 0x30) >> 10) & 15]) < 0) continue;
+            has_c = cofs >= 0x30;
+            at = 0x30; cofs -= has_c ? 0x30 : cofs;      /* the constants' offset is from the data's start; kept relative to the code */
+            slot = s.stage == 0 ? 0 : 1;
+            if (s.stage == 4) memcpy(s.tess, (const void *)(uintptr_t)(ctl + 0x738), 16);
+        }
+        if (at > dsz || !len || len > dsz - at) continue;
+        s.code = (const uint8_t *)(uintptr_t)(data + at); s.code_len = (int)len;
+        if (csize && has_c && cofs <= dsz - at && csize <= dsz - at - cofs) { s.cdata = s.code + cofs; s.cdata_size = csize; }
+        Job *j = calloc(1, sizeof *j + (size_t)s.code_len + s.cdata_size + 16);
+        uint8_t *d = j->data;
+        j->prep = 2;
+        job_copy_src(j, &d, slot, &s);
+        EnterCriticalSection(&g_sh_lock);
+        job_push_prep(j);
+        LeaveCriticalSection(&g_sh_lock);
+        (*njobs)++; nv++;
+    }
+    return nv;
 }
 static DWORD WINAPI prep_main(void *arg) {
     /* session 11: the default store is the one the HOST writes (nvn_vk_store.c: 393 containers of effect / container files
@@ -2527,8 +2591,8 @@ static DWORD WINAPI prep_main(void *arg) {
     {   const char *rom = getenv("SSBU_ROMFS");
         char arc[400];
         WIN32_FILE_ATTRIBUTE_DATA fa;
-        snprintf(arc, sizeof arc, "%s\\data.arc", rom && rom[0] ? rom : "..\\romfs");
-        if (GetFileAttributesExA(arc, GetFileExInfoStandard, &fa)) snprintf(stamp, sizeof stamp, "data.arc size %llu time %08lx%08lx\n", (unsigned long long)(((uint64_t)fa.nFileSizeHigh << 32) | fa.nFileSizeLow), (unsigned long)fa.ftLastWriteTime.dwHighDateTime, (unsigned long)fa.ftLastWriteTime.dwLowDateTime);
+        snprintf(arc, sizeof arc, "%s/root_000.pkz", rom && rom[0] ? rom : "../romfs");      /* [witchtime] the archive the shaders come from */
+        if (GetFileAttributesExA(arc, GetFileExInfoStandard, &fa)) snprintf(stamp, sizeof stamp, "root_000.pkz size %llu time %08lx%08lx\n", (unsigned long long)(((uint64_t)fa.nFileSizeHigh << 32) | fa.nFileSizeLow), (unsigned long)fa.ftLastWriteTime.dwHighDateTime, (unsigned long)fa.ftLastWriteTime.dwLowDateTime);
         snprintf(spath, sizeof spath, "%s/store_source.txt", dir);
         FILE *sf = fopen(spath, "rb");
         char was[96] = "";
@@ -2544,14 +2608,14 @@ static DWORD WINAPI prep_main(void *arg) {
     snprintf(path, sizeof path, "%s/store_building.txt", dir);
     if (!prep_list(dir) || GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
         g_prep_state = 5;                          /* the store is being built: the progress overlay says so */
-        vks_build(dir);
+        if (!vks_build_pkz(dir)) vks_build(dir);
         prep_list(dir);
         stale = 1;
     }
     if (stamp[0] && g_prep_nfiles && (stale ||GetFileAttributesA(spath) == INVALID_FILE_ATTRIBUTES)) { FILE *sf = fopen(spath, "wb"); if (sf) { fputs(stamp, sf); fclose(sf); } }
     if (!g_prep_nfiles) {
         g_prep_state = 3;
-        printf("nvn_vk_prep: NO PREPARATION: no *.bnsh file in %s and none could be made from data.arc. A container the game hands over inside a fight will be translated and compiled at its draws.\n", dir);
+        printf("nvn_vk_prep: NO PREPARATION: no *.bnsh / *.dat file in %s and none could be made from the game's data. A container the game hands over inside a fight will be translated and compiled at its draws.\n", dir);
         return 0;
     }
     g_prep_state = 0;
@@ -2616,8 +2680,12 @@ static DWORD WINAPI prep_main(void *arg) {
         if (!fp) continue;
         size_t n = g_prep_file[i].size;
         uint8_t *raw = n >= 0x60 ? malloc(n + 128) : NULL, *buf = raw ? raw + 16 : NULL;
-        if (buf && fread(buf, 1, n, fp) == n && g32((uint64_t)(uintptr_t)buf) == 0x48534E42u) {
+        if (buf && fread(buf, 1, n, fp) != n) buf = NULL;
+        if (buf && g32((uint64_t)(uintptr_t)buf) == 0x48534E42u) {
             int nj = 0, nv = cont_walk((uint64_t)(uintptr_t)buf, (uint64_t)n, i < g_prep_keep ? -1 : -2, &nj, 0);
+            if (nv < 0) g_prep_bad++; else g_prep_vars += nv;
+        } else if (buf) {
+            int nj = 0, nv = dat_walk(buf, (uint64_t)n, &nj);
             if (nv < 0) g_prep_bad++; else g_prep_vars += nv;
         }
         free(raw);                                  /* the jobs hold their own copy of the code */
@@ -2708,7 +2776,7 @@ static DWORD WINAPI sweep_main(void *arg) {
 static void prep_start(void) {
     const char *e = getenv("SSBU_VK_PREP");
     if (getenv("SSBU_VK_SWEEP_LOG") && atoi(getenv("SSBU_VK_SWEEP_LOG"))) CloseHandle(CreateThread(NULL, 0, sweep_main, NULL, 0, NULL));
-    int on = e ? atoi(e) != 0 : (D.has_gpl && gpl_sep());
+    int on = !e || atoi(e) != 0;                   /* without libraries (RX 400/500 on Windows, #50) it still translates every stage ahead: only the driver's pipeline compile is left for a first use */
     if (getenv("SSBU_VK_PREP_FIGHT")) g_prep_fight_cap = atoi(getenv("SSBU_VK_PREP_FIGHT"));
     g_prep_cap = g_pw_nthread > 1 ? g_pw_nthread / 2 : 1;
     if (getenv("SSBU_VK_PREP_WORKERS") && atoi(getenv("SSBU_VK_PREP_WORKERS")) > 0) g_prep_cap = atoi(getenv("SSBU_VK_PREP_WORKERS"));
@@ -2727,7 +2795,7 @@ static void prep_start(void) {
         /* session 11: the thread still runs: it makes the INDEX (hashing, under a second), so that a container is announced
          * whole at its loading screen on every start; it queues nothing (before: no thread, so no index, on a marked start) */
     }
-    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e ? "SSBU_VK_PREP=0" : "no stage libraries: SSBU_VK_GPL is not 2 or the driver lacks VK_EXT_graphics_pipeline_library"); return; }
+    if (!on || !g_m4_on) { printf("nvn_vk_prep: the preparation of every container is off (%s)\n", e && !atoi(e) ? "SSBU_VK_PREP=0" : "SSBU_VK_HANDOVER=0"); return; }
     g_prep_thread = CreateThread(NULL, 0, prep_main, NULL, 0, NULL);
 }
 /* `ssbu_vk1.exe --prepare-shaders [folder]` (boot.c): no game, no window, no Vulkan device. Every *.bnsh file of the folder

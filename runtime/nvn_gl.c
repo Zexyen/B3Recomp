@@ -846,7 +846,7 @@ static uint64_t ww_tex_newest(const uint8_t *p, size_t n, uint64_t seen, uint64_
  * SSBU_ASTC_LOG are set (their per-image output). The decoder's counters (tex_astc_bad_blocks ...) may then lose an
  * increment: informational. */
 #define DEC_MAX 16
-static struct { int nf, w, h, bh, rows, nbands; size_t srow, drow; const uint8_t *src; uint8_t *dst; volatile LONG next, left; } g_dj;
+static struct { int nf, w, h, bh, rows, nbands; size_t srow, drow; const uint8_t *src; uint8_t *dst, *bc; volatile LONG next, left; } g_dj;      /* bc: also BC3 (issue 22) */
 static HANDLE g_dec_go[DEC_MAX], g_dec_fin;
 static int g_dec_n = -1;
 static void dec_bands(void) {
@@ -855,6 +855,7 @@ static void dec_bands(void) {
         int y0 = i * g_dj.rows, h = g_dj.h - y0 * g_dj.bh;
         if (h > g_dj.rows * g_dj.bh) h = g_dj.rows * g_dj.bh;
         tex_decode_rgba8(g_dj.nf, g_dj.src + (size_t)y0 * g_dj.srow, g_dj.w, h, g_dj.dst + (size_t)y0 * g_dj.bh * g_dj.drow);
+        if (g_dj.bc) tex_encode_bc3(g_dj.dst + (size_t)y0 * g_dj.bh * g_dj.drow, g_dj.w, h, g_dj.bc + (size_t)y0 * g_dj.bh / 4 * ((g_dj.w + 3) / 4) * 16);      /* bands start on a multiple of 4 texel rows */
     }
 }
 static DWORD WINAPI dec_worker(LPVOID a) {
@@ -865,7 +866,7 @@ static DWORD WINAPI dec_worker(LPVOID a) {
     }
     return 0;
 }
-static void decode_par(int nf, const void *src, int w, int h, uint8_t *dst) {
+static void decode_par(int nf, const void *src, int w, int h, uint8_t *dst, uint8_t *bc) {      /* bc: also encoded to BC3 there, when not NULL */
     const TexFormat *tf = tex_format(nf);
     if (g_dec_n < 0) {
         const char *e = getenv("SSBU_TEXDEC_THREADS");
@@ -877,10 +878,12 @@ static void decode_par(int nf, const void *src, int w, int h, uint8_t *dst) {
     }
     int wb = tf ? (w + tf->bw - 1) / tf->bw : 0, hb = tf ? (h + tf->bh - 1) / tf->bh : 0;
     static volatile LONG busy;
-    if (!g_dec_n || !tf || (size_t)wb * hb < 2048 || InterlockedExchange(&busy, 1)) { tex_decode_rgba8(nf, src, w, h, dst); return; }      /* small (under about 0.5 ms), or another thread's job runs */
+    if (!g_dec_n || !tf || (size_t)wb * hb < 2048 || InterlockedExchange(&busy, 1)) { tex_decode_rgba8(nf, src, w, h, dst); if (bc) tex_encode_bc3(dst, w, h, bc); return; }      /* small (under about 0.5 ms), or another thread's job runs */
     g_dj.nf = nf; g_dj.w = w; g_dj.h = h; g_dj.bh = tf->bh; g_dj.srow = (size_t)wb * tf->bpb; g_dj.drow = (size_t)w * 4;
-    g_dj.src = (const uint8_t *)src; g_dj.dst = dst;
-    g_dj.rows = (hb + (g_dec_n + 1) * 4 - 1) / ((g_dec_n + 1) * 4); g_dj.nbands = (hb + g_dj.rows - 1) / g_dj.rows;
+    g_dj.src = (const uint8_t *)src; g_dj.dst = dst; g_dj.bc = bc;
+    g_dj.rows = (hb + (g_dec_n + 1) * 4 - 1) / ((g_dec_n + 1) * 4);
+    if (bc) g_dj.rows = (g_dj.rows + 3) & ~3;      /* rows * bh texel rows: a multiple of 4, whole BC3 blocks per band */
+    g_dj.nbands = (hb + g_dj.rows - 1) / g_dj.rows;
     g_dj.left = g_dec_n;
     InterlockedExchange(&g_dj.next, 0);                         /* last: the job is complete before anyone takes a band */
     for (int k = 0; k < g_dec_n; k++) SetEvent(g_dec_go[k]);
@@ -930,7 +933,7 @@ static void tex_upload_memory(Tex *t, const Fmt *f) {
             if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
             tex_deswizzle_level(&L, l, p, tmp);
             if (tf && tf->sw_decode) {
-                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
+                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, NULL);
                 tex_put(t, &sw, l, layer, 0, 0, 0, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin);
             } else tex_put(t, f, l, layer, 0, 0, 0, L.lvl_w[l], L.lvl_h[l], L.lvl_d[l], tmp);
             g_st.tex_bytes += (LONG64)lin;
@@ -4527,6 +4530,8 @@ static void texb_get_depth(Ctx *c) { RET(TB->depth); }
 static void texb_get_levels(Ctx *c) { RET(TB->levels); }
 static void texb_get_samples(Ctx *c) { RET(TB->samples); }
 
+void prompts_texture(uint8_t *mem, const uint8_t *limit, int format, int width, int height);   /* prompts.c */
+void prompts_texture_gone(const uint8_t *mem);
 static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
     Tex *t = hnew(A0, K_TEX, sizeof *t);
     uint64_t mem = 0, size = 0;
@@ -4534,6 +4539,7 @@ static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
     if (t->b.pool && nvn_pool_range(t->b.pool, &mem, &size) && mem) { t->mem = (uint8_t *)P(mem) + t->b.offset; t->limit = (uint8_t *)P(mem) + size; }
     t->storage = tex_storage_size2(&t->b, &t->data_size);
     t->guest = A0;
+    prompts_texture(t->mem, t->limit, t->b.format, t->b.width, t->b.height);
     do { t->all_next = g_all_tex; } while (InterlockedCompareExchangePointer((void *volatile *)&g_all_tex, t, t->all_next) != t->all_next);
     RET(1);
 }
@@ -4541,6 +4547,7 @@ static void tex_finalize(Ctx *c) {
     gl_barrier();
     Tex *t = hobj(A0, K_TEX);
     if (!t) return;
+    prompts_texture_gone(t->mem);
     InterlockedExchange(&t->dead, 1);
     InterlockedIncrement(&g_tex_dead_gen);              /* nvn_gl_memory_written's index drops it */
     wr32(A0 + 8, 0);
@@ -5866,7 +5873,8 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
     for (int layer = 0; layer < L.layers; layer++) {
         for (int l = 0; l < levels && l < L.levels; l++) {
             const uint8_t *p = tex_level_ptr(&L, src, l, layer);
-            size_t lin = L.lvl_linear_size[l], need = lin + (decode ? (size_t)L.lvl_w[l] * L.lvl_h[l] * 4 : 0);
+            size_t lin = L.lvl_linear_size[l], rgba = (size_t)L.lvl_w[l] * L.lvl_h[l] * 4, bc3 = (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16,
+                   need = lin + (decode ? rgba : 0) + (decode == 2 ? bc3 : 0);
             if (!b->packaged && t->limit && p + L.lvl_size[l] > t->limit) return 0;
             if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
             {   /* TEST ONLY: SSBU_TEX_RAWDUMP=<dir> (with SSBU_ASTC_DUMP_ONLY=<format hex>): level 0 as it is in pool memory, and its layout */
@@ -5884,11 +5892,12 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
             tex_deswizzle_level(&L, l, p, tmp);
             if (decode) {
                 unsigned bad0 = tex_astc_bad_blocks;
-                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin);
+                decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, decode == 2 ? tmp + lin + rgba : NULL);
                 if (tex_astc_bad_blocks != bad0 && getenv("SSBU_ASTC_LOG"))      /* TEST ONLY: which texture and level the rejected blocks came from */
                     printf("tex_decode: TEST: %u rejected in format 0x%x %dx%d level %d of %d layer %d, layout %02x %02x %02x %02x %02x %02x %02x %02x, flags 0x%x\n", tex_astc_bad_blocks - bad0, b->format, b->width, b->height, l, L.levels, layer,
                            b->layout[0], b->layout[1], b->layout[2], b->layout[3], b->layout[4], b->layout[5], b->layout[6], b->layout[7], (unsigned)b->flags);
-                put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin, (size_t)L.lvl_w[l] * L.lvl_h[l] * 4, 1, 0);
+                if (decode == 2) put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin + rgba, bc3, 0, 0);      /* [issue 22] BC3 blocks */
+                else put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, tmp + lin, rgba, 1, 0);
             } else put(t, l, layer, L.lvl_w[l], L.lvl_h[l], L.lvl_d[l], tmp, lin, 0, 0);
             g_st.tex_bytes += (LONG64)lin;
         }

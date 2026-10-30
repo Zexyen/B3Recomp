@@ -106,9 +106,9 @@ static const char *const k_default_ini =
 "shader_wait = hold\r\n"
 "\r\n"
 "; shader_prepare = first_run | background | off      (Vulkan)\r\n"
-";   No effect in B2recomp ([Recomps#1]): preparing every shader ahead reads Smash's data.arc, which Bayonetta 2 does not\r\n"
-";   have. Shaders and pipelines are made the first time the game needs them and kept in ..\\cache\\vk, so later starts\r\n"
-";   reuse them (delete that folder to start over, e.g. after a new graphics driver).\r\n"
+";   Every shader of the game (shader.dat and the effect shaders, about 8,000 stages) is compiled ahead into ..\\cache\\vk.\r\n"
+";   first_run: the first start on a GPU / driver shows PREPARING SHADERS NN % until it is done (once; ~20 s on 16 threads);\r\n"
+";   background or off: no screen, prepared while the game runs at low priority (SSBU_VK_PREP=0 skips it).\r\n"
 "shader_prepare = first_run\r\n"
 "\r\n"
 "; profile = custom | low\r\n"
@@ -127,6 +127,11 @@ static const char *const k_default_ini =
 ";   on: the average frame time of the last second in the window title ('.. fps - 16.67 ms per frame') and as a\r\n"
 ";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
 "frame_time_overlay = off\r\n"
+"\r\n"
+"; pause_hint = first | always | off\r\n"
+";   The small \"PC SETTINGS  F1 \xC2\xB7 L3 + R3\" note at the bottom right when the game's pause menu opens. first: only at the\r\n"
+";   first pause after each start. always: at every pause. off: never.\r\n"
+"pause_hint = first\r\n"
 "\r\n"
 "; frame_rate = 60      (60 .. 120; EXPERIMENTAL above 60)\r\n"
 ";   60: the game as made. 61 .. 120: the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
@@ -244,6 +249,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
+        else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
         else unknown++;
     }
     if (f) fclose(f);

@@ -63,6 +63,15 @@ MENU = [
                                       ('Dettaglio texture', 'Livello di dettaglio'), 'Детализация текстур', 'LOD调整', 'LOD設定', 'LOD 조정')),
     ('MENU_OPTION_LIST_PC_ASPECT', T(ASPECT, ASPECT, 'Seitenverhältnis', "Format d'image", 'Relación de aspecto', 'Proporzioni',
                                      'Соотношение сторон', ASPECT, ASPECT, ASPECT)),
+    ('MENU_OPTION_LIST_PC_FPS', T('Experimental Frame Rate (next start)',      # frame_rate: experimental above 60, at the next start; no commas
+                                  # (no menu file has one) and no 'x' in the ja / cn / tw files: 'beta' there
+                                  ('フレームレート 実験的 (スタート時に変更)', 'FPS ベータ版 (スタート時に変更)', 'FPS Beta (スタート時に変更)'),
+                                  'Experimentelle Bildrate (nach Neustart)', "Fréquence d'images expérimentale (au redémarrage)",
+                                  ('Fotogramas por segundo experimentales (al reiniciar)', 'Fotogramas por segundo de prueba (al reiniciar)'),
+                                  'Frame rate sperimentale (al riavvio)', 'Частота кадров (эксперимент, после перезапуска)',
+                                  ('实验性帧率 (Restart)', 'FPS 试验版 (Restart)', 'FPS Beta (Restart)'),
+                                  ('實驗性幀率 (Restart)', 'FPS Beta (Restart)'),
+                                  ('실험적 프레임 레이트 (다음 시작 시)', '테스트 프레임 레이트 (다음 시작 시)', 'Experimental FPS (다음 시작 시)'))),
 ]
 CORE = [
     ('CORE_PC_AUTO', T('Auto', '自動', 'Auto', 'Auto', 'Automática', 'Automatica', 'Авто', ('自动', 'Auto'), ('自動', 'Auto'), '자동')),
@@ -85,6 +94,7 @@ CORE = [
     ('CORE_PC_LOD_P1', ALL('+1')),
 ]
 CORE += [('CORE_PC_RES_' + v.replace('.', ''), ALL(v)) for v in ('1.0', '1.2', '1.6', '2.4')]
+CORE += [('CORE_PC_FPS_90', ALL('90')), ('CORE_PC_FPS_120', ALL('120'))]
 LANGS = list(MENU[0][1])
 MOD = 'witchtime-pc-settings'
 OLD_MOD = 'b3recomp-pc-settings'                 # its name before the rename to Witch Time (2026-10-27)

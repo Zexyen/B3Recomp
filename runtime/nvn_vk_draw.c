@@ -50,6 +50,7 @@ static struct {
     int has_gpl, ext_gpl, ext_so;
     VkPhysicalDeviceMemoryProperties mp;
 } D;
+static int g_ck_on;                                /* [issue 26] SSBU_VK_CHECKPOINTS (ckpt, after nvn_vk_m4.c) */
 static void vkd_fail(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); printf("nvn_vk: FATAL: "); vprintf(fmt, ap); printf("\n"); va_end(ap); fflush(stdout); ExitProcess(6);
 }
@@ -89,6 +90,12 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.ext_gpl = has_name(dext, ndext, "VK_EXT_graphics_pipeline_library") && has_name(dext, ndext, "VK_KHR_pipeline_library"); D.ext_so = has_name(dext, ndext, "VK_EXT_shader_object");
     if (D.ext_gpl && vk_gpl_mode()) { D.exts[D.next++] = "VK_KHR_pipeline_library"; EXT(has_gpl, "VK_EXT_graphics_pipeline_library", gpl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT) }
 #undef EXT
+    {   /* [issue 26] SSBU_VK_CHECKPOINTS=1: NVIDIA's diagnostic checkpoints (ckpt) */
+        const char *e = getenv("SSBU_VK_CHECKPOINTS");
+        g_ck_on = e && atoi(e) && has_name(dext, ndext, "VK_NV_device_diagnostic_checkpoints");
+        if (g_ck_on) D.exts[D.next++] = "VK_NV_device_diagnostic_checkpoints";
+        if (e && atoi(e)) printf("nvn_vk: SSBU_VK_CHECKPOINTS=1: %s\n", g_ck_on ? "a checkpoint before every draw and dispatch (VK_NV_device_diagnostic_checkpoints); a lost device prints the last ones the GPU passed" : "the driver has no VK_NV_device_diagnostic_checkpoints: off");
+    }
     if (has_name(dext, ndext, "VK_KHR_push_descriptor") && !(getenv("SSBU_VK_PUSH") && !atoi(getenv("SSBU_VK_PUSH")))) { D.has_push = 1; D.exts[D.next++] = "VK_KHR_push_descriptor"; }
     vkGetPhysicalDeviceFeatures2(V.gpu, &D.f2);                    /* every supported feature of these structures is enabled */
     D.has_vids = D.has_vids && D.vids.vertexInputDynamicState; D.has_cbc = D.has_cbc && D.cbc.customBorderColors && D.cbc.customBorderColorWithoutFormat;
@@ -131,20 +138,27 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
 
 /* ---------------------------------------------------------------- memory: 64 MB blocks per memory type and class, first fit */
 typedef struct { int block; uint64_t off, size; void *map; VkDeviceMemory mem; } VMem;
-typedef struct { VkDeviceMemory mem; uint64_t size; void *map; uint32_t type; int cls, nfree, used; struct { uint64_t off, size; } fr[512]; } VBlock;
+typedef struct { VkDeviceMemory mem; uint64_t size; void *map; uint32_t type; int cls, nfree, used, sys; struct { uint64_t off, size; } fr[512]; } VBlock;
 static VBlock *g_blk[2048];
 static int g_nblk;
-static LONG64 g_mem_total, g_mem_leak;
+static LONG64 g_mem_total, g_mem_leak, g_mem_sys;
+static uint32_t g_vram_full;      /* [issue 22] bit per memory type: a new block of it failed with VK_ERROR_OUT_OF_DEVICE_MEMORY; cleared when a block is freed */
 static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
     VMem m = {-1, 0, 0, NULL, NULL};
-    uint32_t type = 32;
+    uint32_t type = 32, t0, alt = 32;
     for (uint32_t i = 0; i < D.mp.memoryTypeCount && type == 32; i++) if ((rq.memoryTypeBits >> i & 1) && (D.mp.memoryTypes[i].propertyFlags & want) == want) type = i;
     if (type == 32) vkd_fail("no memory type for flags 0x%x (bits 0x%x)", (unsigned)want, (unsigned)rq.memoryTypeBits);
+    /* [issue 22] when video memory is full, system memory the GPU reads over the bus: slower, but the game goes on (a GPU without
+     * ASTC holds the decoded RGBA8 textures, 16-25 times the size of the 8x8 / 10x10 blocks: 6.7 GB in a fight) */
+    for (uint32_t i = 0; i < D.mp.memoryTypeCount && alt == 32 && (D.mp.memoryHeaps[D.mp.memoryTypes[type].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT); i++)
+        if ( (rq.memoryTypeBits >> i & 1) && !(D.mp.memoryHeaps[D.mp.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
+            (D.mp.memoryTypes[i].propertyFlags & want & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == (want & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) alt = i;
+    t0 = type;
     uint64_t al = rq.alignment < 256 ? 256 : rq.alignment;
     for (int pass = 0; pass < 2; pass++) {
         for (int b = 0; b < g_nblk; b++) {
             VBlock *k = g_blk[b];
-            if (!k || k->type != type || k->cls != cls) continue;
+            if (!k || (k->type != t0 && !(g_vram_full >> t0 & 1 && k->type == alt)) || k->cls != cls) continue;
             for (int i = 0; i < k->nfree; i++) {
                 uint64_t start = (k->fr[i].off + al - 1) / al * al, end = k->fr[i].off + k->fr[i].size;
                 if (start + rq.size > end) continue;
@@ -165,7 +179,18 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
         VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         k->size = rq.size > (16u << 20) ? rq.size : (64u << 20); k->type = type; k->cls = rq.size > (16u << 20) ? 100 + b : cls;      /* large: a block of its own */
         ai.allocationSize = k->size; ai.memoryTypeIndex = type;
-        VkResult r = vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+        static LONG64 cap = -1;      /* SSBU_VK_VRAM_MB=N, TEST: video memory as full past N MB (a smaller card) */
+        if (cap < 0) { const char *e = getenv("SSBU_VK_VRAM_MB"); cap = e ? (LONG64)atoi(e) << 20 : 0; }
+        VkResult r = alt != 32 && (g_vram_full >> type & 1 || (cap && g_mem_total - g_mem_sys + (LONG64)k->size > cap)) ? VK_ERROR_OUT_OF_DEVICE_MEMORY : vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+        if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY && alt != 32) {
+            if (!(g_vram_full >> type & 1))
+                printf("nvn_vk: video memory full (a %llu MB block of memory type %u failed; %lld MB allocated, %lld MB of it in system memory): new blocks go to memory type %u in system memory until a block is freed\n",
+                       (unsigned long long)(k->size >> 20), type, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20), alt);
+            g_vram_full |= 1u << type;
+            type = k->type = ai.memoryTypeIndex = alt;
+            r = vkAllocateMemory(V.device, &ai, NULL, &k->mem);
+            if (r == VK_SUCCESS) { k->sys = 1; g_mem_sys += (LONG64)k->size; }
+        }
         if (r != VK_SUCCESS) vkd_fail("vkAllocateMemory of %llu MB (type %u): %s; %lld MB allocated so far", (unsigned long long)(k->size >> 20), type, vk_result_name(r), (long long)(g_mem_total >> 20));
         if (D.mp.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) VKC(vkMapMemory(V.device, k->mem, 0, VK_WHOLE_SIZE, 0, &k->map));
         k->nfree = 1; k->fr[0].off = 0; k->fr[0].size = k->size;
@@ -179,7 +204,7 @@ static VMem vmem_alloc(VkMemoryRequirements rq, VkFlags want, int cls) {
 static void vmem_free(VMem m) {
     if (m.block < 0) return;
     VBlock *k = g_blk[m.block];
-    if (--k->used == 0 && k->cls >= 100) { vkFreeMemory(V.device, k->mem, NULL); g_mem_total -= (LONG64)k->size; free(k); g_blk[m.block] = NULL; return; }
+    if (--k->used == 0 && k->cls >= 100) { vkFreeMemory(V.device, k->mem, NULL); g_mem_total -= (LONG64)k->size; g_vram_full = 0; if (k->sys) g_mem_sys -= (LONG64)k->size; free(k); g_blk[m.block] = NULL; return; }
     int i = 0;
     while (i < k->nfree && k->fr[i].off < m.off) i++;
     if (i > 0 && k->fr[i - 1].off + k->fr[i - 1].size == m.off) { k->fr[i - 1].size += m.size; if (i < k->nfree && k->fr[i].off == m.off + m.size) { k->fr[i - 1].size += k->fr[i].size; memmove(&k->fr[i], &k->fr[i + 1], sizeof k->fr[0] * (size_t)(k->nfree - i - 1)); k->nfree--; } return; }
@@ -470,7 +495,7 @@ static void slot_wait(Slot *s) {
     LONG64 t0 = tk();
     VkResult r = vkWaitForFences(V.device, 1, &s->fence, VK_TRUE, 20000000000ull);
     g_tm[0] += tk() - t0;
-    if (r != VK_SUCCESS) vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r));
+    if (r != VK_SUCCESS) { ckpt_dump(); vkd_fail("a submitted command buffer did not finish within 20 s (%s): the GPU is stuck or the device is lost", vk_result_name(r)); }
     VKC(vkResetFences(V.device, 1, &s->fence));
     if (g_ts_on > 0) {                             /* SSBU_VK_GPUTIME=1: the GPU's own clock at the first and the last command of this buffer */
         uint64_t ts[2] = {0, 0};
@@ -633,6 +658,11 @@ static VkFormat tex_vkfmt(int nf, int *expand, int *decode) {
     if (nf >= 0x79 && nf <= 0x94) {
         if (astc) return (VkFormat)(VK_FORMAT_ASTC_4x4_UNORM_BLOCK + 2 * ((nf - 0x79) % 14) + (nf >= 0x87));
         *decode = 1;
+        /* [issue 22] decoded, then BC3 (tex_encode_bc3): RGBA8 is 16-25 times the 8x8 / 10x10 blocks, 6.7 GB in a fight;
+         * BC3 is a quarter of it. SSBU_VK_ASTC_BC=0: RGBA8 as before */
+        static int bc = -1;
+        if (bc < 0) bc = !(getenv("SSBU_VK_ASTC_BC") && !atoi(getenv("SSBU_VK_ASTC_BC")));
+        if (bc) return nf >= 0x87 ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
         return nf >= 0x87 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     }
     switch (nf) {
@@ -1012,7 +1042,8 @@ static VTex *vt_get2(Tex *t, int sync) {
         vt->magic = 0x56544558; vt->t = t;
         vt->fmt = tex_vkfmt(b->format, &vt->expand, &vt->decode);
         if (!vt->fmt || !nvn_front_fmt(b->format, &f)) { static char msg[80]; snprintf(msg, sizeof msg, "texture format 0x%x", b->format); nvn_vk_missing(msg); vt->fmt = VK_FORMAT_R8G8B8A8_UNORM; nvn_front_fmt(0x25, &f); }
-        vt->bpb = vt->decode ? 4 : vt->expand ? f.bpb / 3 * 4 : f.bpb; vt->bw = vt->decode ? 1 : f.bw; vt->bh = vt->decode ? 1 : f.bh;
+        int bc3 = vt->decode && (vt->fmt == VK_FORMAT_BC3_UNORM_BLOCK || vt->fmt == VK_FORMAT_BC3_SRGB_BLOCK);
+        vt->bpb = bc3 ? 16 : vt->decode ? 4 : vt->expand ? f.bpb / 3 * 4 : f.bpb; vt->bw = bc3 ? 4 : vt->decode ? 1 : f.bw; vt->bh = bc3 ? 4 : vt->decode ? 1 : f.bh;
         vt->aspect = fmt_aspect(vt->fmt);
         vt->w = b->width > 0 ? b->width : 1; vt->h = b->height > 0 ? b->height : 1; vt->d = b->depth > 0 ? b->depth : 1;
         vt->levels = nvn_front_tex_levels(t); vt->layers = nvn_front_tex_layers(t); vt->samples = b->samples > 1 ? b->samples : 1; vt->is3d = b->target == 2;
@@ -1083,7 +1114,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         g_put_vt = vt;
         cmd_begin();
         LARGE_INTEGER fru0, fru1, fruf; QueryPerformanceCounter(&fru0);
-        if (!nvn_front_tex_read(t, vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
+        if (!nvn_front_tex_read(t, vt->decode && vt->bw == 4 ? 2 : vt->decode, vt_put)) { static int n; if (n++ < 20) printf("nvn_vk: texture %dx%d format 0x%x: its memory is not readable; not uploaded\n", t->b.width, t->b.height, t->b.format); }
         R.uploads++;
         if (framelog_on()) printf("FRU f%lld upload %p fmt 0x%x %dx%d levels %d decode %d mem %p draw %lld %.2f ms\n", nvn_front_frame_next(), (void *)t, t->b.format, t->b.width, t->b.height, t->b.levels, vt->decode, (void *)t->mem, (long long)R.frame_draws,
                                   (QueryPerformanceCounter(&fru1), QueryPerformanceFrequency(&fruf), (double)(fru1.QuadPart - fru0.QuadPart) * 1000.0 / (double)fruf.QuadPart));      /* TEST ONLY: SSBU_VK_FRAMELOG */
@@ -1288,6 +1319,55 @@ static void glsl_dump(int serial, int s, uint64_t h, const char *glsl) {
     if (f) { fputs(glsl, f); fclose(f); }
 }
 #include "nvn_vk_m4.c"                             /* session 4: stages, pipelines, workers (M4) */
+/* [issue 26] SSBU_VK_CHECKPOINTS=1: a GPU that hangs (VK_ERROR_DEVICE_LOST after the 20 s fence wait) on NVIDIA's Windows driver,
+ * where this machine has none. Before every draw and dispatch a checkpoint (VK_NV_device_diagnostic_checkpoints) whose marker is
+ * the number of a record of the frame and the stages (hb: the hash of the machine code and constants, the same on any machine);
+ * when the device is lost, the last markers the GPU passed per pipeline stage and the record after them are printed: the draw
+ * that never finished is at or just after them. */
+static PFN_vkCmdSetCheckpointNV vkCmdSetCheckpointNV_;
+static PFN_vkGetQueueCheckpointDataNV vkGetQueueCheckpointDataNV_;
+#define CK_N 8192
+typedef struct { long long frame; uint32_t draw; uint8_t kind; uint64_t hb[3]; } CkRec;
+static CkRec g_ck[CK_N];
+static uint32_t g_ckn;                             /* records made; marker = 1 + the record's number */
+static void ckpt(int kind, const VStage *a, const VStage *b, const VStage *c) {
+    if (!g_ck_on || !vkCmdSetCheckpointNV_ || !R.cmd) return;
+    uint32_t i = g_ckn++ % CK_N;
+    g_ck[i].frame = nvn_front_frame_next(); g_ck[i].draw = (uint32_t)R.frame_draws; g_ck[i].kind = (uint8_t)kind;
+    g_ck[i].hb[0] = a ? a->hb : 0; g_ck[i].hb[1] = b ? b->hb : 0; g_ck[i].hb[2] = c ? c->hb : 0;
+    vkCmdSetCheckpointNV_(R.cmd, (void *)(uintptr_t)g_ckn);
+}
+static void ckpt_print(const char *what, uint32_t m) {
+    if (!m || m > g_ckn || g_ckn - m >= CK_N) { printf("  %s: marker %u (no record)\n", what, m); return; }
+    const CkRec *k = &g_ck[(m - 1) % CK_N];
+    printf("  %s: marker %u of %u: frame %lld, draw %u of the frame, %s, stages hb %016llx %016llx %016llx\n", what, m, g_ckn, k->frame, k->draw,
+           k->kind == 2 ? "END of that draw or dispatch" : k->kind ? "before a compute dispatch" : k->hb[2] ? "before a draw (vertex, fragment, tessellation evaluation)" : "before a draw (vertex, fragment)", (unsigned long long)k->hb[0], (unsigned long long)k->hb[1], (unsigned long long)k->hb[2]);
+}
+static void ckpt_dump(void) {
+    if (!g_ck_on || !vkGetQueueCheckpointDataNV_) return;
+    VkCheckpointDataNV d[32];
+    uint32_t n = 0;
+    vkGetQueueCheckpointDataNV_(V.queue, &n, NULL);
+    if (n > 32) n = 32;
+    for (uint32_t i = 0; i < n; i++) { d[i].sType = VK_STRUCTURE_TYPE_CHECKPOINT_DATA_NV; d[i].pNext = NULL; }
+    vkGetQueueCheckpointDataNV_(V.queue, &n, d);
+    printf("nvn_vk_checkpoints: the device is lost or stuck; %u checkpoint(s) the GPU passed last (pipeline stage: marker):\n", n);
+    uint32_t lo = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t m = (uint32_t)(uintptr_t)d[i].pCheckpointMarker;
+        char what[64]; snprintf(what, sizeof what, "passed at pipeline stage 0x%x", (unsigned)d[i].stage);
+        ckpt_print(what, m);
+        if (m && (!lo || m < lo)) lo = m;
+    }
+    /* Markers stand before each draw / dispatch and at its end (kind 2). Everything before the oldest marker passed has finished
+     * (#26: the next draw was blamed). A "before" marker: the GPU is in that draw; an "end" marker: in the commands after it
+     * (copies, clears, barriers, a pass change) or at the start of the next one. */
+    if (lo && lo <= g_ckn && g_ckn - lo < CK_N) {
+        if (g_ck[(lo - 1) % CK_N].kind != 2) ckpt_print("STOPPED IN this draw or dispatch (the oldest marker passed is the one before it)", lo);
+        else { ckpt_print("STOPPED AFTER the end of this draw or dispatch, in the commands that follow it, before", lo); ckpt_print("the next marker", lo + 1); }
+    }
+    fflush(stdout);
+}
 #if 0   /* SUPERSEDED by nvn_vk_m4.c (session 3's stages and pipelines made at the draw); kept only until someone deletes the block */
 /* ---------------------------------------------------------------- stages: machine code -> Vulkan GLSL -> SPIR-V -> module */
 typedef struct { uint8_t unit, dim, shadow; uint16_t binding; } VSmp;
@@ -2979,7 +3059,9 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     if (nw) vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cp);
     vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, v->cl, 0, 2, sets, 0, NULL);
+    ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
+    ckpt(2, NULL, NULL, NULL);
     g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
     if (v->images) storage_barrier();              /* [witchtime] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
@@ -3296,6 +3378,7 @@ static int draw_prepare(unsigned prim) {
         }
     }
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
+    ckpt(0, vs, fs, tes);                          /* [issue 26] */
     return 1;
 }
 
@@ -3901,6 +3984,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdDraw(R.cmd, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
@@ -3914,6 +3998,7 @@ static void exec(const Cmd *m, int depth) {
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(R.cmd, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
+        ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         break;
@@ -3946,6 +4031,7 @@ static void exec(const Cmd *m, int depth) {
             else vkCmdDraw(R.cmd, d[0], d[1], d[2], d[3]);
             R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         }
+        ckpt(2, NULL, NULL, NULL);                 /* [issue 26] the end of the indirect draws (one "before" marker for all of them) */
         break;
     }
     case OP_COPY_BUF_TEX: cb_sync(); if (g_cb_nkept) cb_kept_all(3); copy_buf_tex(m); break;
@@ -4670,7 +4756,7 @@ static void prep_first_hold(LONG64 frame) {
     static int done, mode = -1;
     if (done) return;
     if (mode < 0) { const char *e = getenv("SSBU_VK_PREPARE"); mode = e ? (!_stricmp(e, "background") ? 1 : !_stricmp(e, "off") ? 2 : 0) : gfx_options()->shader_prepare; }
-    if (mode || !g_prep_thread || g_prep_marked || g_prep_limited || !g_ovl.bar_arg) { done = 1; if (frame < 3) printf("nvn_vk_prep: first-run screen not shown: %s\n", mode == 1 ? "shader_prepare = background" : mode == 2 ? "shader_prepare = off" : !g_prep_thread ? "no preparation on this device (no stage libraries)" : g_prep_marked ? "the marker of an earlier run is there: everything was prepared for this GPU, driver and version; straight to the game" : "test limit"); return; }
+    if (mode || !g_prep_thread || g_prep_marked || g_prep_limited || !g_ovl.bar_arg) { done = 1; if (frame < 3) printf("nvn_vk_prep: first-run screen not shown: %s\n", mode == 1 ? "shader_prepare = background" : mode == 2 ? "shader_prepare = off" : !g_prep_thread ? "the preparation is off" : g_prep_marked ? "the marker of an earlier run is there: everything was prepared for this GPU, driver and version; straight to the game" : "test limit"); return; }
     if (g_prep_state == 2 || g_prep_state == 3) { done = 1; return; }
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     LONG64 t0 = tk(), tlog = t0;
@@ -5036,9 +5122,9 @@ swap: ;
         memcpy(last, g_tm, sizeof last); last_sets = R.sets; last_flush = R.flushes; last_reused = R.sets_reused; last_disp = R.dispatches;
     }
     if (frame % 600 == 0)
-        printf("nvn_vk: totals at frame %lld: %lld images made (%lld live, %lld views), %lld uploads (%lld MB), %lld shader modules, %lld pipelines, %lld descriptor sets, %lld command buffers, %lld ring wraps, %lld feedback passes, %lld MB device memory\n",
+        printf("nvn_vk: totals at frame %lld: %lld images made (%lld live, %lld views), %lld uploads (%lld MB), %lld shader modules, %lld pipelines, %lld descriptor sets, %lld command buffers, %lld ring wraps, %lld feedback passes, %lld MB device memory (%lld MB of it in system memory)\n",
                (long long)frame, (long long)R.images, (long long)R.images_live, (long long)R.views, (long long)R.uploads, (long long)(R.upload_bytes >> 20), (long long)R.modules, (long long)R.pipelines, (long long)R.sets,
-               (long long)R.flushes, (long long)R.ring_wraps, (long long)R.feedback, (long long)(g_mem_total >> 20));
+               (long long)R.flushes, (long long)R.ring_wraps, (long long)R.feedback, (long long)(g_mem_total >> 20), (long long)(g_mem_sys >> 20));
     if (frame % 600 == 0 && R.dispatches) {
         LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
         printf("nvn_vk: compute at frame %lld: %lld dispatches, %lld KB copied back to guest memory, draws using a vertex buffer written by compute in the same batch: %lld, copy-backs forced inside a batch: %lld, waits for the GPU before a copy-back: %lld (%.1f ms in all), %lld buffers made; words the guest wrote into a range pending copy-back: %lld (also written by compute: %lld)\n",
@@ -5211,6 +5297,7 @@ static void vkd_init(void) {
     VKD(X)
 #undef X
     vkCmdSetVertexInputEXT = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(V.device, "vkCmdSetVertexInputEXT");
+    if (g_ck_on) { vkCmdSetCheckpointNV_ = (PFN_vkCmdSetCheckpointNV)vkGetDeviceProcAddr(V.device, "vkCmdSetCheckpointNV"); vkGetQueueCheckpointDataNV_ = (PFN_vkGetQueueCheckpointDataNV)vkGetDeviceProcAddr(V.device, "vkGetQueueCheckpointDataNV"); }      /* [issue 26] */
     if (D.has_push) { vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(V.device, "vkCmdPushDescriptorSetKHR"); if (!vkCmdPushDescriptorSetKHR) D.has_push = 0; }
     if (D.has_eds3) {
 #define X3(n) n = (PFN_##n)vkGetDeviceProcAddr(V.device, #n); if (!n) vkd_fail("the device has VK_EXT_extended_dynamic_state3 but no " #n);

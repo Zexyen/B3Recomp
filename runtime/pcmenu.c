@@ -2,8 +2,8 @@
  *
  * Open: F1 on the keyboard, or L3 + R3 (both sticks pressed) on player 1's controller; seen at the game's own pad reads
  * (pcmenu_gate, nnhid.c), so nothing runs while it is closed but one key and one mask test per read. While it is open:
- *   - the game is held: every guest thread stops at its next SDK call (hostrt.c g_guest_frozen, the console's suspension, as
- *     for a minimised window); its sound runs dry; the game's pad reads (none while held) get an idle pad, and after the menu
+ *   - the game is held: every guest thread stops at its next SDK call (hostrt.c g_guest_frozen, the console's suspension);
+ *     its sound runs dry; the game's pad reads (none while held) get an idle pad, and after the menu
  *     closes too, until the buttons that closed it are let go;
  *   - a thread of its own reads player 1 (nnhid_menu_read: test scripts, the keyboard player's keys, the first controller),
  *     the arrow keys / Enter / Escape / F1 and the mouse, and posts a job to the render thread about 60 times a second that
@@ -17,6 +17,7 @@
  * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
  * a subset of Noto Serif (SIL OFL 1.1, third_party/OFL-NotoSerif.txt), embedded with #embed; opaque, dark, gold lines.
+ * One row is not graphics.ini's: button_prompts, of controllers.ini, shown by the game when it runs on (prompts.c).
  * Test aids: SSBU_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), SSBU_PCMENU_OPEN=<seconds> opens it that long after the first pad
  * read (for scripted runs without keys), SSBU_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
@@ -44,12 +45,15 @@ void display_vsync_apply(void);                            /* display.c */
 int display_window_apply(void);
 void display_mouse_want(int on);
 int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
+const char *nnpad_prompts_setting(void);
+int nnpad_prompts_set(const char *val);
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART };
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
+#define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
     int apply, optional;
-    const char *val[9], *name[9];
+    const char *val[ROW_VALUES], *name[ROW_VALUES];
 } Row;
 static const Row k_rows[] = {
     {"window", "Display mode", "Windowed: a window of the size below. Borderless and fullscreen cover the monitor the window is on.", NULL, "windowed", A_WINDOW, 0,
@@ -60,9 +64,12 @@ static const Row k_rows[] = {
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
     {"cutscene_fps", "Cutscene frame rate", "The title, menus and cutscenes at 30 fps as on the console, or at 60 like gameplay. Movies keep their own rate.", "SSBU_CUTSCENE_FPS", "30", A_CUT, 0,
      {"30", "60"}, {"30 fps", "60 fps"}},
+    {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
+     {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at (Bayonetta 3: 1600 \xC3\x97 900 at 1.0). The first start at a new scale prepares its shaders for about two minutes once.", "SSBU_VK_SCALE", "1.0", A_RESTART, 0,
-     {"0.5", "0.75", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
-     {"0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.75 \xE2\x80\x94 1200 \xC3\x97 675", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",
+     {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
+     {"0.4 \xE2\x80\x94 640 \xC3\x97 360", "0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.6 \xE2\x80\x94 960 \xC3\x97 540", "0.75 \xE2\x80\x94 1200 \xC3\x97 675",
+      "0.8 \xE2\x80\x94 1280 \xC3\x97 720", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",
       "2.0 \xE2\x80\x94 3200 \xC3\x97 1800", "2.4 \xE2\x80\x94 3840 \xC3\x97 2160", "3.0 \xE2\x80\x94 4800 \xC3\x97 2700"}},
     {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
      {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
@@ -70,6 +77,8 @@ static const Row k_rows[] = {
      {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
     {"aspect", "Aspect ratio", "Keep: the 16:9 picture keeps its shape, with black bars on a wider or taller window. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep 16:9", "Stretch"}},
+    {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
+     {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
 };
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
@@ -84,7 +93,7 @@ static int g_env_cut, g_env_set[NROW];
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
-static int row_count(int i) { int n = 0; while (n < 9 && k_rows[i].val[n]) n++; return n; }
+static int row_count(int i) { int n = 0; while (n < ROW_VALUES && k_rows[i].val[n]) n++; return n; }
 static int find_val(int i, const char *v) {
     for (int k = 0; k < row_count(i); k++) {
         if (!_stricmp(k_rows[i].val[k], v)) return k;
@@ -98,8 +107,9 @@ static void menu_init(void) {                              /* the first opening:
     char v[64];
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
-        int have = r->apply == A_SIZE || gfx_ini_get(r->key, v, sizeof v);
+        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || gfx_ini_get(r->key, v, sizeof v);
         if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* SSBU_WINDOW included */
+        else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (!have) snprintf(v, sizeof v, "%s", r->dflt);
         g_shown[i] = !r->optional || have;
         if ((g_cur[i] = find_val(i, v)) < 0) snprintf(g_raw[i], sizeof g_raw[i], "%s", v);
@@ -304,9 +314,16 @@ static int hint_on(void) {
 }
 static DWORD WINAPI hint_late_job(LPVOID arg) { (void)arg; Sleep(500); nvn_front_post_pcmenu(); return 0; }
 void pcmenu_hint(void) {                                   /* nnfs.c, a guest thread: the pause menu is opening */
-    static int ms = -1;
-    if (ms < 0) { const char *e = getenv("SSBU_PCMENU_HINT"); ms = e ? atoi(e) * 1000 : 8000; }      /* seconds; 0 = never */
-    if (g_open || !ms) return;
+    static int ms = -1, shown;
+    static char when[16] = "first";                        /* graphics.ini pause_hint: first (the first pause of each start), always, off (issue #42) */
+    if (ms < 0) {
+        const char *e = getenv("SSBU_PCMENU_HINT");        /* seconds; 0 = never */
+        ms = e ? atoi(e) * 1000 : 8000;
+        gfx_ini_get("pause_hint", when, sizeof when);
+        if (!_stricmp(when, "off")) ms = 0;
+    }
+    if (g_open || !ms || (shown && _stricmp(when, "always"))) return;
+    shown = 1;
     if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
     if (!g_inited) return;
     g_hint_until = GetTickCount64() + (ULONGLONG)ms;
@@ -318,7 +335,6 @@ void pcmenu_hint(void) {                                   /* nnfs.c, a guest th
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
 int pcmenu_visible(void) { return g_open || hint_on(); }
-int pcmenu_holds(void) { return g_open != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_open = -1;
     int open = g_open != 0;
@@ -346,6 +362,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (g_lock_why[i] || k < 0 || k >= row_count(i) || k == g_cur[i]) return;
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
+    else if (r->apply == A_PROMPTS) ok = nnpad_prompts_set(r->val[k]);
     else ok = gfx_option_set(r->key, r->val[k]);
     if (!ok) return;
     g_cur[i] = k;
@@ -443,7 +460,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
     }
     InterlockedExchange(&g_release, 0xff);                 /* each player reads an idle pad until it has let go of everything */
     InterlockedExchange(&g_open, 0);
-    InterlockedExchange(&g_guest_frozen, 0);               /* (nnmisc.c's watcher freezes it again within 20 ms if the window is in the background) */
+    InterlockedExchange(&g_guest_frozen, 0);
     if (nnpad_mouse_cfg(&sens, &inv)) display_mouse_want(1);
     printf("pcmenu: closed; the game goes on\n");
     fflush(stdout);

@@ -16,6 +16,27 @@ body {
 }
 
 .screen { display: flex; flex-direction: column; width: 100%; height: 100%; }
+
+/* ---- motion: a screen fades in as it opens (data-if makes it anew), its parts rise a little after ---- */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(14dp); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(-24dp); } to { opacity: 1; transform: translateX(0); } }
+@keyframes dial-in { from { opacity: 0; transform: rotate(-40deg) scale(0.92); } to { opacity: 1; transform: rotate(0deg) scale(1); } }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.35; } }
+.screen { animation: 0.3s cubic-out fade-in; }
+.header, .body .col, .brand { animation: 0.45s cubic-out rise-in; }
+.panel, .caption, .footer { animation: 0.45s 0.1s cubic-out rise-in; }
+.menu .item { animation: 0.4s cubic-out slide-in; }
+.menu .item:nth-child(2) { animation: 0.4s 0.05s cubic-out slide-in; }
+.menu .item:nth-child(3) { animation: 0.4s 0.1s cubic-out slide-in; }
+.menu .item:nth-child(4) { animation: 0.4s 0.15s cubic-out slide-in; }
+.menu .item:nth-child(5) { animation: 0.4s 0.2s cubic-out slide-in; }
+.menu .item:nth-child(6) { animation: 0.4s 0.25s cubic-out slide-in; }
+.menu .item:nth-child(7) { animation: 0.4s 0.3s cubic-out slide-in; }
+.menu .item:nth-child(8) { animation: 0.4s 0.35s cubic-out slide-in; }
+.menu .item:nth-child(9) { animation: 0.4s 0.4s cubic-out slide-in; }
+.dial .ring-hour, .dial .ring-min { animation: 0.9s cubic-out dial-in; }
+.dial .ring-outer, .dial .ring-inner, .dial .num { animation: 0.6s 0.1s cubic-out fade-in; }
 .bg-title { decorator: image(gen:glow?x=0.78&y=0.45&rx=0.7&ry=0.9&c1=24112e&c0=0a0610&stop=0.62 fill); }
 .bg-top { decorator: image(gen:glow?x=0.5&y=0&rx=0.8&ry=0.8&c1=1d0f26&c0=0a0610&stop=0.65 fill); }
 .bg-left { decorator: image(gen:glow?x=0.28&y=0.5&rx=0.6&ry=0.8&c1=22102c&c0=0a0610&stop=0.65 fill); }
@@ -36,18 +57,19 @@ body {
 
 /* ---- header and footer bars ---- */
 .header { display: flex; flex-direction: row; align-items: center; gap: 22dp; height: 96dp; margin: 0 48dp; border-bottom: 1dp #c9a35a66; flex-shrink: 0; }
-.header .crumb { font-family: "Cinzel"; font-size: 15dp; letter-spacing: 4dp; color: #c9a35a; tab-index: auto; nav: auto; }
+.header .crumb { font-family: "Cinzel"; font-size: 15dp; letter-spacing: 4dp; color: #c9a35a; tab-index: auto; nav: auto; transition: color 0.15s cubic-out; }
 .header .crumb:hover, .header .crumb:focus-visible { color: #e8cf94; }
 .header h1 { font-family: "Cinzel"; font-weight: 500; font-size: 30dp; letter-spacing: 4dp; }
 .header .aside { margin-left: auto; font-size: 16dp; letter-spacing: 1dp; color: #b9aabd; }
 .footer { display: flex; flex-direction: row; align-items: center; gap: 26dp; height: 64dp; margin: 0 48dp; border-top: 1dp #c9a35a66; font-size: 16dp; letter-spacing: 1dp; color: #b9aabd; flex-shrink: 0; }
 .footer .spacer { flex: 1; }
 .hint { display: flex; flex-direction: row; align-items: center; gap: 10dp; }
+.glyph { width: 30dp; height: 30dp; }
 .key { width: 26dp; height: 26dp; border: 1dp #efe6d8; border-radius: 13dp; text-align: center; line-height: 24dp; font-size: 14dp; font-weight: 600; color: #efe6d8; }
 .key.wide { width: auto; padding: 0 8dp; border-radius: 4dp; font-size: 13dp; }
 
 /* ---- buttons ---- */
-.button { display: block; height: 52dp; line-height: 52dp; padding: 0 26dp; border: 1dp #c9a35a; color: #e8cf94; font-family: "Cinzel"; font-size: 15dp; letter-spacing: 3dp; text-align: center; white-space: nowrap; tab-index: auto; nav: auto; }
+.button { display: block; height: 52dp; line-height: 52dp; padding: 0 26dp; border: 1dp #c9a35a; color: #e8cf94; font-family: "Cinzel"; font-size: 15dp; letter-spacing: 3dp; text-align: center; white-space: nowrap; tab-index: auto; nav: auto; transition: background-color border-color color 0.18s cubic-out; }
 .button:hover, .button:focus-visible { background-color: #c9a35a26; border-color: #e8cf94; }
 .button.primary { background-color: #e0338a; border-color: #e0338a; color: #0a0610; font-weight: 600; font-size: 17dp; letter-spacing: 4dp; }
 .button.primary:hover, .button.primary:focus-visible { background-color: #f04a9c; border-color: #efe6d8; }
@@ -62,10 +84,12 @@ body {
 .tagline { font-family: "Cormorant Garamond"; font-style: italic; font-size: 22dp; color: #b9aabd; }
 .menu { display: flex; flex-direction: column; gap: 2dp; }
 .menu .item { display: flex; flex-direction: row; align-items: center; gap: 18dp; height: 48dp; font-family: "Cinzel"; font-size: 24dp; letter-spacing: 4dp; color: #efe6d8; tab-index: auto; nav: vertical; }
-.menu .item .mark { width: 12dp; height: 12dp; transform: rotate(45deg); background-color: #e0338a; visibility: hidden; }
-.menu .item .trail { width: 220dp; height: 1dp; decorator: image(gen:fade?c=e0338a fill); visibility: hidden; }
+.menu .item .mark { width: 12dp; height: 12dp; transform: rotate(-45deg) scale(0.4); background-color: #e0338a; opacity: 0; transition: opacity transform 0.2s cubic-out; }
+.menu .item .trail { width: 0; height: 1dp; decorator: image(gen:fade?c=e0338a fill); opacity: 0; transition: width opacity 0.3s cubic-out; }
+.menu .item { transition: color 0.15s cubic-out; }
 .menu .item:hover, .menu .item:focus-visible { color: #e0338a; font-size: 30dp; }
-.menu .item:hover .mark, .menu .item:focus-visible .mark, .menu .item:hover .trail, .menu .item:focus-visible .trail { visibility: visible; }
+.menu .item:hover .mark, .menu .item:focus-visible .mark { opacity: 1; transform: rotate(45deg) scale(1); }
+.menu .item:hover .trail, .menu .item:focus-visible .trail { width: 220dp; opacity: 1; }
 .menu .item.muted { color: #a99bb0; }
 .title-right { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22dp; width: 520dp; flex-shrink: 0; }
 .caption { display: flex; flex-direction: column; align-items: center; gap: 4dp; text-align: center; }
@@ -84,8 +108,9 @@ body {
 .dial .moon { left: 168dp; top: 168dp; width: 104dp; height: 104dp; }
 .dial .num { width: 60dp; height: 24dp; line-height: 24dp; text-align: center; font-family: "Cinzel"; font-size: 20dp; color: #c9a35a; }
 .dial .hand { left: 218dp; width: 4dp; transform-origin: 50% 100%; }
-.dial .hand.long { top: 93dp; height: 127dp; background-color: #efe6d8; }
-.dial .hand.accent { top: 75dp; height: 145dp; background-color: #e0338a; transform: rotate(-45deg); }
+/* turned to the local time by the model (hour_deg, minute_deg) */
+.dial .hand.hour { top: 93dp; height: 127dp; background-color: #efe6d8; }
+.dial .hand.minute { top: 75dp; height: 145dp; background-color: #e0338a; }
 .dial .pin { left: 213dp; top: 213dp; width: 14dp; height: 14dp; border-radius: 7dp; background-color: #e0338a; }
 
 /* the build screen's dial: smaller, with the progress ring */
@@ -129,7 +154,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .row .right { color: #b9aabd; }
 .row .diamond { width: 10dp; height: 10dp; flex-shrink: 0; }
 .row.done .diamond { background-color: #c9a35a; }
-.row.run .diamond { background-color: transparent; border: 2dp #e0338a; }
+.row.run .diamond { background-color: transparent; border: 2dp #e0338a; animation: 0.8s sine-in-out infinite alternate pulse; }
 .row.run .right { color: #e0338a; }
 .row.wait { color: #a99bb0; }
 .row.wait .diamond { background-color: transparent; border: 1dp #a99bb0; }
@@ -150,7 +175,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 /* ---- mods ---- */
 /* drawn by gen:pill (smooth edges, 2x the 58x30dp box); borders would be jagged and hover's thicker one shifts the knob */
 .switch { position: relative; width: 58dp; height: 30dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=116&h=60&c=c9a35a&a=153&l=2 fill); }
-.switch .knob { position: absolute; left: 4dp; top: 4dp; width: 22dp; height: 22dp; decorator: image(gen:pill?w=44&h=44&f=c9a35a fill); }
+.switch .knob { position: absolute; left: 4dp; top: 4dp; width: 22dp; height: 22dp; decorator: image(gen:pill?w=44&h=44&f=c9a35a fill); transition: left 0.18s cubic-out; }
 .switch.on { decorator: image(gen:pill?w=116&h=60&f=e0338a fill); }
 .switch.on .knob { left: 32dp; decorator: image(gen:pill?w=44&h=44&f=0a0610 fill); }
 .switch:focus-visible, .switch:hover { decorator: image(gen:pill?w=116&h=60&c=efe6d8&l=4 fill); }
@@ -165,10 +190,10 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .setting { tab-index: auto; nav: vertical; padding: 10dp 0; }
 .setting:focus-visible .name, .setting:hover .name { color: #e0338a; }
 .setting .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
-.setting .name { font-size: 21dp; }
+.setting .name { font-size: 21dp; transition: color 0.15s cubic-out; }
 .setting .note { font-size: 15dp; color: #b9aabd; }
 .chooser { display: flex; flex-direction: row; align-items: center; width: 320dp; flex-shrink: 0; }
-.chooser .arrow { width: 44dp; height: 44dp; line-height: 44dp; text-align: center; font-size: 22dp; color: #c9a35a; }
+.chooser .arrow { width: 44dp; height: 44dp; line-height: 44dp; text-align: center; font-size: 22dp; color: #c9a35a; transition: color 0.15s cubic-out; }
 .chooser .arrow:hover { color: #efe6d8; }
 .chooser .value { flex: 1; text-align: center; font-family: "Cinzel"; font-size: 18dp; letter-spacing: 2dp; }
 .note-line { font-family: "Cormorant Garamond"; font-style: italic; font-size: 19dp; color: #b9aabd; margin-top: 14dp; }

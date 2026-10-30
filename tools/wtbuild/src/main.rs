@@ -138,6 +138,10 @@ fn main() {
             let mods = opt("--out").unwrap_or_else(|| repo.join("mods"));
             text::run(&repo, &romfs, opt("--dump").as_deref(), &mods, &|_| {}, &mut |l| println!("{}", l)).unwrap_or_else(|e| die(e));
         }
+        Some("sha256") if args.len() == 2 => {
+            // the launcher's updater checks a downloaded release with it
+            println!("{}", util::sha256_file(Path::new(&args[1])).unwrap_or_else(|e| die(format!("{}: {}", args[1], e))));
+        }
         _ => die("usage: see tools/wtbuild/README.md"),
     }
 }

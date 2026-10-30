@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <map>
 #include <vector>
+#include "../../runtime/prompt_art.h"
 
 // Pictures by name, with parameters after '?' (colors as rrggbb, alpha 0-255):
 //   gen:glow?x=&y=&rx=&ry=&c1=&c0=&stop=   soft elliptic glow c1 at (x, y) fading to c0 at stop (the screen backgrounds)
@@ -13,6 +14,7 @@
 //   gen:fade?c=&a=                         c fading out from left to right (the selected menu row's line)
 //   gen:pill?w=&h=&f=&c=&a=&l=             a w x h texel rounded bar filled with f (if given), its edge c l texels
 //                                          thick (if given): the switches; w = h is a disc. RmlUi's border-radius is jagged
+//   gen:glyph?n=&c=                        a button prompt, as the game shows it: n = a b cross circle enter esc
 namespace {
 
 struct Params {
@@ -174,6 +176,33 @@ Image pill(const Params& p)
 	return im;
 }
 
+Image glyph(const Params& p)
+{
+	std::vector<uint8_t> s(S * S);
+	const auto n = p.v.count("n") ? p.v.at("n") : Rml::String();
+	if (n == "cross")
+		ps_cross(s.data());
+	else if (n == "circle")
+		ps_circle(s.data());
+	else if (n == "enter")
+		keycap(s.data(), "ENT");
+	else if (n == "esc")
+		keycap(s.data(), "ESC");
+	else
+		letter_disc(s.data(), n == "b" ? "B" : "A");
+	// the middle of the cell, two subsamples to a texel
+	enum { from = 6 * SS, side = 28 * SS / 2 };
+	Image im(side, side);
+	const Rml::Colourb c = p.color("c", {239, 230, 216, 255});
+	for (int y = 0; y < side; y++)
+		for (int x = 0; x < side; x++)
+		{
+			const uint8_t* q = &s[(from + y * 2) * S + from + x * 2];
+			im.put(x, y, c, (q[0] + q[1] + q[S] + q[S + 1]) / 4.f);
+		}
+	return im;
+}
+
 } // namespace
 
 Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, const Rml::String& source)
@@ -188,7 +217,7 @@ Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, cons
 		query = spec.substr(q + 1);
 	}
 	const Params p = parse(query);
-	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : name == "pill" ? pill(p) : fade(p);
+	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : name == "pill" ? pill(p) : name == "glyph" ? glyph(p) : fade(p);
 	texture_dimensions = {im.w, im.h};
 	return GenerateTexture({im.px.data(), im.px.size()}, texture_dimensions);
 }

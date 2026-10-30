@@ -198,6 +198,21 @@ static DWORD WINAPI vks_thread(void *arg) {
     free(c);
     return 0;
 }
+/* [witchtime] B3's store: the shader archives of root_000.pkz (every entry whose name holds "shader": shader.dat,
+ * shadereff*.dat, ...: 58 MB) decoded by the game's own Oodle decoder (pkz_dump.c) into `dir`; prep_main walks them with
+ * dat_walk. Returns 1 when every one was written; the building marker stays otherwise, so the next start builds again. */
+int pkz_dump(const char *out, char **filters, int nfilters);
+static int vks_build_pkz(const char *dir) {
+    char mark[400], *filter = "shader";
+    snprintf(mark, sizeof mark, "%s/store_building.txt", dir);
+    CreateDirectoryA("../cache", NULL); CreateDirectoryA(dir, NULL);
+    FILE *f = fopen(mark, "wb");
+    if (!f) { printf("nvn_vk_store: the folder %s cannot be written: no container store\n", dir); return 0; }
+    fputs("the container store is being written\n", f); fclose(f);
+    if (pkz_dump(dir, &filter, 1)) { printf("nvn_vk_store: the shader archives of the game's data could not all be read (pkz-dump lines above): the next start tries again\n"); return 0; }
+    DeleteFileA(mark);
+    return 1;
+}
 /* Builds the store in `dir`. Returns the number of containers written (0: no archive, or nothing found). Blocks the
  * caller (the preparation thread) until done; the helpers run at normal priority: it is the first thing a first start
  * needs and it is seconds. */

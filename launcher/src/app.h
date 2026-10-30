@@ -32,15 +32,25 @@ private:
 	Rml::Context* ctx = nullptr;
 	Rml::DataModelHandle model;
 	std::vector<SDL_Gamepad*> pads;
+	int prompts = 4;                // footer hints: 1 Switch, 2 PlayStation, 3 Xbox, 4 keyboard
+	bool prompts_fixed = false;     // [general] button_prompts names one; else they follow what was used last
+	void prompts_read();
+	void prompts_use(int family);
+	void prompts_use(SDL_Gamepad* pad);
 	std::vector<std::vector<Rml::byte>> font_data;
 
 	// what the screens show (the data model "wt")
 	Rml::String screen = "title";
 	bool built = false, status_bad = false;
+	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
 	Rml::String status_title, status_line, footer_info;
+	Rml::String update_tag;            // a newer release to install, or empty
+	bool stale = false;                // built by another release than this launcher
 	Rml::String dump;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
+	bool dump_modified = false;    // the last check found files that differ from the supported version
+	bool accept_modified = false;  // setup runs with --accept-modified: such a dump is used anyway
 	std::vector<CheckRow> checks;
 	bool building = false;
 	float progress = 0;
@@ -58,10 +68,13 @@ private:
 	BuildRunner runner;
 	enum class Job { none, verify, build } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
+	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)
 	bool picked = false;
+	int update_seen = 0;               // the update's state and line as the title last showed them
+	Rml::String update_message;
 
 	bool create_window();
 	bool create_ui();
@@ -70,6 +83,7 @@ private:
 	bool key(Rml::Input::KeyIdentifier k);
 	void back();
 	void tick();
+	void tick_clock();
 	void draw();
 	void rescale();
 	void focus_first();

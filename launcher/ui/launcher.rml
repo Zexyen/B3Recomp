@@ -19,6 +19,7 @@
 				<div class="item autofocus" data-if="built" data-event-click="play()"><div class="mark"></div><span>PLAY</span><div class="trail"></div></div>
 				<div class="item autofocus" data-if="!built" data-event-click="go('setup')"><div class="mark"></div><span>SET UP</span><div class="trail"></div></div>
 				<div class="item" data-if="built" data-event-click="go('build')"><div class="mark"></div><span>REBUILD</span><div class="trail"></div></div>
+				<div class="item" data-if="update_tag != '' &amp;&amp; !building" data-event-click="update()"><div class="mark"></div><span>UPDATE TO {{ update_tag }}</span><div class="trail"></div></div>
 				<div class="item" data-event-click="go('mods')"><div class="mark"></div><span>MODS</span><div class="trail"></div></div>
 				<div class="item" data-event-click="go('settings')"><div class="mark"></div><span>SETTINGS</span><div class="trail"></div></div>
 				<div class="item" data-if="built" data-event-click="go('setup')"><div class="mark"></div><span>CHANGE DUMP</span><div class="trail"></div></div>
@@ -45,8 +46,8 @@
 				<div class="abs num" style="left: 105.5dp; top: 61.6dp;">XI</div>
 				<div class="abs hub"></div>
 				<img class="moon" src="gen:moon?c=e8cf94"/>
-				<div class="abs hand accent"></div>
-				<div class="abs hand long"></div>
+				<div class="abs hand hour" data-style-transform="'rotate(' + hour_deg + 'deg)'"></div>
+				<div class="abs hand minute" data-style-transform="'rotate(' + minute_deg + 'deg)'"></div>
 				<div class="abs pin"></div>
 			</div>
 			<div class="caption">
@@ -58,8 +59,8 @@
 	<div class="footer">
 		<div>{{ footer_info }}</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -84,6 +85,10 @@
 				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
 				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
 			</div>
+			<div class="row mod" data-if="dump_modified || accept_modified">
+				<div class="switch" data-class-on="accept_modified" data-event-click="toggle_accept_modified()"><div class="knob"></div></div>
+				<div class="what"><div class="name">Use a modified dump</div><div class="note">Some files differ from the supported version (another version, or mods). It may build and run, or it may not; it is unsupported.</div></div>
+			</div>
 			<div class="rows">
 				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
 					<div class="diamond"></div>
@@ -106,8 +111,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Select</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Select</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -135,7 +140,7 @@
 			</div>
 			<div style="display: flex; flex-direction: row; gap: 14dp;">
 				<div class="button small autofocus" data-if="building" data-event-click="stop_build()">STOP</div>
-				<div class="button small primary autofocus" data-if="!building &amp;&amp; built" data-event-click="play()">PLAY</div>
+				<div class="button small primary autofocus" data-if="!building &amp;&amp; built &amp;&amp; !stale" data-event-click="play()">PLAY</div>
 				<div class="button small autofocus" data-if="!building" data-event-click="start_build()">{{ built ? 'REBUILD' : 'BUILD' }}</div>
 			</div>
 		</div>
@@ -154,7 +159,7 @@
 	<div class="footer">
 		<div>You can close the window; the build picks up where it stopped.</div>
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -187,8 +192,8 @@
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'A' : 'Enter' }}</div><span>Turn on or off</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -211,13 +216,13 @@
 					</div>
 				</div>
 			</div>
-			<div class="note-line">Saved to config/graphics.ini as you change them. The same options are in the game while you play (F1).</div>
+			<div class="note-line">Saved to the config folder as you change them. The same options are in the game while you play (F1).</div>
 		</div>
 	</div>
 	<div class="footer">
 		<div class="spacer"></div>
 		<div class="hint"><div class="key wide">&lt; &gt;</div><span>Change</span></div>
-		<div class="hint"><div class="key" data-class-wide="!pad">{{ pad ? 'B' : 'Esc' }}</div><span>Back</span></div>
+		<div class="hint"><img class="glyph" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
