@@ -232,6 +232,8 @@ static const char *const g_default_ini =
 "; axis.LX = leftx             ; which axis feeds a Pro stick axis (LX LY RX RY)\r\n"
 "; invert.LY = on              ; flip it (up is already handled: SDL's y axis is down-positive)\r\n";
 
+static const char *const g_prompts_name[5] = {"auto", "switch", "playstation", "xbox", "keyboard"};
+static int prompts_value(const char *val) { for (int i = 1; i < 5; i++) if (!_stricmp(val, g_prompts_name[i])) return i; return 0; }
 static void cfg_init_dev(DevCfg *d) {
     memset(d, 0, sizeof *d);
     d->layout = -1; d->dz = d->outer = d->trig = d->rstr = -1.0f; d->rumble = -1;
@@ -337,7 +339,7 @@ static void cfg_parse(Cfg *c, char *text) {
         if (sect == 1 && !_stricmp(key, "input"))                                              /* [Recomps#1] */
             c->input = !_stricmp(val, "keyboard") ? 1 : !_stricmp(val, "controller") ? 2 : 0;
         else if (sect == 1 && !_stricmp(key, "button_prompts"))                                /* [Recomps#1] */
-            c->prompts = !_stricmp(val, "switch") ? 1 : !_stricmp(val, "playstation") ? 2 : !_stricmp(val, "xbox") ? 3 : !_stricmp(val, "keyboard") ? 4 : 0;
+            c->prompts = prompts_value(val);
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
         else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
@@ -762,6 +764,38 @@ int nnpad_mouse_cfg(float *sens, int *invert) {      /* [Recomps#1] mouse_camera
 /* [Recomps#1] button_prompts of [general] -> 1 switch, 2 playstation, 3 xbox, 4 keyboard. auto: the keyboard when it was used
  * last, else the SDL gamepad type of player 1's pad (else of the first pad) at the moment of the call, the keyboard without
  * one. prompts.c asks all the time; nnfs.c once, when it sets up the RomFS mods at the first file access. Scripted runs (SSBU_SEQ) and the XInput backend never read pads, so auto means switch there. */
+/* [witchtime] the PC settings panel (pcmenu.c): [general] button_prompts, as written in the file; a set keeps every other line
+ * and counts at once. 0 = not written. */
+const char *nnpad_prompts_setting(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); const char *s = g_prompts_name[g_cfg.prompts]; unlock();
+    return s;
+}
+int nnpad_prompts_set(const char *val) {
+    lock();
+    if (!g_cfg.path[0]) cfg_load(1);
+    size_t len = 0, done = 0;
+    char *b = read_file(g_cfg.path, &len), tmp[MAX_PATH + 8];
+    snprintf(tmp, sizeof tmp, "%s.tmp", g_cfg.path);
+    FILE *f = fopen(tmp, "wb");
+    int ok = f != NULL;
+    for (size_t s = 0; f && b && s < len; ) {
+        size_t e = s, k = s;
+        while (e < len && b[e] != '\n') e++;
+        if (e < len) e++;
+        while (k < e && (b[k] == ' ' || b[k] == '\t')) k++;
+        if (!done && e - k > 14 && !_strnicmp(b + k, "button_prompts", 14) && (b[k + 14] == ' ' || b[k + 14] == '\t' || b[k + 14] == '=')) {
+            fprintf(f, "button_prompts = %s%s", val, b[e - 1] != '\n' ? "" : e - s > 1 && b[e - 2] == '\r' ? "\r\n" : "\n");
+            done = 1;
+        } else fwrite(b + s, 1, e - s, f);
+        s = e;
+    }
+    free(b);
+    if (f) { if (!done) fprintf(f, "\r\n[general]\r\nbutton_prompts = %s\r\n", val); ok = !fclose(f); }
+    if (ok) ok = MoveFileExA(tmp, g_cfg.path, MOVEFILE_REPLACE_EXISTING) != 0;
+    if (ok) g_cfg.prompts = prompts_value(val); else DeleteFileA(tmp);
+    unlock();
+    return ok;
+}
 static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
 void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }
 int nnpad_button_prompts(void) {

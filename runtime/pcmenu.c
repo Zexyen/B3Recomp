@@ -17,6 +17,7 @@
  * and its live field in gfx_option_set). texture_lod_bias applies live through the same sampler flush as anisotropic filtering.
  * The panel: drawn on the CPU (BGRA) when something changes, text with stb_truetype (third_party/, public domain / MIT) in
  * a subset of Noto Serif (SIL OFL 1.1, third_party/OFL-NotoSerif.txt), embedded with #embed; opaque, dark, gold lines.
+ * One row is not graphics.ini's: button_prompts, of controllers.ini, shown by the game when it runs on (prompts.c).
  * Test aids: SSBU_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), SSBU_PCMENU_OPEN=<seconds> opens it that long after the first pad
  * read (for scripted runs without keys), SSBU_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
@@ -44,8 +45,10 @@ void display_vsync_apply(void);                            /* display.c */
 int display_window_apply(void);
 void display_mouse_want(int on);
 int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
+const char *nnpad_prompts_setting(void);
+int nnpad_prompts_set(const char *val);
 
-enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART };
+enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART, A_PROMPTS };   /* A_PROMPTS: a key of controllers.ini */
 #define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -74,6 +77,8 @@ static const Row k_rows[] = {
      {"-1", "-0.5", "0", "0.5", "1"}, {"\xE2\x80\x93" "1", "\xE2\x80\x93" "0.5", "0 \xE2\x80\x94 game", "+0.5", "+1"}},
     {"aspect", "Aspect ratio", "Keep: the 16:9 picture keeps its shape, with black bars on a wider or taller window. Stretch: it fills the window.", NULL, "keep", A_LIVE, 0,
      {"keep", "stretch"}, {"Keep 16:9", "Stretch"}},
+    {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
+     {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
 };
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
@@ -102,8 +107,9 @@ static void menu_init(void) {                              /* the first opening:
     char v[64];
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
-        int have = r->apply == A_SIZE || gfx_ini_get(r->key, v, sizeof v);
+        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || gfx_ini_get(r->key, v, sizeof v);
         if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* SSBU_WINDOW included */
+        else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (!have) snprintf(v, sizeof v, "%s", r->dflt);
         g_shown[i] = !r->optional || have;
         if ((g_cur[i] = find_val(i, v)) < 0) snprintf(g_raw[i], sizeof g_raw[i], "%s", v);
@@ -349,6 +355,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     if (g_lock_why[i] || k < 0 || k >= row_count(i) || k == g_cur[i]) return;
     int ok;
     if (r->apply == A_SIZE) { char w[16], h[16]; sscanf(r->val[k], "%15[0-9]x%15[0-9]", w, h); ok = gfx_option_set("width", w) && gfx_option_set("height", h); }
+    else if (r->apply == A_PROMPTS) ok = nnpad_prompts_set(r->val[k]);
     else ok = gfx_option_set(r->key, r->val[k]);
     if (!ok) return;
     g_cur[i] = k;

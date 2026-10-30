@@ -16,6 +16,9 @@ void display_vsync_apply(void) { g_vsync_applied++; }
 int display_window_apply(void) { g_win_applied++; return 1; }
 void display_mouse_want(int on) { (void)on; }
 int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
+static const char *g_prompts = "playstation";
+const char *nnpad_prompts_setting(void) { return g_prompts; }
+int nnpad_prompts_set(const char *val) { g_prompts = val; return 1; }
 int display_mouse_pixels(int *x, int *y) { *x = *y = -1; return 0; }
 SHORT GetAsyncKeyState(int vk) { (void)vk; return 0; }
 
