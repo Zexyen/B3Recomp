@@ -123,6 +123,11 @@ static const char *const k_default_ini =
 ";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
 "frame_time_overlay = off\r\n"
 "\r\n"
+"; pause_hint = first | always | off\r\n"
+";   The small \"PC SETTINGS  F1 \xC2\xB7 L3 + R3\" note at the bottom right when the game's pause menu opens. first: only at the\r\n"
+";   first pause after each start. always: at every pause. off: never.\r\n"
+"pause_hint = first\r\n"
+"\r\n"
 "; frame_rate = 60      (60 .. 120; EXPERIMENTAL above 60)\r\n"
 ";   60: the game as made. 61 .. 120: the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
 ";   runtime/game_shim_eh.c h_frame_clock) and the runtime paces the game at this value; the title, menus and cutscenes\r\n"
@@ -236,6 +241,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
         else if (!_stricmp(key, "texture_lod_bias")) o->texture_lod_bias = (float)atof(val);      /* [witchtime] */
+        else if (!_stricmp(key, "pause_hint")) {}      /* [witchtime] read by pcmenu.c (pcmenu_hint) */
         else unknown++;
     }
     if (f) fclose(f);
