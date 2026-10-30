@@ -308,9 +308,16 @@ static int hint_on(void) {
 }
 static DWORD WINAPI hint_late_job(LPVOID arg) { (void)arg; Sleep(500); nvn_front_post_pcmenu(); return 0; }
 void pcmenu_hint(void) {                                   /* nnfs.c, a guest thread: the pause menu is opening */
-    static int ms = -1;
-    if (ms < 0) { const char *e = getenv("SSBU_PCMENU_HINT"); ms = e ? atoi(e) * 1000 : 8000; }      /* seconds; 0 = never */
-    if (g_open || !ms) return;
+    static int ms = -1, shown;
+    static char when[16] = "first";                        /* graphics.ini pause_hint: first (the first pause of each start), always, off (issue #42) */
+    if (ms < 0) {
+        const char *e = getenv("SSBU_PCMENU_HINT");        /* seconds; 0 = never */
+        ms = e ? atoi(e) * 1000 : 8000;
+        gfx_ini_get("pause_hint", when, sizeof when);
+        if (!_stricmp(when, "off")) ms = 0;
+    }
+    if (g_open || !ms || (shown && _stricmp(when, "always"))) return;
+    shown = 1;
     if (!g_inited) { AcquireSRWLockExclusive(&g_lock); if (!g_inited && stbtt_InitFont(&g_font, k_font, stbtt_GetFontOffsetForIndex(k_font, 0))) menu_init(); ReleaseSRWLockExclusive(&g_lock); }
     if (!g_inited) return;
     g_hint_until = GetTickCount64() + (ULONGLONG)ms;
