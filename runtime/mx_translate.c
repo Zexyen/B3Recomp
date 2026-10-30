@@ -41,6 +41,7 @@ typedef struct {
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int uses_guard;                           /* [issue 26] a graphics stage with a step back: counts them (loop_guard) */
+    int uses_kill, uses_spun;                 /* [issue 26] the dispatcher's KIL flag / SSBU_VK_LOOPDEBUG's "limit hit" flag */
     uint64_t gatom;                           /* [witchtime] global atomics used: bit op + 11 * class (0 u32, 1 s32, 2 f32) */
     uint32_t images, images_read, images_written;
     uint16_t image_fmt[8]; uint8_t image_type[8];
@@ -91,18 +92,17 @@ static void fail(Mx *e, const char *op, const char *fmt, ...) {
 }
 
 /* [issue 26] A jump back to an earlier instruction (a loop) in a vertex, fragment or tessellation stage is counted; after
- * MX_LOOP_MAX of them (MxIn.loopdebug, if set) the stage ends as at its EXIT, with the outputs it has. On an RTX 5070 the GPU
- * hung in one of B3's lighting fragment stages (VK_ERROR_DEVICE_LOST at the end of the opening movie); a wrong pixel beats a lost
- * device. Compute stages are left alone: they may loop over a whole buffer.
+ * MX_LOOP_MAX of them (MxIn.loopdebug, if set) the dispatcher is left as at an EXIT, with the outputs the stage has. On an
+ * RTX 5070 the GPU hung in one of B3's lighting fragment stages (VK_ERROR_DEVICE_LOST at the end of the opening movie); a wrong
+ * pixel beats a lost device. Compute stages are left alone: they may loop over a whole buffer.
  * shortcut: the limit is a guess above the longest loop seen (that lighting stage: 2 x 32 lights x (32 bits + 2 BRX), about
  * 2,240 jumps back at most); raise it if a stage loses detail. */
 #define MX_LOOP_MAX 4096u
 static void loop_guard(Mx *e, int back) {
     if (!back || e->in->stage == MX_COMPUTE) return;
     e->uses_guard = 1;
-    int magenta = e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ");
-    emit(e, "if (++mx_back > %uu) { %s%s return; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->exitcode,
-         magenta ? "frag0 = vec4(1.0, 0.0, 1.0, 1.0); " : "");
+    if (e->in->loopdebug && e->in->stage == MX_FRAGMENT && strstr(e->exitcode, "frag0 = ")) e->uses_spun = 1;
+    emit(e, "if (++mx_back > %uu) { %spc = 0u; continue; } ", e->in->loopdebug ? e->in->loopdebug : MX_LOOP_MAX, e->uses_spun ? "mx_spun = true; " : "");
 }
 
 /* ---------------------------------------------------------------- operands */
@@ -1460,7 +1460,10 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     }
     case MXOP_KIL:
         if (e->in->stage != MX_FRAGMENT) { fail(e, "KIL", "KIL outside a fragment shader"); break; }
-        emit(e, "if (%s) discard;", FLOW(e, MXB(i, 0, 5)));
+        /* [issue 26] in the dispatcher: a flag and out of the loop, discarded after it (ScarletNX PR #512, kirikae #48: a pixel
+         * demoted inside the loop, the quad's others still in it, hung the GPU; Vulkan's discard only demotes) */
+        if (e->any_jump) { e->uses_kill = 1; emit(e, "if (%s) { mx_kill = true; pc = 0u; continue; }", FLOW(e, MXB(i, 0, 5))); }
+        else emit(e, "if (%s) discard;", FLOW(e, MXB(i, 0, 5)));
         break;
 
     /* ---- textures */
@@ -1572,7 +1575,8 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
         break;
     }
     case MXOP_EXIT:
-        emit(e, "if (%s) { %s return; }", FLOW(e, MXB(i, 0, 5)), e->exitcode);
+        if (e->any_jump) emit(e, "if (%s) { pc = 0u; continue; }", FLOW(e, MXB(i, 0, 5)));      /* [issue 26] the outputs after the loop */
+        else emit(e, "if (%s) { %s return; }", FLOW(e, MXB(i, 0, 5)), e->exitcode);
         break;
 
     default:
@@ -1909,13 +1913,19 @@ int mx_translate(const MxIn *in, MxOut *out) {
         for (unsigned p = 0; p < 7; p++) if (e->preds[p]) { emit(&h, "%s p%u = false", any ? "," : " bool", p); any = 1; }
         if (any) emit(&h, ";\n");
         if (e->uses_guard) emit(&h, " uint mx_back = 0u;\n");
-        if (e->any_jump) emit(&h, " uint pc = 1u;\n for (;;) { switch (pc) {\n");
-        size_t need = h.len + e->len + strlen(e->exitcode) + 256;
+        if (e->uses_kill) emit(&h, " bool mx_kill = false;\n");
+        if (e->uses_spun) emit(&h, " bool mx_spun = false;\n");
+        /* [issue 26] every way out of the dispatcher (EXIT, KIL, the loop limit, a pc no case has) sets pc = 0 and leaves through the
+         * loop's own exit; the outputs, the alpha test and KIL's discard happen once, after it. No return or discard inside the loop:
+         * a quad whose pixels left it at different points hung NVIDIA's (kirikae #48) and AMD's (ScarletNX #512) Windows drivers. */
+        if (e->any_jump) emit(&h, " uint pc = 1u;\n while (pc != 0u) { switch (pc) {\n");
+        size_t need = h.len + e->len + strlen(e->exitcode) + 512;
         res = malloc(need);
         memcpy(res, h.s, h.len);
         memcpy(res + h.len, e->s, e->len);
         size_t n = h.len + e->len;
-        if (e->any_jump) n += (size_t)sprintf(res + n, " default: %s return;\n } }\n}\n", e->exitcode);
+        if (e->any_jump) n += (size_t)sprintf(res + n, " default: pc = 0u; continue;\n } }\n%s %s%s\n%s}\n", e->uses_kill ? " if (mx_kill) discard; else {" : "",
+                                              e->exitcode, e->uses_kill ? " }" : "", e->uses_spun ? " if (mx_spun) frag0 = vec4(1.0, 0.0, 1.0, 1.0);\n" : "");
         else n += (size_t)sprintf(res + n, " %s\n}\n", e->exitcode);
         res[n] = 0;
         free(h.s);
