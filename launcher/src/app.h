@@ -42,6 +42,8 @@ private:
 	Rml::String dump;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
+	bool dump_modified = false;    // the last check found files that differ from the supported version
+	bool accept_modified = false;  // setup runs with --accept-modified: such a dump is used anyway
 	std::vector<CheckRow> checks;
 	bool building = false;
 	float progress = 0;

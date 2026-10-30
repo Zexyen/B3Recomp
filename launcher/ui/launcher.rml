@@ -84,6 +84,10 @@
 				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
 				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
 			</div>
+			<div class="row mod" data-if="dump_modified || accept_modified">
+				<div class="switch" data-class-on="accept_modified" data-event-click="toggle_accept_modified()"><div class="knob"></div></div>
+				<div class="what"><div class="name">Use a modified dump</div><div class="note">Some files differ from the supported version (another version, or mods). It may build and run, or it may not; it is unsupported.</div></div>
+			</div>
 			<div class="rows">
 				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
 					<div class="diamond"></div>
