@@ -280,7 +280,22 @@ BOOL InitOnceExecuteOnce(INIT_ONCE *once, BOOL (*fn)(INIT_ONCE *, PVOID, PVOID *
 
 /* ---------------------------------------------------------------- fibers */
 DWORD FlsAlloc(void (*dtor)(PVOID)) { pthread_key_t k; return pthread_key_create(&k, dtor) ? FLS_OUT_OF_INDEXES : (DWORD)k; }
-typedef struct Fiber { ucontext_t uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
+#ifdef __ANDROID__
+/* [witchtime] bionic has no getcontext / makecontext / swapcontext: a switch of our own of what survives a call in the
+ * AArch64 procedure call standard (x19-x28, x29, x30, sp, d8-d15); `ret` of the switch lands in the other fiber */
+typedef struct { uint64_t x[12], sp, d[8]; } FiberCtx;     /* x19..x28, x29, x30; sp; d8..d15 */
+__asm__(".text\n.globl wt_fiber_swap\n.type wt_fiber_swap,%function\nwt_fiber_swap:\n"
+        "stp x19, x20, [x0]\n stp x21, x22, [x0, #16]\n stp x23, x24, [x0, #32]\n stp x25, x26, [x0, #48]\n"
+        "stp x27, x28, [x0, #64]\n stp x29, x30, [x0, #80]\n mov x9, sp\n str x9, [x0, #96]\n"
+        "stp d8, d9, [x0, #104]\n stp d10, d11, [x0, #120]\n stp d12, d13, [x0, #136]\n stp d14, d15, [x0, #152]\n"
+        "ldp x19, x20, [x1]\n ldp x21, x22, [x1, #16]\n ldp x23, x24, [x1, #32]\n ldp x25, x26, [x1, #48]\n"
+        "ldp x27, x28, [x1, #64]\n ldp x29, x30, [x1, #80]\n ldr x9, [x1, #96]\n mov sp, x9\n"
+        "ldp d8, d9, [x1, #104]\n ldp d10, d11, [x1, #120]\n ldp d12, d13, [x1, #136]\n ldp d14, d15, [x1, #152]\n ret\n");
+void wt_fiber_swap(FiberCtx *from, FiberCtx *to);
+#else
+typedef ucontext_t FiberCtx;
+#endif
+typedef struct Fiber { FiberCtx uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
 static __thread Fiber *t_fiber;
 static void fiber_entry(void) { t_fiber->fn(t_fiber->arg); _exit(70); }   /* a fiber function never returns (Windows ends the thread) */
 LPVOID ConvertThreadToFiber(LPVOID arg) {
@@ -296,17 +311,26 @@ LPVOID CreateFiberEx(SIZE_T commit, SIZE_T reserve, DWORD flags, LPFIBER_START_R
     f->stack = mmap(NULL, f->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK, -1, 0);
     if (f->stack == MAP_FAILED) { free(f); return NULL; }
     f->fn = fn; f->arg = arg;
+#ifdef __ANDROID__
+    f->uc.sp = ((uintptr_t)f->stack + f->stack_size) & ~(uintptr_t)15;
+    f->uc.x[11] = (uint64_t)(uintptr_t)fiber_entry;   /* x30: the first switch to it returns there, x29 = 0 ends its frame chain */
+#else
     getcontext(&f->uc);
     f->uc.uc_stack.ss_sp = f->stack;
     f->uc.uc_stack.ss_size = f->stack_size;
     f->uc.uc_link = NULL;
     makecontext(&f->uc, fiber_entry, 0);
+#endif
     return f;
 }
 void SwitchToFiber(LPVOID fiber) {
     Fiber *from = t_fiber, *to = fiber;
     t_fiber = to;
+#ifdef __ANDROID__
+    wt_fiber_swap(&from->uc, &to->uc);
+#else
     swapcontext(&from->uc, &to->uc);
+#endif
 }
 void DeleteFiber(LPVOID fiber) {
     Fiber *f = fiber;
@@ -315,7 +339,7 @@ void DeleteFiber(LPVOID fiber) {
 }
 
 /* ---------------------------------------------------------------- memory */
-typedef struct { uintptr_t base; size_t size; int ww; } Region;   /* ww: 0 no write watch, 1 tracked by the kernel, 2 untracked (every page written) */
+typedef struct { uintptr_t base; size_t size; int ww; } Region;   /* ww: 0 no write watch, 1 tracked by the kernel, 2 untracked (every page written), 3 tracked by page faults */
 static Region *g_regions;
 static size_t g_nregions, g_cap;
 static pthread_mutex_t g_reg_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -332,17 +356,18 @@ static int to_prot(DWORD p) {
 /* Write watch (MEM_WRITE_WATCH, GetWriteWatch): userfaultfd write-protection in async mode, where the kernel itself lifts
  * the protection of a page at its first write (also a write from a system call or a driver) and PAGEMAP_SCAN lists the
  * pages written and protects them again in one call (Linux 6.7+; Wine emulates write watches the same way). Without it
- * (an older kernel, userfaultfd not allowed) a watched region answers "every page written": always correct, only slower. */
+ * (an older kernel, userfaultfd not allowed) the pages are held read-only and a write fault records the write (ww = 3, below);
+ * a region that cannot be held that way answers "every page written": always correct, only slower. */
 static int g_uffd = -1, g_pagemap = -1, g_ww_state;   /* g_ww_state: 0 not tried, 1 on, 2 not available */
 static int ww_available(void) {
     pthread_mutex_lock(&g_reg_lock);
     if (!g_ww_state) {
         struct uffdio_api api = { .api = UFFD_API, .features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED };
-        g_uffd = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
+        g_uffd = getenv("SSBU_NO_UFFD") ? -1 : (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);      /* [witchtime] TEST: SSBU_NO_UFFD=1, as Android (no userfaultfd) */
         if (g_uffd >= 0 && ioctl(g_uffd, UFFDIO_API, &api) == 0) g_pagemap = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
         g_ww_state = g_pagemap >= 0 ? 1 : 2;
         if (g_ww_state == 2) {
-            printf("plat: write watch NOT tracked (userfaultfd async write-protect / PAGEMAP_SCAN: %s): every watched page counts as written\n", strerror(errno));
+            printf("plat: no kernel write watch (userfaultfd async write-protect / PAGEMAP_SCAN: %s): tracked by page faults\n", strerror(errno));
             if (g_uffd >= 0) close(g_uffd);
         } else printf("plat: write watch tracked by the kernel (userfaultfd async write-protect, PAGEMAP_SCAN)\n");
     }
@@ -353,6 +378,119 @@ static int ww_available(void) {
 static int ww_protect(uintptr_t a, size_t n) {         /* from now on [a, a+n) counts as not written */
     struct uffdio_writeprotect wp = { .range = { a, n }, .mode = UFFDIO_WRITEPROTECT_MODE_WP };
     return ioctl(g_uffd, UFFDIO_WRITEPROTECT, &wp) == 0;
+}
+/* [witchtime] The write watch by page faults (Android: its 5.15 kernel has no PAGEMAP_SCAN; SSBU_NO_UFFD=1 on a PC; SSBU_WW_SOFT=0:
+ * off). Without any watch the renderer hashes every texture again each frame (9.5 ms on an AYN Thor), though the game writes 54 of
+ * the 26,000 pages asked about per frame. ro: pages held read-only, committed and not written. dirty: written and not asked about.
+ * Only a question makes a page read-only again, so a page the renderer never asks about (a stack, a heap) faults once.
+ * A write opens its 64 KB block: fewer faults (5 per frame at the title against 33) and fewer kernel mappings, for a few pages
+ * called written that were not. The lock is a spinlock because the fault handler takes it; nothing under it touches guest memory,
+ * so no fault can happen while it is held. Making a page read-only and forgetting its write happen under it, or a write between
+ * the two would be lost. */
+#define WW_BLOCK_PAGES 16
+typedef struct { uintptr_t base; size_t pages; uint64_t *ro, *dirty; } WwSoft;
+static WwSoft g_soft[256];
+static size_t g_nsoft;
+static volatile int g_soft_spin;
+#define WTEST(m, i) ((m)[(i) >> 6] >> ((i) & 63) & 1)
+#define WSET(m, i) ((m)[(i) >> 6] |= 1ull << ((i) & 63))
+#define WCLR(m, i) ((m)[(i) >> 6] &= ~(1ull << ((i) & 63)))
+static void soft_lock(void) { while (__atomic_exchange_n(&g_soft_spin, 1, __ATOMIC_ACQUIRE)) YieldProcessor(); }
+static void soft_unlock(void) { __atomic_store_n(&g_soft_spin, 0, __ATOMIC_RELEASE); }
+static WwSoft *soft_of(uintptr_t a) {
+    for (size_t k = 0; k < g_nsoft; k++) if (a - g_soft[k].base < g_soft[k].pages << 12) return &g_soft[k];
+    return NULL;
+}
+static int soft_add(uintptr_t base, size_t size, int committed) {
+    size_t words = (size >> 18) + 1;
+    uint64_t *m = mmap(NULL, words * 16, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (m == MAP_FAILED) return 0;
+    if (committed && mprotect((void *)base, size, PROT_READ)) { munmap(m, words * 16); return 0; }
+    if (committed) memset(m, 0xff, words * 8);
+    soft_lock();
+    int ok = g_nsoft < sizeof g_soft / sizeof g_soft[0];
+    if (ok) g_soft[g_nsoft++] = (WwSoft){ base, size >> 12, m, m + words };
+    soft_unlock();
+    if (!ok) { munmap(m, words * 16); if (committed) mprotect((void *)base, size, PROT_READ | PROT_WRITE); }
+    return ok;
+}
+static void soft_drop(uintptr_t base) {
+    soft_lock();
+    WwSoft *s = soft_of(base), old = {0};
+    if (s) { old = *s; *s = g_soft[--g_nsoft]; }
+    soft_unlock();
+    if (old.ro) munmap(old.ro, ((old.pages >> 6) + 1) * 16);
+}
+static void soft_open(WwSoft *s, size_t i, size_t end) {   /* under the lock: the read-only pages of [i, end) count as written and are opened */
+    while (i < end) {
+        if (!WTEST(s->ro, i)) { i++; continue; }
+        size_t run = i;
+        while (i < end && WTEST(s->ro, i)) { WCLR(s->ro, i); WSET(s->dirty, i); i++; }
+        mprotect((void *)(s->base + (run << 12)), (i - run) << 12, PROT_READ | PROT_WRITE);
+    }
+}
+int plat_ww_fault(uintptr_t a) {                       /* in the SIGSEGV handler, on any thread: 0 = a real crash */
+    int err = errno, again = 0;
+    soft_lock();
+    WwSoft *s = soft_of(a);
+    if (s) {
+        size_t pg = (a - s->base) >> 12, b = pg & ~(size_t)(WW_BLOCK_PAGES - 1), e = b + WW_BLOCK_PAGES;
+        if (WTEST(s->ro, pg)) { soft_open(s, b, e < s->pages ? e : s->pages); again = 1; }
+        else again = (int)WTEST(s->dirty, pg);         /* another thread opened it between the fault and here */
+    }
+    soft_unlock();
+    errno = err;
+    return again;
+}
+static void soft_wrote(uintptr_t a, size_t n) {        /* [a, a+n) is about to be written, by a system call too (which gets EFAULT from a read-only page) */
+    soft_lock();
+    for (size_t k = 0; k < g_nsoft; k++) {
+        WwSoft *s = &g_soft[k];
+        uintptr_t lo = a > s->base ? a : s->base, hi = a + n < s->base + (s->pages << 12) ? a + n : s->base + (s->pages << 12);
+        if (lo < hi) soft_open(s, (lo - s->base) >> 12, (hi - s->base + 4095) >> 12);
+    }
+    soft_unlock();
+}
+static void soft_state(uintptr_t a, size_t n, int ro, int dirty) {     /* the pages of [a, a+n), all of one region; ro: they are also made read-only */
+    soft_lock();
+    WwSoft *s = soft_of(a);
+    if (s) for (size_t i = (a - s->base) >> 12, e = i + (n >> 12); i < e; i++) {
+        if (ro) WSET(s->ro, i); else WCLR(s->ro, i);
+        if (dirty) WSET(s->dirty, i); else WCLR(s->dirty, i);
+    }
+    if (ro) mprotect((void *)a, n, PROT_READ);
+    soft_unlock();
+}
+static void soft_hold(WwSoft *s, size_t run, size_t end) {     /* under the lock: pages that stay written if they cannot be held (the kernel's limit of mappings) */
+    if (end > run && mprotect((void *)(s->base + (run << 12)), (end - run) << 12, PROT_READ))
+        for (size_t i = run; i < end; i++) { WCLR(s->ro, i); WSET(s->dirty, i); }
+}
+/* the pages of [start, end) written since the last reset (at most *count, addrs NULL: none listed); reset: they count as not written again */
+static void soft_query(int reset, uintptr_t start, uintptr_t end, PVOID *addrs, ULONG_PTR *count) {
+    ULONG_PTR cap = *count, n = 0;
+    soft_lock();
+    WwSoft *s = soft_of(start);
+    if (s) {
+        size_t i = (start - s->base) >> 12, e = (end - s->base) >> 12, run = 0, run_end = 0;
+        if (e > s->pages) e = s->pages;
+        while (i < e && n < cap) {
+            uint64_t w = s->dirty[i >> 6] >> (i & 63);
+            if (!w) { i = (i | 63) + 1; continue; }
+            i += (size_t)__builtin_ctzll(w);
+            if (i >= e) break;
+            if (addrs) addrs[n] = (void *)(s->base + (i << 12));
+            n++;
+            if (reset) {
+                if (i != run_end) { soft_hold(s, run, run_end); run = i; }
+                run_end = i + 1;
+                WCLR(s->dirty, i); WSET(s->ro, i);
+            }
+            i++;
+        }
+        soft_hold(s, run, run_end);
+    }
+    soft_unlock();
+    *count = n;
 }
 static int ww_of(uintptr_t a, size_t n) {              /* the write watch of the region holding [a, a+n), 0 = none */
     int ww = 0;
@@ -367,8 +505,10 @@ LPVOID VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD prot) {
     if (!(type & MEM_RESERVE)) {               /* commit inside a reservation */
         uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
         size_t n = page_up((uintptr_t)addr + size - a);
+        int ww = ww_of(a, n);
+        if (ww == 3 && to_prot(prot) == (PROT_READ | PROT_WRITE)) { soft_state(a, n, 1, 0); return addr; }   /* newly committed pages are not written (as on Windows) */
         if (mprotect((void *)a, n, to_prot(prot))) return NULL;
-        if (ww_of(a, n) == 1) ww_protect(a, n);  /* newly committed pages are not written (as on Windows) */
+        if (ww == 1) ww_protect(a, n);           /* newly committed pages are not written (as on Windows) */
         return addr;
     }
     int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | (addr ? MAP_FIXED_NOREPLACE : 0);
@@ -377,7 +517,8 @@ LPVOID VirtualAlloc(LPVOID addr, SIZE_T size, DWORD type, DWORD prot) {
     int ww = 0;
     if (type & MEM_WRITE_WATCH) {
         struct uffdio_register reg = { .range = { (uintptr_t)p, size }, .mode = UFFDIO_REGISTER_MODE_WP };
-        ww = ww_available() && ioctl(g_uffd, UFFDIO_REGISTER, &reg) == 0 && ww_protect((uintptr_t)p, size) ? 1 : 2;
+        if (ww_available() && ioctl(g_uffd, UFFDIO_REGISTER, &reg) == 0 && ww_protect((uintptr_t)p, size)) ww = 1;
+        else ww = !(getenv("SSBU_WW_SOFT") && !atoi(getenv("SSBU_WW_SOFT"))) && soft_add((uintptr_t)p, size, (type & MEM_COMMIT) != 0) ? 3 : 2;
     }
     pthread_mutex_lock(&g_reg_lock);
     if (g_nregions == g_cap) { g_cap = g_cap ? g_cap * 2 : 256; g_regions = realloc(g_regions, g_cap * sizeof *g_regions); }
@@ -389,6 +530,7 @@ BOOL VirtualFree(LPVOID addr, SIZE_T size, DWORD type) {
     if (type & MEM_DECOMMIT) {                 /* back to reserved: contents dropped, as on Windows */
         uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
         size_t n = page_up((uintptr_t)addr + size - a);
+        if (ww_of(a, n) == 3) soft_state(a, n, 0, 0);
         madvise((void *)a, n, MADV_DONTNEED);
         return mprotect((void *)a, n, PROT_NONE) == 0;
     }
@@ -398,6 +540,7 @@ BOOL VirtualFree(LPVOID addr, SIZE_T size, DWORD type) {
             Region r = g_regions[i];
             g_regions[i] = g_regions[--g_nregions];
             pthread_mutex_unlock(&g_reg_lock);
+            if (r.ww == 3) soft_drop(r.base);
             return munmap(addr, r.size) == 0;
         }
     pthread_mutex_unlock(&g_reg_lock);
@@ -408,7 +551,9 @@ BOOL VirtualProtect(LPVOID addr, SIZE_T size, DWORD prot, DWORD *old) {
     MEMORY_BASIC_INFORMATION mi;
     if (old) *old = VirtualQuery(addr, &mi, sizeof mi) ? mi.Protect : PAGE_NOACCESS;
     uintptr_t a = (uintptr_t)addr & ~(uintptr_t)4095;
-    return mprotect((void *)a, page_up((uintptr_t)addr + size - a), to_prot(prot)) == 0;
+    size_t n = page_up((uintptr_t)addr + size - a);
+    if (ww_of(a, n) == 3) soft_state(a, n, 0, to_prot(prot) == (PROT_READ | PROT_WRITE));   /* the protection is the caller's now; writable: as written, so the next question holds it again */
+    return mprotect((void *)a, n, to_prot(prot)) == 0;
 }
 /* shortcut: reads /proc/self/maps on every call (fine for the runtime's diagnostics; cache it if a hot path calls it) */
 SIZE_T VirtualQuery(LPCVOID addr, MEMORY_BASIC_INFORMATION *mi, SIZE_T len) {
@@ -454,6 +599,7 @@ UINT GetWriteWatch(DWORD flags, PVOID base, SIZE_T size, PVOID *addrs, ULONG_PTR
     int ww = size ? ww_of(start, end - start) : 0;
     if (!ww) return 1;
     *gran = 4096;
+    if (ww == 3) { soft_query((flags & WRITE_WATCH_FLAG_RESET) != 0, start, end, addrs, count); return 0; }
     ULONG_PTR cap = *count, n = 0;
     if (ww == 1) {
         struct page_region vec[256];
@@ -479,6 +625,7 @@ UINT ResetWriteWatch(LPVOID base, SIZE_T size) {
     uintptr_t a = (uintptr_t)base & ~(uintptr_t)4095, n = page_up((uintptr_t)base + size) - a;
     int ww = size ? ww_of(a, n) : 0;
     if (!ww) return 1;
+    if (ww == 3) { ULONG_PTR all = n >> 12; soft_query(1, a, a + n, NULL, &all); return 0; }
     return ww == 1 && !ww_protect(a, n);
 }
 void GetSystemInfo(SYSTEM_INFO *si) {
@@ -496,7 +643,11 @@ void GetSystemInfo(SYSTEM_INFO *si) {
 /* ---------------------------------------------------------------- modules and process */
 HMODULE LoadLibraryA(LPCSTR name) {
     static const char *const map[][2] = {      /* the Windows DLLs the runtime opens by name, and their Linux libraries */
+#ifdef __ANDROID__
+        {"vulkan-1.dll", "libvulkan.so"}, {"ssbu_glslang.dll", "libssbu_glslang.so"}, {"SDL3.dll", "libSDL3.so"}, {"libopus-0.dll", "libopus.so"},
+#else
         {"vulkan-1.dll", "libvulkan.so.1"}, {"ssbu_glslang.dll", "libssbu_glslang.so"}, {"SDL3.dll", "libSDL3.so.0"}, {"libopus-0.dll", "libopus.so.0"},
+#endif
     };
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
         if (!strcasecmp(name, map[i][0])) {
@@ -517,6 +668,13 @@ void *GetProcAddress(HMODULE m, LPCSTR name) { return dlsym(!m || m == (HMODULE)
 HMODULE GetModuleHandleA(LPCSTR name) { return name ? NULL : (HMODULE)&__ehdr_start; }
 DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     (void)m;   /* the runtime asks for its own program only */
+#ifdef __ANDROID__
+    extern char **__argv;
+    /* [witchtime] the process is the app's (app_process64): the program is the one wt_main.c names, build/witch-time-game
+     * of the Witch Time folder on the phone, so <program folder>/../config etc. are found as on a PC */
+    int w = snprintf(out, n, "%s", __argv && __argv[0] ? __argv[0] : "");
+    return w < 0 || (DWORD)w >= n ? 0 : (DWORD)w;
+#endif
     ssize_t len = readlink("/proc/self/exe", out, n ? n - 1 : 0);
     if (len < 0) { if (n) out[0] = 0; return 0; }
     out[len] = 0;
@@ -572,7 +730,7 @@ FILE *plat_fopen(const char *path, const char *mode) {
     return fopen(plat_path(path, p, sizeof p), mode);
 }
 #define PATH(var, in) char var##_buf[4096]; const char *var = plat_path((in), var##_buf, sizeof var##_buf)
-BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); return mkdir(p, 0755) == 0; }
+BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); return mkdir(p, 0777) == 0; }
 BOOL RemoveDirectoryA(LPCSTR path) { PATH(p, path); return rmdir(p) == 0; }
 BOOL DeleteFileA(LPCSTR path) { PATH(p, path); return unlink(p) == 0; }
 BOOL MoveFileExA(LPCSTR from, LPCSTR to, DWORD flags) {
@@ -657,11 +815,17 @@ BOOL ReadFile(HANDLE h, LPVOID buf, DWORD n, DWORD *got, OVERLAPPED *ov) {
     int fd = file_fd(h);
     if (got) *got = 0;
     size_t done = 0;
+    int touched = 0;
     off_t off = ov ? (off_t)(((uint64_t)ov->OffsetHigh << 32) | ov->Offset) : 0;
     while (done < n) {   /* like ReadFile on a disk file: everything up to the end, short only at the end */
         ssize_t r = ov ? pread(fd, (uint8_t *)buf + done, n - done, off + (off_t)done) : read(fd, (uint8_t *)buf + done, n - done);
-        if (r < 0) { if (errno == EINTR) continue; fail_errno(); if (got) *got = (DWORD)done; return FALSE; }
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EFAULT && !touched) { touched = 1; soft_wrote((uintptr_t)buf + done, n - done); continue; }   /* [witchtime] a page the write watch holds read-only: a system call gets no fault of ours */
+            fail_errno(); if (got) *got = (DWORD)done; return FALSE;
+        }
         if (r == 0) break;
+        touched = 0;
         done += (size_t)r;
     }
     if (got) *got = (DWORD)done;

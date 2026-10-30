@@ -32,7 +32,12 @@ static const char *const k_default_ini =
 ";   windowed:   a normal window with the client size below.\r\n"
 ";   borderless: no frame, covers the monitor the window is on (the desktop keeps its resolution).\r\n"
 ";   fullscreen: as borderless, and always on top. (Exclusive fullscreen with a mode change is not implemented.)\r\n"
+#ifdef __ANDROID__
+";   Android: fullscreen, without the system bars: 16:9 needs no clear of the bars around the picture.\r\n"
+"window = fullscreen\r\n"
+#else
 "window = windowed\r\n"
+#endif
 "width = 1280\r\n"
 "height = 720\r\n"
 "\r\n"
@@ -77,7 +82,12 @@ static const char *const k_default_ini =
 "; console_mode = docked | handheld\r\n"
 ";   What nn::oe::GetOperationMode answers. MEASURED on 13.0.4 (2026-10-09): with handheld the game still makes its\r\n"
 ";   1920x1080 window texture, so this alone does not lower the render size; kept for study, leave it at docked.\r\n"
+#ifdef __ANDROID__
+";   Android: handheld, as on the console in the hand (measured on an Adreno 740: about a third less GPU time).\r\n"
+"console_mode = handheld\r\n"
+#else
 "console_mode = docked\r\n"
+#endif
 "\r\n"
 "; resolution_scale = 1.0\r\n"
 /* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
@@ -87,7 +97,12 @@ static const char *const k_default_ini =
 ";   size (width / height above). Measured on an RX 9070 XT (2026-10-25): 59.6-59.9 fps in a fight at every one of\r\n"
 ";   them; 2.4 takes about 1 GB of video memory more. The first run at a scale other than 1.0 holds the loading screens\r\n"
 ";   for about two minutes once, while the shaders are translated for it.\r\n"
+#ifdef __ANDROID__
+";   Android: 0.8 = 1280x720, the size on the console in the hand (measured on an Adreno 740: 40 % less GPU time than 1.0).\r\n"
+"resolution_scale = 0.8\r\n"
+#else
 "resolution_scale = 1.0\r\n"
+#endif
 "\r\n"
 "; anisotropic_filtering = game | 2 | 4 | 8 | 16      (Vulkan)\r\n"
 ";   game: each texture sampler keeps the value the game gave it. A number: at least that much on every sampler that\r\n"
@@ -201,7 +216,13 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
+#ifdef __ANDROID__
+    o->handheld = 1;                               /* [witchtime] the default of a handheld (the ini written above says so too) */
+#endif
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
+#ifdef __ANDROID__
+    o->scale = 0.8f; o->window_mode = 2;           /* [witchtime] as the ini written above */
+#endif
     opt_path(o->path);
     FILE *f = fopen(o->path, "rb");
     if (!f) {

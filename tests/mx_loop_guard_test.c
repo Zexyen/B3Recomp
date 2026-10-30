@@ -7,10 +7,11 @@
 #include <string.h>
 #include "mx_translate.h"
 
+static int g_no_switch;
 static char *translate(int stage, const uint8_t *code, int len, unsigned loopdebug) {
     MxIn in; MxOut out;
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
-    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug;
+    in.stage = stage; in.code = code; in.code_len = len; in.target = 1; in.loopdebug = loopdebug; in.no_switch = g_no_switch;
     mx_translate(&in, &out);
     if (!out.glsl) printf("stage %d not translated: %s %s\n", stage, out.op, out.why);
     return out.glsl;
@@ -36,7 +37,12 @@ int main(void) {
     ok = ok && loop_end && strstr(k, "{ mx_kill = true; pc = 0u; continue; }") && strstr(loop_end, "if (mx_kill) discard;");
     for (const char *t = k; ok && (t = strstr(t, "discard")) && t < loop_end; t++) ok = 0;        /* no discard inside the loop */
     for (const char *t = k; ok && (t = strstr(t, "return;")) && t < loop_end; t++) ok = 0;        /* nor a return */
-    if (!ok && k) puts(k);
+    g_no_switch = 1;                               /* [witchtime] Qualcomm's if-chain leaves the same way */
+    char *n = translate(1, code, sizeof code, 0), *chain_end = n ? strstr(n, " pc = 0u;\n }\n") : NULL;
+    ok = ok && chain_end && !strstr(n, "switch (pc)") && strstr(n, "while (pc != 0u) {\n") && strstr(n, "if (pc == 1u) {") && strstr(chain_end, "if (mx_kill) discard;");
+    for (const char *t = n; ok && (t = strstr(t, "discard")) && t < chain_end; t++) ok = 0;
+    for (const char *t = n; ok && (t = strstr(t, "return;")) && t < chain_end; t++) ok = 0;
+    if (!ok && k) puts(n ? n : k);
     printf("mx_loop_guard_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }

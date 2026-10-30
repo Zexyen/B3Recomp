@@ -45,6 +45,9 @@ static struct {
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     const char *exts[16]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, debug;
+    int no_switch;                                 /* [witchtime] MxIn.no_switch: Qualcomm (SSBU_VK_NOSWITCH=0/1 forces it) */
+    int no_fc;                                     /* [witchtime] MxIn.no_fc: the driver has no shaderSignedZeroInfNanPreserveFloat32 (SSBU_VK_NOFC=0/1 forces it) */
+    int nan_exact;                                 /* [witchtime] MxIn.nan_exact: not AMD / NVIDIA / Intel (SSBU_VK_NANEXACT=0/1 forces it) */
     int has_gpl, ext_gpl, ext_so;
     VkPhysicalDeviceMemoryProperties mp;
 } D;
@@ -73,7 +76,10 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.f2.pNext = &D.f11; D.f11.pNext = &D.f12; D.f12.pNext = &D.f13; tail = &D.f13.pNext;
     D.exts[D.next++] = "VK_KHR_swapchain";
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
-    if (!(getenv("SSBU_VK_VIDS") && !atoi(getenv("SSBU_VK_VIDS")))) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* SSBU_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
+    /* [witchtime] Qualcomm's driver (Adreno 740) feeds some attributes of a dynamic vertex input as (0, 0, 0, 1): the title's
+     * text and the stage meshes vanish. There the vertex layout is part of each pipeline (SSBU_VK_VIDS=1 uses the extension) */
+    int vids_want = getenv("SSBU_VK_VIDS") ? atoi(getenv("SSBU_VK_VIDS")) != 0 : V.props.vendorID != 0x5143;
+    if (vids_want) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* SSBU_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
     EXT(has_pv, "VK_EXT_provoking_vertex", pv, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT)
     EXT(has_iu8, "VK_EXT_index_type_uint8", iu8, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT)
@@ -113,8 +119,23 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     if (!D.f13.dynamicRendering || !D.f13.synchronization2) vkd_fail("the device lacks dynamicRendering / synchronization2");
     if (!D.has_vids)                               /* finding 116: AMD Polaris (RX 400/500) on Windows, older drivers */
         printf("nvn_vk: NO VK_EXT_vertex_input_dynamic_state%s: the vertex layout of a draw is part of its pipeline (numbered in ../cache/vk/vlayouts.bin); attribute divisors above 1: %s\n",
-               getenv("SSBU_VK_VIDS") && !atoi(getenv("SSBU_VK_VIDS")) ? " (SSBU_VK_VIDS=0, a test)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
+               getenv("SSBU_VK_VIDS") && !atoi(getenv("SSBU_VK_VIDS")) ? " (SSBU_VK_VIDS=0, a test)" : V.props.vendorID == 0x5143 ? " (not used on Qualcomm: its driver drops attributes; SSBU_VK_VIDS=1 uses it)" : " on this GPU", D.has_vad && D.vad.vertexAttributeInstanceRateDivisor ? "yes" : "NO");
+    D.nan_exact = V.props.vendorID != 0x1002 && V.props.vendorID != 0x10de && V.props.vendorID != 0x8086;
+    if (getenv("SSBU_VK_NANEXACT")) D.nan_exact = atoi(getenv("SSBU_VK_NANEXACT")) != 0;
+    D.no_switch = V.props.vendorID == 0x5143;
+    if (getenv("SSBU_VK_NOSWITCH")) D.no_switch = atoi(getenv("SSBU_VK_NOSWITCH")) != 0;
     if (!D.f2.features.textureCompressionBC) nvn_vk_missing("a GPU without BC texture compression");
+    printf("nvn_vk: texture compression: BC %d, ETC2 %d, ASTC LDR %d\n", (int)D.f2.features.textureCompressionBC, (int)D.f2.features.textureCompressionETC2, (int)D.f2.features.textureCompressionASTC_LDR);
+    {   /* [witchtime] the subgroups the translated shaders' warp operations (SHFL / VOTE / lane masks) run in */
+        PFN_vkGetPhysicalDeviceProperties2 gp2 = vk_sym("vkGetPhysicalDeviceProperties2");
+        VkPhysicalDeviceFloatControlsProperties fc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FLOAT_CONTROLS_PROPERTIES};
+        VkPhysicalDeviceSubgroupProperties sg = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES, &fc};
+        VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &sg};
+        if (gp2) { gp2(V.gpu, &p2); printf("nvn_vk: subgroups: size %u, stages 0x%x (fragment %d, compute %d), operations 0x%x (ballot %d, shuffle %d, vote %d), quad operations in all stages %d\n", sg.subgroupSize, (unsigned)sg.supportedStages, !!(sg.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT), !!(sg.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT), (unsigned)sg.supportedOperations, !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_BALLOT_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT), !!(sg.supportedOperations & VK_SUBGROUP_FEATURE_VOTE_BIT), (int)sg.quadOperationsInAllStages); }
+        D.no_fc = gp2 && !fc.shaderSignedZeroInfNanPreserveFloat32;
+        if (getenv("SSBU_VK_NOFC")) D.no_fc = atoi(getenv("SSBU_VK_NOFC")) != 0;
+        printf("nvn_vk: float controls: 32-bit SignedZeroInfNanPreserve offered %d, in the shaders %d\n", (int)fc.shaderSignedZeroInfNanPreserveFloat32, !D.no_fc);
+    }
     di->enabledExtensionCount = D.next; di->ppEnabledExtensionNames = D.exts; di->pNext = &D.f2;
     printf("nvn_vk: features: vertex input dynamic %d, custom border colour %d, provoking vertex last %d, 8-bit indices %d, list restart %d, ASTC %d, depth clamp %d, wide lines %d, robust buffers %d\n",
            D.has_vids, D.has_cbc, D.has_pv, D.has_iu8, D.has_plr, (int)D.f2.features.textureCompressionASTC_LDR, (int)D.f2.features.depthClamp, (int)D.f2.features.wideLines, (int)D.f2.features.robustBufferAccess);
@@ -266,6 +287,7 @@ static struct {
     int scissor[4], have_viewport, have_scissor, rast_discard, depth_clamp, restart, render_off;
     int dbounds_on; float dbounds[2];             /* [witchtime] nvnCommandBufferSetDepthBounds */
     uint64_t nvn_img[6][8]; int pass_stores;      /* [witchtime] image handles bound per stage (nvnCommandBufferBindImage); the open pass has storage image writes */
+    int cmd_wrote, cmd_cs;                         /* [witchtime] the command buffer being recorded writes compute buffers (cmd_submit makes that visible to the CPU) / has a dispatch (pass_begin gives it to the GPU) */
     int null_w, null_h;                            /* [witchtime] size of a pass without render targets (from the viewport of its draw) */
     int ncol; TargetRef col[8], depth; int have_targets;
     int64_t row_stride, image_stride;
@@ -471,6 +493,7 @@ static struct { int n, fight, last_what; uint8_t kind[PT_MAX]; LONG64 d0; } g_pt
 static LONG64 g_fu_fr_n, g_fu_fr_linked, g_fu_fr_made, g_fu_fr_tk, g_fu_fr_newsig;
 static LONG64 g_fu_frames, g_fu_total, g_fu_linked, g_fu_made, g_fu_newsig, g_fu_tk, g_fu_slow, g_fu_fight_frames, g_fu_fight_slow, g_fu_slow_tex;
 #define VK_SPLIT_DEFAULT 0
+#define VK_SPLIT_QUALCOMM 20                       /* [witchtime] a phone's GPU is the slow half of a frame: it starts while the CPU records the rest, and compute at once (indirect_src waits for it) */
 static LONG64 g_tl_t0, g_tl_first, g_tl_last, g_tl_sum[8], g_tl_n;      /* sums: 0 first submission, 1 last submission, 2 present job, 3 fence waits (count), 4 fence wait ticks, 5 end of a fence wait after the batch start */
 void nvn_front_done_moved(void);                   /* nvn_gl.c (finding 138): R.done moved, a game thread may wait for it */
 static void slot_wait(Slot *s) {
@@ -565,6 +588,12 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (!R.recording) { if (!wait && !signal) return R.serial; cmd_begin(); }
     pass_end();
     Slot *s = &R.slot[R.cur];
+    if (R.cmd_wrote) {                             /* [witchtime] indirect_src reads them through the mapping, perhaps long after this submission */
+        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(s->cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+    R.cmd_wrote = R.cmd_cs = 0;
     if (g_ts_on > 0) vkCmdWriteTimestamp(s->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_ts_pool, (uint32_t)R.cur * 2 + 1);
     if (g_pt_on > 0 && g_pt_slot[R.cur].n) g_pt_draws[g_pt_slot[R.cur].kind[g_pt_slot[R.cur].n - 1]] += g_cmd_draws - g_pt_slot[R.cur].d0;
     if (g_tl_t0) { LONG64 now = tk(); if (!g_tl_first) g_tl_first = now; g_tl_last = now; }
@@ -631,6 +660,7 @@ static int fmt_supported(VkFormat f, VkFlags need) { VkFormatProperties p; vkGet
 static VkFormat tex_vkfmt(int nf, int *expand, int *decode) {
     static int d24 = -1, d24s8, astc;
     if (d24 < 0) { d24 = fmt_supported(VK_FORMAT_X8_D24_UNORM_PACK32, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT); d24s8 = fmt_supported(VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT); astc = D.f2.features.textureCompressionASTC_LDR != 0;
+        if (getenv("SSBU_VK_TEST") && (atoi(getenv("SSBU_VK_TEST")) & 16)) { astc = 0; printf("nvn_vk: TEST (SSBU_VK_TEST bit 16): ASTC decoded by the CPU, as on a GPU without it\n"); }      /* [witchtime] */
         if (getenv("SSBU_VK_TEST") && (atoi(getenv("SSBU_VK_TEST")) & 8)) { d24 = d24s8 = 0; printf("nvn_vk: TEST (SSBU_VK_TEST bit 8): 24-bit depth formats not used: D32_SFLOAT / D32_SFLOAT_S8 as on a GPU without them\n"); } }      /* session 14: the missing stage pieces on NVIDIA only */
     *expand = 0; *decode = 0;
     if ((nf >= 0x01 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) {
@@ -1472,7 +1502,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
     in.stage = s; in.code = st->code; in.code_len = st->code_len; in.cdata = cdata; in.cdata_size = cdata ? st->ctl[3] : 0;
     in.int_attrs = key[0]; in.sint_attrs = key[1]; in.int_tex = key[2]; in.sint_tex = key[3]; in.force_out = fo;
-    in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+    in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
     if (s == 5) {                                  /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
         in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
         memcpy(in.local_size, st->local, sizeof in.local_size); in.smem_bytes = st->smem_bytes; in.lmem_bytes = st->lmem_bytes;
@@ -1651,8 +1681,8 @@ static int pass_begin(void) {
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     int w = 0, h = 0;
     if (R.in_pass) return 1;
-    if (g_split < 0) { const char *e = getenv("SSBU_VK_SPLIT"); g_split = e ? atoi(e) : VK_SPLIT_DEFAULT; }
-    if (g_split > 0 && R.recording && g_cmd_draws >= g_split) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
+    if (g_split < 0) { const char *e = getenv("SSBU_VK_SPLIT"); g_split = e ? atoi(e) : V.props.vendorID == 0x5143 ? VK_SPLIT_QUALCOMM : VK_SPLIT_DEFAULT; }
+    if (g_split > 0 && R.recording && (g_cmd_draws >= g_split || R.cmd_cs)) { cmd_submit(NULL, NULL); g_splits++; }      /* round 16: the GPU starts on what is recorded so far (a pass has just ended: nothing is cut in two) */
     cmd_begin();
     R.pass_rs = 0;
     memset(ca, 0, sizeof ca); memset(&da, 0, sizeof da);
@@ -1846,6 +1876,14 @@ static void resolve_sampler(int s, VStage *v, int i) {
             for (q = 0; on && q < (uint64_t)nseen && seen[q] != key; q++) {}
             if (on && q == (uint64_t)nseen && nseen < 1024) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: stage 5 program #%d samples a SCALED %dx%d format 0x%x (unit %u)\n", R.prog[s] ? R.prog[s]->serial : -1, t->b.width, t->b.height, t->b.format, u); }
         }
+        if ((r & 2) && sp.cmode != 1 && (sp.mag || sp.min & 1 || sp.min >= 4)) {          /* filters linearly (sampler_get: min 6+ is linear) */
+            /* [witchtime] a format the GPU cannot filter (Adreno: D16) is sampled NEAREST: linear filtering of it is undefined
+             * (validation: VUID-vkCmdDraw-magFilter-04553), and the Adreno driver loses the device */
+            static signed char lin[256];
+            int ok = vt->fmt < 256 ? lin[vt->fmt] : 0;
+            if (!ok) { ok = fmt_supported(vt->fmt, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? 1 : -1; if (vt->fmt < 256) lin[vt->fmt] = (signed char)ok; }
+            if (ok < 0) { sp.mag = 0; sp.min = sp.min >= 2 && sp.min < 6 ? 2 : 0; }
+        }
         if (r & 2) g_dtex[g_ndtex].smp = sampler_get(&sp);
         if (drawlog_on()) printf("DLT s%d u%u tex=%p fmt=0x%x %dx%dx%d lv=%d tgt=%d view(fmt=0x%x lvl0=%d nlvl=%d swz=%d%d%d%d) dim=%d have=%d ok=%d rs=%d smp=%d min=%u mag=%u wrap=%u,%u,%u lod=%g..%g bias=%g aniso=%g cmode=%u border=%g,%g,%g,%g\n",
                                s, u, (void *)t, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), t->b.target, e.format, e.lvl0, e.nlvl, e.swz[0], e.swz[1], e.swz[2], e.swz[3], dim, have, ok, vt->rs,
@@ -1915,6 +1953,7 @@ static void set_dynamic_state(void) {
       if ((g_vk_test & 64) && (d & 1)) { static LONG64 nop[8]; if (nop[op & 7]++ == 0) printf("nvn_vk: TEST: depth compare op %d in use (0 never, 1 less, 2 equal, 3 less-or-equal, 4 greater, 5 not equal, 6 greater-or-equal, 7 always), depth write %d\n", (int)op, (int)((d >> 1) & 1)); }
       n.dop = (uint32_t)op; }
     n.ste = (uint32_t)((d >> 2) & 1);
+    if (!R.depth.tex) n.dte = n.dwe = n.ste = 0;   /* [witchtime] no depth/stencil attachment: the tests do nothing (Vulkan), and the Adreno driver loses the device on them */
     {   static const uint8_t op[9] = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_INCREMENT_AND_CLAMP, VK_STENCIL_OP_DECREMENT_AND_CLAMP, VK_STENCIL_OP_INVERT,
                                       VK_STENCIL_OP_INCREMENT_AND_WRAP, VK_STENCIL_OP_DECREMENT_AND_WRAP};
 #define SOP(sh) ((uint32_t)op[((d >> (sh)) & 15) < 9 ? ((d >> (sh)) & 15) : 1])
@@ -1996,7 +2035,7 @@ static void set_dynamic_state3(int samples) {
  * when the render thread is idle or a sync is waited for. The OpenGL path copies back before the next draw; what guest
  * memory holds once the batch is done is the same. Anything that reads guest memory through a range that only partly lies
  * in a CB forces the copy-back at once (cb_sync: submit, wait; counted). */
-typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (SSBU_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it */
+typedef struct { uint64_t addr, size, cap, busy; VkBuffer buf; VMem mem; int state, dirty; uint8_t *snap; uint64_t snap_cap; int stale, age; uint64_t kserial, ww; VkBuffer stg; VMem stg_mem; uint64_t stg_cap, lserial, wserial; uint32_t wchk; uint8_t wrote, touch; } CB;  /* state: 0 free, 1 live in this batch, 2 pending (batch submitted), 3 kept (SSBU_VK_CBKEEP); snap: guest memory as it was when the CB was filled; stale: the buffer holds what compute wrote and guest memory does not; kserial: the submission that ended the last batch that used it; wserial: the submission holding the last GPU write recorded into it */
 static int g_cb_merge = -1;                        /* SSBU_VK_CBMERGE=0: the whole range is copied back as before session 5 */
 /* Round 16 (P3 section 15), SSBU_VK_CBKEEP=1 (0 = before: every buffer is filled from guest memory at its first dispatch of
  * a batch, twice, and merged back after the batch): a compute-written buffer STAYS on the GPU side between batches.
@@ -2427,24 +2466,18 @@ static void cpu_read_sync(uint64_t addr, uint64_t size) {
     if (g_cb_nkept) cb_kept_range(addr, size, 3);
 }
 /* [witchtime] Where the CPU reads indirect draw / dispatch records. GPU-driven culling writes them with compute: a CB of this
- * batch that holds the whole range is read through its mapping once the GPU has run what is recorded so far (submit + wait:
- * about 0.3 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
+ * batch that holds the whole range is read through its mapping once the GPU has run the submission with its last write (on
+ * an Adreno, waiting for all that was recorded so far cost 22 of a frame's 34 ms), a kept CB through its mapping as it is; neither lands (landing every CB and streaming every range again
  * afterwards cost 515 ms a frame in chapter 1). Anything else: from guest memory once compute output there has landed. */
-static uint64_t g_gpu_writes, g_gpu_writes_seen;   /* [witchtime] dispatches / storing draws recorded; the count at the last wait of indirect_src */
 static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
     CB *c = g_cb_live ? cb_inside(addr, size) : NULL;
-    if (c && c->mem.map && g_gpu_writes == g_gpu_writes_seen) return (const uint8_t *)c->mem.map + (addr - c->addr);      /* nothing written since the last wait */
     if (c && c->mem.map) {
-        if (R.recording) {                         /* the shader writes are made visible to the host before the wait */
-            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            pass_end();
-            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-            vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        if (c->wserial > R.done) {
+            if (c->wserial > R.serial) cmd_submit(NULL, NULL);      /* still being recorded */
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= c->wserial) slot_wait(&R.slot[i]);
+            if (R.done < c->wserial) R.done = c->wserial;
+            R.cb_waits++;
         }
-        uint64_t sr = cmd_submit(NULL, NULL);
-        for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= sr) slot_wait(&R.slot[i]);
-        if (R.done < sr) R.done = sr;
-        R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
         return (const uint8_t *)c->mem.map + (addr - c->addr);
     }
     if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
@@ -2533,7 +2566,7 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
         VKC(vkBindBufferMemory(V.device, c->buf, c->mem.mem, c->mem.off));
         R.cb_made++;
     }
-    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0; cb_live_add(c);
+    c->addr = addr; c->size = size; c->state = 1; c->dirty = 0; c->wserial = 0; cb_live_add(c);
     if (addr < g_live_lo) g_live_lo = addr;
     if (addr + size > g_live_hi) g_live_hi = addr + size;
     if ((int)(c - g_cb) + 1 > g_cb_hi) g_cb_hi = (int)(c - g_cb) + 1;
@@ -2874,11 +2907,22 @@ static void compute_pipe_make(VStage *v) {         /* any thread */
         InterlockedIncrement64(&R.pipelines);
     }
 }
+/* [witchtime] TEST ONLY (a GPU fault hunt): SSBU_VK_SKIP=<serial>,<serial>,... leaves out the compute dispatches and draws
+ * of those programs; "cs" in the list leaves out every compute dispatch, "draw" every draw */
+static int test_skip(int serial, int compute) {
+    static int on = -1;
+    static char list[512];
+    if (on < 0) { const char *e = getenv("SSBU_VK_SKIP"); on = e != NULL; snprintf(list, sizeof list, ",%s,", e ? e : ""); }
+    char me[16];
+    snprintf(me, sizeof me, ",%d,", serial);
+    return on && (strstr(list, me) || strstr(list, compute ? ",cs," : ",draw,"));
+}
 static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uint32_t gy, uint32_t gz) {
     static BufRef bufs[40];
     int nbuf = 0;
     int16_t wcb[16];
     uint64_t al = V.props.limits.minStorageBufferOffsetAlignment ? V.props.limits.minStorageBufferOffsetAlignment : 1;
+    if (test_skip(p->serial, 1)) return;
     pass_end();
     /* textures, then buffers (both may submit: upload, ring wrap, copy-back), then the mask word, then the commands */
     g_ndtex = 0;
@@ -2959,7 +3003,11 @@ static void compute_dispatch_run(Prog *p, Stage *st, VStage *v, uint32_t gx, uin
     ckpt(1, v, NULL, NULL);                        /* [issue 26] */
     vkCmdDispatch(R.cmd, gx, gy, gz);
     ckpt(2, NULL, NULL, NULL);
-    g_gpu_writes++;                                /* [witchtime] indirect_src waits again */
+    R.cmd_cs = 1;                                  /* [witchtime] */
+    if (v->ssbo_w) {
+        R.cmd_wrote = 1;
+        for (unsigned k = 0; k < 16; k++) if (v->ssbo_w >> k & 1 && wcb[k] >= 0) g_cb[wcb[k]].wserial = R.serial + 1;
+    }
     if (v->images) storage_barrier();              /* [witchtime] */
     if (v->ssbo_w) {                               /* what the dispatch wrote is read by later dispatches and draws of this command buffer */
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -3008,6 +3056,7 @@ static int draw_prepare(unsigned prim) {
     if (g_tess_alt < 0) g_tess_alt = getenv("SSBU_VK_TESS_ALT") ? atoi(getenv("SSBU_VK_TESS_ALT")) : 0;
     int tess_mark = tess && g_tess_alt == 2 && (nvn_front_frame_next() & 1);
     if (tess && g_tess_alt == 1 && (nvn_front_frame_next() & 1)) return 0;
+    if (test_skip(R.prog[0] ? R.prog[0]->serial : -1, 0) || (R.prog[1] && test_skip(R.prog[1]->serial, 0))) return 0;
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [witchtime] TEST ONLY log */
     if (R.prog[2]) { nvn_vk_missing("a draw with a geometry stage"); return 0; }
     uint32_t ints = 0, sints = 0;
@@ -3053,7 +3102,8 @@ static int draw_prepare(unsigned prim) {
     g_ndtex = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: SSBU_VK_WATCHFS */
-    int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
+    int stores = 0, nstored = 0;                   /* [witchtime] storage images, after the samplers in g_dtex */
+    CB *stored[80];                                /* [witchtime] 5 stages of 16 buffers */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
     PT(1);
     /* 2. buffers: every range the draw reads, into the ring (may wrap the ring = submit) */
@@ -3083,6 +3133,7 @@ static int draw_prepare(unsigned prim) {
                 if (c && (r.addr - c->addr) % sal) c = NULL;
                 if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
                 b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1;
+                if (nstored < 80) stored[nstored++] = c;
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
@@ -3252,9 +3303,9 @@ static int draw_prepare(unsigned prim) {
         printf("DLD f%lld #%lld prim=%u vs=#%d fs=#%d vsrc=%016llx fsrc=%016llx nattr=%d vattr=", fr, n++, prim, R.prog[0] ? R.prog[0]->serial : -1, R.prog[1] ? R.prog[1]->serial : -1,
                (unsigned long long)vs->h, fs ? (unsigned long long)fs->h : 0ull, R.nattr);
         for (int i = 0; i < R.nattr && i < 16; i++) printf("%x:%u%s", R.vattr[i] & 0xff, (R.vattr[i] >> 14) & 0xffff, i + 1 < R.nattr ? "," : "");
-        printf(" ds=%llx blend_on=%x b0=%u,%u,%u,%u,%u,%u logic=%u chanmask=%x alpha=%d,%g poly=%u,%u,%u,%u pass=%dx%d rs=%d ncol=%d cfmt=0x%x depth=%d dfmt=0x%x vp=%g,%g,%g,%g sc=%d,%d,%d,%d(%d) ubo=",
+        printf(" ds=%llx blend_on=%x b0=%u,%u,%u,%u,%u,%u logic=%u chanmask=%x alpha=%d,%g poly=%u,%u,%u,%u pass=%dx%d rs=%d ncol=%d ct=%p cfmt=0x%x depth=%d dfmt=0x%x vp=%g,%g,%g,%g sc=%d,%d,%d,%d(%d) ubo=",
                (unsigned long long)R.ds, R.blend_on, R.blend[0][0], R.blend[0][1], R.blend[0][2], R.blend[0][3], R.blend[0][4], R.blend[0][5], R.logic, R.chanmask, R.alpha_func, R.alpha_ref,
-               R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.pass_w, R.pass_h, R.pass_rs, R.ncol, R.ncol && R.col[0].tex ? R.col[0].tex->b.format : 0, R.depth.tex != NULL, R.depth.tex ? R.depth.tex->b.format : 0,
+               R.poly[0], R.poly[1], R.poly[2], R.poly[3], R.pass_w, R.pass_h, R.pass_rs, R.ncol, R.ncol ? (void *)R.col[0].tex : NULL, R.ncol && R.col[0].tex ? R.col[0].tex->b.format : 0, R.depth.tex != NULL, R.depth.tex ? R.depth.tex->b.format : 0,
                R.viewport[0], R.viewport[1], R.viewport[2], R.viewport[3], R.scissor[0], R.scissor[1], R.scissor[2], R.scissor[3], R.have_scissor);
         for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; printf("  %s stage: ssbos 0x%x written 0x%x cbufs 0x%x images 0x%x from_rec %d\n", s ? "fs" : "vs", v->ssbos, v->ssbo_w, v->cbufs, v->images, v->from_rec); for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) drawlog_ssbo(s ? "fs" : "vs", (int)k, R.ssbo[s][k], (int)(v->ssbo_w >> k & 1)); }      /* [witchtime] */
         for (int s = 0; s < (fs ? 2 : 1); s++) { VStage *v = s ? fs : vs; Stage *st = &R.prog[s]->st[s];
@@ -3263,8 +3314,20 @@ static int draw_prepare(unsigned prim) {
                 else if (k == 2) printf("%c2:c2 ", s ? 'f' : 'v');
                 else printf("%c%d:%llx+%llx ", s ? 'f' : 'v', k, (unsigned long long)R.ubo[s][k - 3].addr, (unsigned long long)R.ubo[s][k - 3].size); } }
         printf("\n");
+        static int full = -1;                      /* [witchtime] TEST ONLY: SSBU_DRAWLOG_FULL=1: the fragment stage's constant buffers as the CPU left them */
+        if (full < 0) full = getenv("SSBU_DRAWLOG_FULL") != NULL;
+        for (int k = 3; full && fs && k < 18; k++) if (fs->cbufs >> k & 1 && R.ubo[1][k - 3].addr) {
+            const float *f = (const float *)(uintptr_t)R.ubo[1][k - 3].addr;
+            unsigned n = (unsigned)(R.ubo[1][k - 3].size / 4); if (n > 96) n = 96;
+            printf("  DLU f%d:", k);
+            for (unsigned i = 0; i < n; i++) printf(" %g", f[i]);
+            printf("\n");
+        }
     }
-    if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
+    if (stores) {                                  /* [witchtime] pass_end makes the writes visible */
+        R.pass_stores = 1; R.cmd_wrote = 1;
+        for (int i = 0; i < nstored; i++) stored[i]->wserial = R.serial + 1;      /* here, not above: a ring wrap in between submits */
+    }
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
     return 1;
 }
@@ -4785,7 +4848,9 @@ swap: ;
     if (progress) cmd_wait_all();
     /* The swapchain has the window texture's colour class: a blit between them then keeps the stored values (the OpenGL
      * path blits with FRAMEBUFFER_SRGB off). */
-    VkFormat want = vt && (vt->fmt == VK_FORMAT_R8G8B8A8_SRGB || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB) ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+    int srgb = vt && (vt->fmt == VK_FORMAT_R8G8B8A8_SRGB || vt->fmt == VK_FORMAT_B8G8R8A8_SRGB);
+    int bgra = V.format.format == VK_FORMAT_B8G8R8A8_UNORM || V.format.format == VK_FORMAT_B8G8R8A8_SRGB;     /* [witchtime] the surface's order (nvn_vk.c): Android offers RGBA only */
+    VkFormat want = bgra ? (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM) : (srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM);
     if (want != V.format.format) { cmd_wait_all(); swapchain_destroy(); V.format.format = want; printf("nvn_vk: swapchain format %d (the window texture's colour class)\n", (int)want); }
     if (V.swapchain && hdr_mode_want() != V.hdr) { cmd_wait_all(); swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }      /* [Recomps#1] finding 147: Windows' HDR switch changed for this monitor */
     uint32_t index = 0;
@@ -5319,7 +5384,7 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
-    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    for (int i = 0; g_vrc && i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);   /* the table is made at the first streamed draw (vrc_init) */
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;

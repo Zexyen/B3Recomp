@@ -290,8 +290,10 @@ class Fn:
             return SET(bits(w, 4, 0), 1, '0ULL')        # fpcr / fpsr read
         if (w & 0xffffffe0) in (0xd51b4400, 0xd51b4420):
             return ';'                                   # fpcr / fpsr write
-        if (w & 0xfffff0ff) in (0xd503305f, 0xd50330bf, 0xd503309f, 0xd50330df):
-            return ';'                                   # clrex / dmb / dsb / isb
+        if (w & 0xfffff0ff) in (0xd50330bf, 0xd503309f):
+            return 'host_dmb();'                         # [witchtime] dmb / dsb (runtime.h: nothing on an x86-64 host)
+        if (w & 0xfffff0ff) in (0xd503305f, 0xd50330df):
+            return ';'                                   # clrex / isb
         raise Unimpl('system')
 
     # ---- loads and stores
@@ -394,21 +396,21 @@ class Fn:
                 rt2 = bits(w, 14, 10)
                 if size == 3:                            # two X registers: one 128-bit exclusive
                     if load:
-                        return ('{ uint64_t a = %s; c->ex_addr = a; c->ex_val = rd64(a); c->ex_val2 = rd64(a + 8); '
+                        return ('{ uint64_t a = %s; c->ex_addr = a; c->ex_val = rd64(a); c->ex_val2 = rd64(a + 8);%s '
                                 'uint64_t t1 = c->ex_val, t2 = c->ex_val2; %s %s }'
-                                % (XS(rn), SET(rt, 1, 't1'), SET(rt2, 1, 't2')))
+                                % (XS(rn), ' host_dmb();' if bits(w, 15, 15) else '', SET(rt, 1, 't1'), SET(rt2, 1, 't2')))
                     return SET(rs, 0, 'stx128(c, %s, %s, %s)' % (XS(rn), R(rt, True), R(rt2, True)))
                 if load:                                 # two W registers: one 64-bit exclusive
-                    return ('{ uint64_t a = %s; c->ex_addr = a; c->ex_val = rd64(a); uint64_t t = c->ex_val; %s %s }'
-                            % (XS(rn), SET(rt, 1, '(uint32_t)t'), SET(rt2, 1, 't >> 32')))
+                    return ('{ uint64_t a = %s; c->ex_addr = a; c->ex_val = rd64(a); uint64_t t = c->ex_val;%s %s %s }'
+                            % (XS(rn), ' host_dmb();' if bits(w, 15, 15) else '', SET(rt, 1, '(uint32_t)t'), SET(rt2, 1, 't >> 32')))
                 return SET(rs, 0, 'stx64(c, %s, (uint64_t)(uint32_t)%s | ((uint64_t)(uint32_t)%s << 32))'
                            % (XS(rn), R(rt, False), R(rt2, False)))
-            if o2:                                       # ldar / stlr: ordered, not exclusive
+            if o2:                                       # ldar / stlr: ordered (acquire / release: runtime.h rda / wrl)
                 if load:
-                    return SET(rt, 1, 'rd%d(%s)' % (nb, XS(rn)))
-                return 'wr%d(%s, %s);' % (nb, XS(rn), R(rt, size == 3))
-            if load:                                     # ldxr / ldaxr: remember address and value
-                return '{ uint64_t a = %s; c->ex_addr = a; c->ex_val = rd%d(a); %s }' % (XS(rn), nb, SET(rt, 1, 'c->ex_val'))
+                    return SET(rt, 1, 'rda%d(%s)' % (nb, XS(rn)))
+                return 'wrl%d(%s, %s);' % (nb, XS(rn), R(rt, size == 3))
+            if load:                                     # ldxr / ldaxr (an acquire load): remember address and value
+                return '{ uint64_t a = %s; c->ex_addr = a; c->ex_val = %s%d(a); %s }' % (XS(rn), 'rda' if bits(w, 15, 15) else 'rd', nb, SET(rt, 1, 'c->ex_val'))
             # stxr / stlxr: succeeds only if the value is still the one loaded (compare-and-swap)
             return SET(rs, 0, 'stx%d(c, %s, %s)' % (nb, XS(rn), R(rt, size == 3)))
         if bits(w, 31, 31) == 0 and bits(w, 29, 24) in (0x0c, 0x0d):   # AdvSIMD structure load/store

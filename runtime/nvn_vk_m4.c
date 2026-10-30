@@ -126,6 +126,10 @@ static uint64_t ssrc_hb(const SSrc *o) {
     if (o->stage == 4) h = fnv(h, o->tess, sizeof o->tess);      /* [witchtime] the mode is part of the evaluation stage's text */
     if (o->stage == 3 || o->stage == 4) h = fnv(h, "tess2", 5);    /* [witchtime] the tessellation stages' own version: change it when their text changes (not MX_VK_VERSION: that makes every stage again) */
     if (o->cdata) h = fnv(h ^ o->cdata_size, o->cdata, o->cdata_size);
+    if (!D.f2.features.shaderInt64) h = fnv(h, "i32", 3);
+    if (D.nan_exact) h = fnv(h, "nan", 3);                  /* [witchtime] MxIn.nan_exact: another text; on AMD / NVIDIA / Intel the hash is the one it always was */
+    if (D.no_switch) h = fnv(h, "nsw", 3);                  /* [witchtime] MxIn.no_switch (Qualcomm): another text */
+    if (D.no_fc) h = fnv(h, "nfc", 3);                      /* [witchtime] MxIn.no_fc: another text */
     if (o->stage != 5 && ld) h = fnv(h, &ld, 4);              /* [issue 26] SSBU_VK_LOOPDEBUG is another translation */
     if (o->stage == 1 && RS_ON) h = fnv(h, "rs1", 3);      /* track O: the fragment stages of a run with an internal resolution scale are another translation (MxIn.screen_scale); at 1.0 the hash is the one it always was */
     return fnv(h, &ver, 4);
@@ -221,6 +225,11 @@ static void vstage_build(VStage *v, const SSrc *src) {
     StageRec r;
     snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), s, (unsigned long long)v->hb);
     FILE *fp = fopen(path, "rb");
+    if (fp && getenv("SSBU_VK_GLSLIN")) {           /* [witchtime] TEST ONLY: a stage SSBU_VK_GLSLIN replaces is translated again, not taken from the cache */
+        char gp[MAX_PATH]; FILE *g;
+        snprintf(gp, sizeof gp, "%s/p%05d_%s.glsl", getenv("SSBU_VK_GLSLIN"), src->serial, s == 5 ? "cs" : s ? "fs" : "vs");
+        if ((g = fopen(gp, "rb")) != NULL) { fclose(g); fclose(fp); fp = NULL; }
+    }
     if (fp) {
         VarRec e;
         while (!done && fread(&e, 1, sizeof e, fp) == sizeof e) {
@@ -237,7 +246,7 @@ static void vstage_build(VStage *v, const SSrc *src) {
         memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
         in.stage = s; in.code = src->code; in.code_len = src->code_len; in.cdata = src->cdata; in.cdata_size = src->cdata ? src->cdata_size : 0;
         in.int_attrs = v->key[0]; in.sint_attrs = v->key[1]; in.int_tex = v->key[2]; in.sint_tex = v->key[3]; in.force_out = v->fo;
-        in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
+        in.target = 1; in.no_int64 = !D.f2.features.shaderInt64; in.nan_exact = D.nan_exact; in.no_switch = D.no_switch; in.no_fc = D.no_fc; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
         if (s == 5) {                              /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;
@@ -252,6 +261,14 @@ static void vstage_build(VStage *v, const SSrc *src) {
             if (getenv("SSBU_VK_GLSLDUMP")) {          /* [Recomps#1] TEST ONLY: SSBU_VK_GLSLDUMP (nvn_vk_draw.c), named by the variant hash v->h gets below */
                 uint32_t dep = s == 0 ? out.int_dep : 0, ck[4] = { v->key[0] & dep, v->key[1] & dep, v->key[2] & out.tex_units, v->key[3] & out.tex_units };
                 glsl_dump(src->serial, s, fnv(fnv(v->hb, ck, 16), &v->fo, 4), out.glsl);
+            }
+            int glslin_used = 0;
+            if (getenv("SSBU_VK_GLSLIN")) {            /* [witchtime] TEST ONLY: SSBU_VK_GLSLIN=<dir>: <dir>/p<serial>_<vs|fs|cs>.glsl replaces the translation (a stage
+                                                         * written as SSBU_VK_GLSLDUMP gives it, edited by hand; without "image" in it the stage binds no storage image) */
+                char path[MAX_PATH];
+                snprintf(path, sizeof path, "%s/p%05d_%s.glsl", getenv("SSBU_VK_GLSLIN"), src->serial, s == 5 ? "cs" : s ? "fs" : "vs");
+                FILE *gf = fopen(path, "rb");
+                if (gf) { char *buf = malloc(1 << 20); size_t n = fread(buf, 1, (1 << 20) - 1, gf); buf[n] = 0; fclose(gf); free(out.glsl); out.glsl = buf; glslin_used = 1; if (!strstr(buf, "image")) out.images = 0; printf("nvn_vk: TEST %s from %s (SSBU_VK_GLSLIN)\n", what, path); }
             }
             if (in.screen_scale) { InterlockedIncrement64(&g_rs_stages); if (strstr(out.glsl, "mx_fcs)")) InterlockedIncrement64(&g_rs_fcs); if (strstr(out.glsl, "mx_tf(")) InterlockedIncrement64(&g_rs_tf); }
             v->mod = module_from_glsl(s, out.glsl, what, &spv_hash);
@@ -277,11 +294,11 @@ static void vstage_build(VStage *v, const SSrc *src) {
                 r.uses_alpha = v->uses_alpha; r.nsmp = v->nsmp; memcpy(r.smp, v->smp, sizeof r.smp);
                 memcpy(r.img_fmt, v->img_fmt, sizeof r.img_fmt); memcpy(r.img_type, v->img_type, sizeof r.img_type);
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.st", vkc_dir(), s, (unsigned long long)v->h);
-                if ((fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }
+                if (!glslin_used && (fp = fopen(path, "wb")) != NULL) { fwrite(&r, 1, sizeof r, fp); fclose(fp); }      /* a test override is never cached */
                 memset(&e, 0, sizeof e);
                 e.magic = STAGEREC_MAGIC; memcpy(e.key, v->key, 16); e.fo = v->fo; e.dep = v->dep; e.tex = v->tex_units; e.vh = v->h;
                 snprintf(path, sizeof path, "%s/stage/%d_%016llx.var", vkc_dir(), s, (unsigned long long)v->hb);
-                if ((fp = fopen(path, "ab")) != NULL) { fwrite(&e, 1, sizeof e, fp); fclose(fp); }
+                if (!glslin_used && (fp = fopen(path, "ab")) != NULL) { fwrite(&e, 1, sizeof e, fp); fclose(fp); }
             }
         }
     }

@@ -250,8 +250,11 @@ static int swapchain_create(void) {
     ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);      /* [witchtime] SRC: SSBU_PCMENU_SHOT reads the presented picture */
     g_sc_src = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ci.preTransform = caps.currentTransform;
-    ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    /* [witchtime] the compositor turns the picture for a display in another orientation (Android: a portrait panel shown
+     * landscape); currentTransform would declare it turned already. Desktops report IDENTITY: no change there */
+    ci.preTransform = caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : caps.currentTransform;
+    ci.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) || !caps.supportedCompositeAlpha ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+                      : (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);   /* Android: INHERIT only */
     ci.presentMode = V.mode;
     ci.clipped = VK_TRUE;
     r = vkCreateSwapchainKHR(V.device, &ci, NULL, &V.swapchain);

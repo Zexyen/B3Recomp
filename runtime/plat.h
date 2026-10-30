@@ -357,9 +357,18 @@ FILE *plat_fopen(const char *path, const char *mode);
 #define _putenv_s(k, v) setenv((k), (v), 1)
 static inline char *_strlwr(char *s) { for (char *p = s; *p; p++) *p = (char)tolower((unsigned char)*p); return s; }
 
+int plat_ww_fault(uintptr_t addr);                     /* a write to a page the software write watch holds read-only: 1 = run it again */
 static inline void *plat_map_fixed(uint64_t addr, size_t size) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    return p == (void *)(uintptr_t)addr ? p : NULL;   /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p == (void *)(uintptr_t)addr) return p;       /* kernels before 4.17 ignore the flag and may map elsewhere */
+    if (p != MAP_FAILED) munmap(p, size);
+    FILE *m = fopen("/proc/self/maps", "r");          /* what holds the spot, for the log */
+    char line[512];
+    unsigned long long lo, hi;
+    while (m && fgets(line, sizeof line, m))
+        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && lo < addr + size && hi > addr) fprintf(stderr, "in the way of 0x%llx: %s", (unsigned long long)addr, line);
+    if (m) fclose(m);
+    return NULL;
 }
 static inline void *plat_alloc(size_t size) {
     void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -391,7 +400,11 @@ static inline int plat_protect(void *p, size_t size, int prot) {
 #define InterlockedCompareExchange(p, x, c)        plat_cas_((p), (x), (c))
 #define InterlockedCompareExchange64(p, x, c)      plat_cas_((p), (x), (c))
 #define InterlockedCompareExchangePointer(p, x, c) plat_cas_((p), (x), (c))
+#ifdef __aarch64__
+#define YieldProcessor() __asm__ __volatile__("yield")
+#else
 #define YieldProcessor() __builtin_ia32_pause()
+#endif
 
 /* SRW locks: a mutex, because SleepConditionVariableSRW waits on them (a pthread condvar needs a mutex); shared
  * acquisitions are exclusive, which is stricter and so still correct */
