@@ -451,6 +451,14 @@ cutscenes in the game's 60 fps mode.
   owed; reset on entering a scene). The Shibuya cutscene with a 300 ms stall every 120 fixed frames (test build only):
   at 60 104.64 s -> 91.83 s, at 30 98.58 s -> 92.33 s; at 60 without stalls 91.74 s. Muted; steps above 1.0 not looked
   at by eye; the frame counters still run per frame (2,758 at 30 before, 2,588 now with the stalls).
+- **First-run freezes in cutscenes (2026-10-30, #54)**: preparation made only key 0 of each vertex stage, and skinned draws
+  ask for key 4 (attribute 2 as integers), so that variant was compiled at its first draw and `pipe_get` waited for it
+  with no limit. Shibuya cutscene, empty Vulkan and Mesa caches: one frame of 8.4 / 9.4 s (vertex `c1ea34cfa9121fda`,
+  fragment `23e8b1d266b98373`, depth only), 3 s paid back, 97.2 / 98.2 s instead of 91.75 s. Key 0 holds 9 ms, key 4
+  8,243 ms. `job_prep` now also makes key 4 for the 657 vertex stages with `dep & 4`: no such frame, 91.78 / 91.77 s,
+  holds 0.22 / 0.17 s (8.8 / 9.8 s before), preparation 66-72 s (56 s before), 7 % more cache, a normal restart 91.76 s.
+  The marker is `prepared_v13_int2`: existing players prepare once more. RX 9070 XT, RADV, muted, one cutscene. A stall of about
+  2.3 s once a run, outside the cutscene, is not a pipeline wait and not explained yet.
 
 ## Resolution scale (2026-10-25)
 
@@ -955,6 +963,7 @@ Camera (right stick): confirmed working by hand on a real pad (2026-10-24); no w
   `MapVirtual` are logged no-ops.
 - `nvnCommandBufferDispatchComputeIndirect` (Vulkan) reads the group counts from guest memory after a sync.
 - `nn::os` ReaderWriterLock has no writer preference.
+- Preparation adds one integer key (attribute 2, `job_prep`): another key in a later chapter still compiles at its first draw.
 - The device fields the sdk's texture code reads are modelled (`nvn_sdk.c`); "compression supported" (+0x1b34 = 1) is
   inferred, its writer was not found.
 - Translator (stage 3): `SAM` / `RAM` are no-ops (helper invocations assumed active for quad shuffles); a register texel
