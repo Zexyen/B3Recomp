@@ -58,7 +58,8 @@ const char* phase_of(const std::string& step)
 
 struct SettingDef {
 	const char *key, *name, *note;
-	std::vector<std::pair<const char*, const char*>> options;   // value in graphics.ini, what the screen shows
+	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
+	const char *file = "/graphics.ini", *section = "";
 };
 const std::vector<SettingDef>& setting_defs()
 {
@@ -71,6 +72,8 @@ const std::vector<SettingDef>& setting_defs()
 		{"vsync", "Vsync", "Auto measures your display at start", {{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}}},
 		{"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at an angle", {{"game", "Game"}, {"2", "2×"}, {"4", "4×"}, {"8", "8×"}, {"16", "16×"}}},
 		{"aspect", "Aspect", "Keep the 16:9 picture, or fill the window", {{"keep", "Keep 16:9"}, {"stretch", "Stretch"}}},
+		{"button_prompts", "Button prompts", "Auto follows what you use",
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, "/controllers.ini", "general"},
 	};
 	return d;
 }
@@ -208,12 +211,7 @@ bool App::create_ui()
 
 void App::bind_model()
 {
-	const std::string shown = ini_get(paths.config + "/controllers.ini", "general", "button_prompts", "auto");
-	if (int f = shown == "switch" ? 1 : shown == "playstation" ? 2 : shown == "xbox" ? 3 : shown == "keyboard" ? 4 : 0)
-	{
-		prompts = f;
-		prompts_fixed = true;
-	}
+	prompts_read();
 	Rml::DataModelConstructor c = ctx->CreateDataModel("wt");
 	if (auto h = c.RegisterStruct<CheckRow>())
 	{
@@ -404,13 +402,30 @@ void App::focus_first()
 }
 
 // ---------------------------------------------------------------------------------------------------- input
+void App::prompts_read()
+{
+	const std::string shown = ini_get(paths.config + "/controllers.ini", "general", "button_prompts", "auto");
+	const int f = shown == "switch" ? 1 : shown == "playstation" ? 2 : shown == "xbox" ? 3 : shown == "keyboard" ? 4 : 0;
+	prompts_fixed = false;
+	if (f)
+		prompts_use(f);
+	else if (!pads.empty())
+		prompts_use(pads.back());
+	else
+		prompts_use(4);
+	prompts_fixed = f != 0;
+}
+
 void App::prompts_use(int family)
 {
 	if (prompts_fixed || family == prompts)
 		return;
 	prompts = family;
-	model.DirtyVariable("glyph_ok");
-	model.DirtyVariable("glyph_back");
+	if (model)
+	{
+		model.DirtyVariable("glyph_ok");
+		model.DirtyVariable("glyph_back");
+	}
 }
 
 void App::prompts_use(SDL_Gamepad* pad)
@@ -709,11 +724,10 @@ void App::toggle_mod(int index)
 
 void App::refresh_settings()
 {
-	const std::string ini = paths.config + "/graphics.ini";
 	settings.clear();
 	for (const SettingDef& d : setting_defs())
 	{
-		std::string v = ini_get(ini, "", d.key, d.options.front().first);
+		std::string v = ini_get(paths.config + d.file, d.section, d.key, d.options.front().first);
 		int i = option_index(d, v);
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v});
 	}
@@ -726,12 +740,13 @@ void App::step_setting(int index, int dir)
 	if (index < 0 || index >= int(defs.size()))
 		return;
 	const SettingDef& d = defs[size_t(index)];
-	const std::string ini = paths.config + "/graphics.ini";
-	int i = option_index(d, ini_get(ini, "", d.key, d.options.front().first));
+	const std::string ini = paths.config + d.file;
+	int i = option_index(d, ini_get(ini, d.section, d.key, d.options.front().first));
 	int n = int(d.options.size());
 	i = i < 0 ? 0 : (i + dir + n) % n;
-	ini_set(ini, "", d.key, d.options[size_t(i)].first);
+	ini_set(ini, d.section, d.key, d.options[size_t(i)].first);
 	refresh_settings();
+	prompts_read();
 }
 
 // ---------------------------------------------------------------------------------------------------- work

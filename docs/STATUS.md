@@ -640,7 +640,7 @@ Bayonetta 2's. Now:
   a mouse), from `auto` when there is no pad. The two grey four-dot pictures, the d-pad and the coloured action icons stay.
   Checked in the running game (Options help screen, Vulkan): PlayStation, Xbox, by letter, keyboard with a rebound key, Switch
   untouched, all changed while it ran; keyboard <-> pad and hot-plug with a uinput Xbox pad under headless gamescope (the
-  game takes input only with a focused window); `tests/prompts_test.c`. The launcher's footer uses the same drawings
+  game takes input only with a focused window); `tests/prompts_test.c`. `button_prompts` is also a row of the PC settings panel and of the launcher's Settings; it is written to `controllers.ini`. The launcher's footer uses the same drawings
   (`runtime/prompt_art.h`, `gen:glyph`) and the same rule: its fixed Enter / Esc, or A / B or Cross / Circle by the label on
   the button, which is how it takes confirm and back. Native ASTC is checked only through our decoder (desktop GPUs have none).
 - **Linux key state** comes from the window's SDL events (window thread), not from SDL_GetKeyboardState on the game's
