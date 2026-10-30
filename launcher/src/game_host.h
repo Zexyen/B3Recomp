@@ -17,9 +17,9 @@ struct GameStart {
 // working folder. Nothing is shown or released yet.
 GameStart prepare_game(const Paths& paths);
 
-// Hands the window to the game and runs it; does not come back (the launcher starts itself again when the game ends,
-// unless the player closed the window).
-[[noreturn]] void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window);
+// Hands the window to the game and runs it; does not come back (the launcher starts itself again when the game ends if
+// `relaunch`, unless the player closed the window).
+[[noreturn]] void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bool relaunch);
 
 // The fallback: witch-time-game as a child process, waited for while the window is hidden. Returns its exit code.
 int run_child(const Paths& paths, SDL_Window* window);

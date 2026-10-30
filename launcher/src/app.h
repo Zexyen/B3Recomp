@@ -42,6 +42,8 @@ private:
 	Rml::String dump;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
+	bool dump_modified = false;    // the last check found files that differ from the supported version
+	bool accept_modified = false;  // setup runs with --accept-modified: such a dump is used anyway
 	std::vector<CheckRow> checks;
 	bool building = false;
 	float progress = 0;
@@ -59,6 +61,7 @@ private:
 	BuildRunner runner;
 	enum class Job { none, verify, build } job = Job::none;
 	bool running = true, want_play = false, want_focus = true;
+	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it
 	int returned_code = -1;            // --returned <code>: the game just ended
 	std::mutex picked_mutex;
 	std::string picked_folder;         // from the folder dialog (another thread)

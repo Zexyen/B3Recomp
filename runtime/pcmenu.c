@@ -46,10 +46,11 @@ void display_mouse_want(int on);
 int nnpad_mouse_cfg(float *sens, int *invert);             /* nnpad_sdl.c */
 
 enum { A_LIVE, A_CUT, A_VSYNC, A_WINDOW, A_SIZE, A_SAMPLER, A_RESTART };
+#define ROW_VALUES 12
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
     int apply, optional;
-    const char *val[9], *name[9];
+    const char *val[ROW_VALUES], *name[ROW_VALUES];
 } Row;
 static const Row k_rows[] = {
     {"window", "Display mode", "Windowed: a window of the size below. Borderless and fullscreen cover the monitor the window is on.", NULL, "windowed", A_WINDOW, 0,
@@ -63,8 +64,9 @@ static const Row k_rows[] = {
     {"frame_rate", "Frame rate (experimental)", "EXPERIMENTAL above 60: the game keeps real time, but some effects, input windows and countdowns may still run faster than at 60. Applies at the next start.", NULL, "60", A_RESTART, 0,
      {"60", "90", "120"}, {"60 fps", "90 fps", "120 fps"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at (Bayonetta 3: 1600 \xC3\x97 900 at 1.0). The first start at a new scale prepares its shaders for about two minutes once.", "SSBU_VK_SCALE", "1.0", A_RESTART, 0,
-     {"0.5", "0.75", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
-     {"0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.75 \xE2\x80\x94 1200 \xC3\x97 675", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",
+     {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
+     {"0.4 \xE2\x80\x94 640 \xC3\x97 360", "0.5 \xE2\x80\x94 800 \xC3\x97 450", "0.6 \xE2\x80\x94 960 \xC3\x97 540", "0.75 \xE2\x80\x94 1200 \xC3\x97 675",
+      "0.8 \xE2\x80\x94 1280 \xC3\x97 720", "1.0 \xE2\x80\x94 1600 \xC3\x97 900", "1.2 \xE2\x80\x94 1920 \xC3\x97 1080", "1.6 \xE2\x80\x94 2560 \xC3\x97 1440",
       "2.0 \xE2\x80\x94 3200 \xC3\x97 1800", "2.4 \xE2\x80\x94 3840 \xC3\x97 2160", "3.0 \xE2\x80\x94 4800 \xC3\x97 2700"}},
     {"anisotropic_filtering", "Anisotropic filtering", "Sharper textures at flat angles. Game: as the game set each texture.", NULL, "game", A_SAMPLER, 0,
      {"game", "2", "4", "8", "16"}, {"Game", "2\xC3\x97", "4\xC3\x97", "8\xC3\x97", "16\xC3\x97"}},
@@ -86,7 +88,7 @@ static int g_env_cut, g_env_set[NROW];
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
-static int row_count(int i) { int n = 0; while (n < 9 && k_rows[i].val[n]) n++; return n; }
+static int row_count(int i) { int n = 0; while (n < ROW_VALUES && k_rows[i].val[n]) n++; return n; }
 static int find_val(int i, const char *v) {
     for (int k = 0; k < row_count(i); k++) {
         if (!_stricmp(k_rows[i].val[k], v)) return k;
