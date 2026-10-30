@@ -53,7 +53,9 @@ driver ("Build (Windows)" in the main README).
   newer, offers "Update to vX.Y.Z" on the title menu. That downloads this platform's archive with the system's `curl`,
   checks it against the release's `.sha256` (`build/wtbuild sha256`), unpacks it with `tar` (Windows 10 and 11 ship
   `curl` and `tar`), moves its files over the installed ones (keeping the player's `config/`) and starts the new
-  launcher. The replaced files wait in `build/update` until the next start. The next build redoes the steps the new
+  launcher. The replaced files wait in `build/update` until the next start. A release launcher will not start a game
+  that `build/built_version` says another release built (also after unpacking a release by hand); it opens the build
+  screen. The next build redoes the steps the new
   sources feed (`REDO_ON_UPDATE` in `tools/wtbuild/src/setup.rs`).
 - **Straight to the game.** `witch-time --play` (on Windows `witch-time.exe --play`) starts the game at once and ends
   when it does, for a Steam shortcut (Steam Deck game mode) or a desktop entry. If the game is not built yet, the

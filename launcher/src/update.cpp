@@ -207,7 +207,7 @@ State state(std::string& tag, std::string& message)
 void restart(const Paths& paths)
 {
 #ifdef _WIN32
-	std::wstring cmd = L"\"" + widen(paths.self) + L"\" --updated";
+	std::wstring cmd = L"\"" + widen(paths.self) + L"\"";
 	STARTUPINFOW si{sizeof si};
 	PROCESS_INFORMATION pi{};
 	if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
@@ -216,7 +216,7 @@ void restart(const Paths& paths)
 		CloseHandle(pi.hProcess);
 	}
 #else
-	execl(paths.self.c_str(), paths.self.c_str(), "--updated", (char*)nullptr);
+	execl(paths.self.c_str(), paths.self.c_str(), (char*)nullptr);
 #endif
 }
 

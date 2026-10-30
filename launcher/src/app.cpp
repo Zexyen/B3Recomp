@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <sys/stat.h>
 
 namespace {
@@ -107,8 +108,6 @@ bool App::init(int argc, char** argv)
 			returned_code = std::atoi(argv[i + 1]);
 		else if (!std::strcmp(argv[i], "--play"))
 			want_play = play_only = true;
-		else if (!std::strcmp(argv[i], "--updated"))
-			updated = true;
 	SDL_SetAppMetadata("Witch Time", nullptr, "witchtime");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
@@ -244,6 +243,7 @@ void App::bind_model()
 	c.RegisterArray<std::vector<Rml::String>>();
 	c.Bind("screen", &screen);
 	c.Bind("built", &built);
+	c.Bind("stale", &stale);
 	c.Bind("hour_deg", &hour_deg);
 	c.Bind("minute_deg", &minute_deg);
 	c.Bind("status_bad", &status_bad);
@@ -514,6 +514,10 @@ void App::refresh_title()
 {
 	built = file_exists(paths.build + "/" + GAME_EXE) && file_exists(paths.build + "/" + GAME_LIB) &&
 		file_exists(paths.repo + "/targets/exefs/main.elf");
+	std::string built_version;
+	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
+	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
+	stale = built && WT_VERSION[0] == 'v' && built_version != WT_VERSION;
 	status_bad = false;
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
@@ -529,7 +533,7 @@ void App::refresh_title()
 		status_title = "UPDATE FAILED";
 		status_line = message;
 	}
-	else if (updated && built)
+	else if (stale)
 	{
 		status_title = "UPDATED";
 		status_line = "Now " WT_VERSION ". Rebuild before you play";
@@ -559,6 +563,7 @@ void App::refresh_title()
 	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
 	model.DirtyVariable("built");
+	model.DirtyVariable("stale");
 	model.DirtyVariable("status_bad");
 	model.DirtyVariable("status_title");
 	model.DirtyVariable("status_line");
@@ -853,7 +858,7 @@ void App::tick()
 				build_error = runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
 		else
-			updated = false;                   // rebuilt with the update
+			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
 		refresh_title();
 	}
 	refresh_build();
@@ -881,6 +886,14 @@ void App::play()
 {
 	if (runner.running())
 		return;
+	if (stale)
+	{
+		play_only = false;                       // the launcher stays until the game matches it
+		go("build");
+		build_error = "This game was built by an older version. Press REBUILD to update it.";
+		model.DirtyVariable("build_error");
+		return;
+	}
 	GameStart g = prepare_game(paths);
 	if (!g.error.empty())
 	{

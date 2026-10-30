@@ -40,7 +40,7 @@ private:
 	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
 	Rml::String status_title, status_line, footer_info;
 	Rml::String update_tag;            // a newer release to install, or empty
-	bool updated = false;              // --updated: this run is the newly installed release
+	bool stale = false;                // built by another release than this launcher
 	Rml::String dump;
 	bool checking = false, verified = false;
 	bool move_dump = false;   // setup moves the dump's game data into the build folder instead of copying it
