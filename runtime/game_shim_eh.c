@@ -21,6 +21,7 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "quad_walk.h"
 /* [witchtime] Host versions of game functions (lifter/recomp_eh.py HOST_OVERRIDES: their direct calls come here).
  * f_7100b382c0(value w0, uint32 *even x1, uint32 *odd x2): even = the even bits of the value packed into 16, odd = the odd
  * bits; returns odd in x0 (the original: three bit reversals and a 32-step loop of read-modify-writes, about 1,300
@@ -71,6 +72,28 @@ void h_morton_split32(Ctx *c) {
     uint64_t a = c->x[1], b = c->x[2];
     if (a < b + 4 && b < a + 4) { f_7100b382c0(c); return; }
     morton_split32(c);
+}
+
+/* f_71007e1fe4: see quad_walk.h. w1 width, w2 height, w7 levels below this node; on the stack the node's Morton index and the
+ * two maps. SSBU_QUADWALK=0 off; SSBU_QUADWALK_CHECK=1 (test): the lifted walk runs too and must return the same. */
+void f_71007e1fe4(Ctx *c);
+void h_quad_walk(Ctx *c) {
+    static int on = -1, chk;
+    static _Thread_local int lifted;               /* the check's walk: every node lifted */
+    if (on < 0) { const char *e = getenv("SSBU_QUADWALK"); chk = getenv("SSBU_QUADWALK_CHECK") != NULL; on = !(e && !atoi(e)); }
+    int d = (int)(uint32_t)c->x[7];
+    if (on && !lifted && d >= 2 && d < 16) {
+        uint64_t sp = c->x[31], pa, pb;
+        uint32_t idx;
+        memcpy(&idx, (void *)(uintptr_t)sp, 4); memcpy(&pa, (void *)(uintptr_t)(sp + 8), 8); memcpy(&pb, (void *)(uintptr_t)(sp + 16), 8);
+        int r = quad_state((const uint8_t *)(uintptr_t)pa, (const uint8_t *)(uintptr_t)pb, (uint32_t)c->x[1], (uint32_t)c->x[2], even_bits16(idx) << d, even_bits16(idx >> 1) << d, 1u << d);
+        if (r >= 0) {
+            if (chk) { lifted = 1; f_71007e1fe4(c); lifted = 0; if ((uint32_t)c->x[0] != (uint32_t)r) printf("quadwalk: TEST: FAILED: levels %d: %d here, %u lifted\n", d, r, (uint32_t)c->x[0]); }
+            c->x[0] = (uint32_t)r;
+            return;
+        }
+    }
+    f_71007e1fe4(c);
 }
 
 /* f_7100d02de0(mode w0): the game's main loop (0x7100670b80) asks for its frame-rate mode each frame from its own state

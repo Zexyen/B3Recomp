@@ -423,8 +423,14 @@ Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
   no level differs from a decode at the use. Shibuya 170 s from frame 1500: frames over 34 ms 11 -> 0, worst 59 -> 22 ms.
 - **ASTC stays**: no build-time conversion to BC (about 41 GB more, #54), and BC3 stays what GPUs without ASTC store.
 
-**Left**: the steady 46 / 90 ms frames of the ride are the main thread in the tree walk `f_71007e1fe4` (up to about 85 ms
-a frame), which also stops the ride holding 60. About 74 textures at the ride's start are first seen in the frame that
+- **The tree walk `f_71007e1fe4`** (the steady 46 / 90 ms frames here, the 45-50 ms trains in Tokyo): a quadtree over two
+  1024x1024 byte maps. A leaf is 1 where they differ, and a node draws a quad for each child that returned 1 unless all four
+  did. A node whose leaves are all equal therefore draws nothing and writes only its stack, so `h_quad_walk`
+  (`quad_walk.h`) reads its result off the maps. A walk: 47 -> about 0.01 ms; mixed nodes stay lifted, so the quads are the
+  game's. Ride from frame 2400: frames over 60 ms 4 -> 0, worst 105 -> 45 ms. `SSBU_QUADWALK=0` off;
+  `SSBU_QUADWALK_CHECK=1` (test) runs the lifted walk too: on the ride 239 uniform nodes in 10 walks, none differ and none drew a quad.
+
+**Left**: about 74 textures at the ride's start are first seen in the frame that
 draws them (one frame of about 0.6 s). `SSBU_LPROF` frames are 2 ahead of `SSBU_FRAMETIMES` frames.
 
 ## 60 fps menus and cutscenes (2026-10-25)

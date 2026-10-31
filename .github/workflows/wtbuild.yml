@@ -6,7 +6,7 @@ name: wtbuild
 on:
   pull_request:
     paths: ['tools/wtbuild/**', 'lifter/**', 'scripts/**', 'runtime/gen/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/scene_step_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/scene_step_test.c', 'tests/quad_walk_test.c', 'tools/extract/**', '.github/workflows/wtbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -55,3 +55,5 @@ jobs:
         run: |
           clang -O2 -Wall -I runtime tests/scene_step_test.c -o "$RUNNER_TEMP/scene_step_test"
           "$RUNNER_TEMP/scene_step_test"
+          clang -O2 -Wall -I runtime tests/quad_walk_test.c -o "$RUNNER_TEMP/quad_walk_test"
+          "$RUNNER_TEMP/quad_walk_test"
