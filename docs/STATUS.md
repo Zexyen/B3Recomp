@@ -440,8 +440,8 @@ cutscenes in the game's 60 fps mode.
 - **How the game times them**: the main loop (`7100670b80`) asks each frame for a frame-rate mode from its state flags
   (0 = 60, 1 = 30, 2 = 15; set by `7100d02de0`, applied at `7100cfd9b8`). Its per-frame clock `7100c1f600` keeps the
   frame's step at clock+0xe0: in gameplay a ratio of the measured frame time, in mode-1 scenes (flags 28 and 30) a fixed
-  1.0, one 30 Hz frame: a cutscene advances one step per game frame (2,758 frames at 30 or at 60). Forcing only the mode
-  played the same cutscene in 46.6 s instead of 92.1 s.
+  1.0, and each frame of such a scene runs two logic steps (see "One logic step" below), 60 a second at 30 fps. Forcing only
+  the mode played the same cutscene in 46.6 s instead of 92.1 s.
 - **What is done**: two host overrides (`lifter/recomp_eh.py` `HOST_OVERRIDES`, `runtime/game_shim_eh.c`):
   `h_fps_mode_set` makes a 1 a 0, and `h_frame_clock` replaces the fixed step while such a scene runs at 60 by the last
   frame's measured length (the clock's own, +0xf0) in 30 Hz frames, 0.5 on time, more for a late frame, so the
@@ -462,12 +462,32 @@ cutscenes in the game's 60 fps mode.
   jump prompt of under a second, not reached by a test: a blind script dies on the ride). Only fixed-step scenes are
   forced now; the ride runs at 30 as on the console.
   The ride's scripted parts do have the fixed step (`0x50810008`), so they were still forced: the ride jumped between 30
-  and 60 and the third prompt stayed short. Flag bit 16 now keeps them at 30 too; the user passed every prompt by hand.
-  The prompt's frame counter is not identified, so the ride can't run at 60 yet.
-  A ride at 60 needs its frame counters at half rate (a counter there is 30 Hz; the frames due at step / 2 while the
-  ride is forced, the sites listed). Census of the first 200 s of the ride, 30 against 60: 115 frame-locked sites, 22 on
-  the game's thread, mostly the engine's own frame numbers. The QTE's counter is not among them: the script never reaches
-  it, so the ride stays at 30 until a census by hand has it.
+  and 60 and the third prompt stayed short. Flag bit 16 kept them at 30 at first; the user passed every prompt by hand.
+- **One logic step (2026-10-31, #45)**: the prompt's cause. The main loop (`7100670da4`) runs a second logic step (pads,
+  `7100671600`, no drawing) in a frame of a fixed-step scene, so a 30 fps scene has 60 steps of 1/60 s a second. Forcing 60
+  kept both: 120 steps a second of half the size. Anything scaled by the step kept real time, but whatever counts steps ran
+  twice as fast, in cutscenes and menus too. That is why no census found one counter. `h_main_pass` (the override of
+  `7100b20a20`, called from `7100670d88` just before the loop tests bit 28 of w21) clears the bit when the scene runs above
+  30 fps, and `h_frame_clock` doubles the step: one step of 1.0 a frame at 60, as gameplay. Two cases keep the second step.
+  Flag 21 repeats it until the scene player reaches a frame it seeks (`7100bb2350` clears the flag). And a scene skipped from
+  its pause menu ends in a second step of the frame the menu closes: without one it played on to its end behind the skip's
+  black, 6 s on the ride's first scripted part. Found by test, which read needs that step is not known, so the frames with
+  the menu's flags 14 and 0 keep both. Skipped there: `00c10000` the next frame at 30, 60 and 120. Resumed: the scene goes
+  on to its end. The third jump is probably in the scripted part `0x50810008`
+  at updates 7654-7776 of the hand run: three motions of about 0.9 s, with a slow motion of 0.05 at the third (read off the
+  census windows, not seen on the screen).
+  - **Rates**: cutscene_fps = 60 runs the whole ride at 60, the plain frames (`0x00810000`, measured) too. Above 60 the
+    ride is not forced: mode 1 is 2 ticks of frame_rate, 60 fps at 120 and 45 at 90, one step a frame. So its scripted
+    parts have at most 60 steps a second and its prompts are never short; the counter itself is still not named, and a
+    named one in `fps_counters.txt` is what would let the ride run at frame_rate.
+  - **Measured** (scripted ride with bot, 170 s at 60): 58-60 fps from the ride's start on, 0 Vulkan failures. The Shibuya
+    cutscene: 91.94 s at 60 (91.95 s before). The title screen's loop until the game goes on: 40.00 s at 60, 39.96 s at 120,
+    40.03 s at 30, 39.95 s before (it shows a random character, so its pictures differ from boot to boot). Logic steps
+    (`f_7100671600`) against frames under gdb over 40 s from the start: 1,978 / 1,978 at 60, 4,300 / 4,301 at 120, 1,981 /
+    1,068 at 30, so 60 has the steps of 30. The 30 run has 1.85 a frame because the frames before the title have one.
+  - **Left**: the ride's plain frames run 60 steps a second at 60, 30 on the console. Counters there that count steps
+    run twice as fast, as in any gameplay at 60: in the hand run only `71007a01d4` is long (400 steps, HUD-like code, unread).
+    Frames -> seconds `7100cb4f54` (107 callers of `7100cb4f20`) reads mode 0 in a forced scene: unread, as before.
 - Not checked by ear: audio is muted in the test runs; the cutscene's timeline keeps wall-clock time, which is what
   the voice and lip sync follow.
 - **Late frames (2026-10-30, #45, #47)**: the sound runs on real time and never waits, but a frame over 33 ms lost its
