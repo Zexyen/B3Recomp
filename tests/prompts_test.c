@@ -25,6 +25,7 @@ int nnpad_kb_vk(int idx) {                                  /* the defaults of n
 
 static uint8_t g_mem[0x20000], g_lin[0x20000], g_px[256 * 512 * 4];
 static int alpha_at(int x, int y) { return g_px[(y * 256 + x) * 4 + 3]; }
+static int red_at(int x, int y) { return g_px[(y * 256 + x) * 4]; }
 static void paint(int format, int bh, int family, int by_letter) {
     memset(g_mem, 0, sizeof g_mem);
     if (format == 0x79) for (size_t i = 0; i < sizeof g_mem; i += 16) { static const uint8_t none[16] = {0xfc, 0xfd, 255, 255, 255, 255, 255, 255}; memcpy(g_mem + i, none, 16); }   /* transparent */
@@ -59,6 +60,8 @@ int main(int argc, char **argv) {
         paint(f[i].format, f[i].bh, 2, 0);
         CHECK(alpha_at(204 + 20, 20) > 200 && alpha_at(204 + 20 + 5, 20) < 60);        /* A: Circle, ring around a filled centre */
         CHECK(alpha_at(160 + 20, 44 + 20) < 60 && alpha_at(160 + 20 + 7, 44 + 20) > 200); /* B: Cross, cut at the middle */
+        CHECK(red_at(204 + 1, 1) == 0 && red_at(204 + 38, 38) == 0);                   /* black around the disc: a combo prompt's shadow comes from it */
+        CHECK(red_at(204 + 20 + 5, 20) > 240);                                         /* white in the cut: edges filter to white */
         CHECK(alpha_at(56 + 20, 44 + 20) == 0);                                        /* a cell of no prompt stays empty */
         paint(f[i].format, f[i].bh, 2, 1);
         CHECK(alpha_at(204 + 20, 20) < 60);                                            /* by letter A is Cross */

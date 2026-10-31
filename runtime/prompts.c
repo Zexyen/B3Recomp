@@ -1,5 +1,5 @@
 /* [witchtime] PlayStation / Xbox button prompts, no mod needed. Every prompt of the game comes from one atlas, core_sys_btn
- * (ui/ui_core*.dtt, texture 0 of core.wtp): white pictures in straight alpha, 40 x 40 cells on a 4 x 4 block grid, named
+ * (ui/ui_core*.dtt, texture 0 of core.wtp): white pictures in straight alpha on black, 40 x 40 cells on a 4 x 4 block grid, named
  * btn_NNN in core.uvd. Most are neutral (d-pad, sticks, the coloured action icons); the 10 below are the Switch's. When the
  * game makes that texture (nvn_gl.c tex_initialize) they are painted over in its memory, in the texture's own format, and
  * again whenever the choice changes: the renderers see an ordinary texture the game has written to. Only the two atlases known by hash are touched, so a mod's atlas stays as it is.
@@ -101,6 +101,7 @@ static void cell_swap(uint8_t *mem, Cell a, Cell b, int bh_log2) {
 static void cell_draw(uint8_t *mem, int format, int bh_log2, Cell c, const uint8_t *s) {
     enum { WMAX = 52 };                                     /* the widest cell; a picture is centred in its cell */
     int w = c.w ? c.w : CELL, bw = (w + 3) / 4, ox = (CELL - w) / 2;
+    static const uint8_t none[16] = {0xfc, 0xfd, 255, 255, 255, 255, 255, 255};   /* ASTC: transparent black */
     uint8_t alpha[WMAX * CELL], rgba[WMAX * CELL * 4], bc3[13 * 10 * 16];
     for (int y = 0; y < CELL; y++) for (int x = 0; x < bw * 4; x++) {
         int n = 0, sx = x + ox;
@@ -109,11 +110,19 @@ static void cell_draw(uint8_t *mem, int format, int bh_log2, Cell c, const uint8
         memset(rgba + (y * bw * 4 + x) * 4, 255, 3);
         rgba[(y * bw * 4 + x) * 4 + 3] = alpha[y * bw * 4 + x];
     }
+    /* around the picture the game's cells are black, not white: combo prompts seem to darken from the colour (not traced),
+     * and all white shows as a square. A block keeps white when ink is in it or a texel from it, so filtering leaves no dark fringe. */
+    for (int y = 0; y < CELL; y += 4) for (int x = 0; x < bw * 4; x += 4) {
+        int ink = 0;
+        for (int j = y > 0 ? y - 1 : 0; j < CELL && j < y + 5; j++) for (int i = x > 0 ? x - 1 : 0; i < bw * 4 && i < x + 5; i++) ink |= alpha[j * bw * 4 + i];
+        if (!ink) for (int j = 0; j < 4; j++) memset(rgba + ((y + j) * bw * 4 + x) * 4, 0, 16);
+    }
     if (format == FMT_BC3) tex_encode_bc3(rgba, bw * 4, CELL, bc3);
     for (int y = 0; y < CELL; y += 4) for (int x = 0; x < bw * 4; x += 4) {
         uint8_t *to = block_at(mem, c.x + x, c.y + y, bh_log2);
         if (format == FMT_BC3) memcpy(to, bc3 + (y / 4 * bw + x / 4) * 16, 16);
-        else prompts_astc_block(alpha + y * bw * 4 + x, bw * 4, to);
+        else if (rgba[(y * bw * 4 + x) * 4]) prompts_astc_block(alpha + y * bw * 4 + x, bw * 4, to);
+        else memcpy(to, none, 16);
     }
 }
 
