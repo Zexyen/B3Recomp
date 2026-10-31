@@ -1145,10 +1145,17 @@ static void tex_ahead(LONG64 frame) {
     for (Tex *t = head; t && t != done_head; t = t->all_next) {
         Fmt f;
         if (t->ahead_seen < 0) continue;
-        if (t->vk || t->dead) { t->ahead_seen = -1; continue; }
+        if (t->vk || t->dead) { t->ahead_seen = -1; nvn_front_tex_prep_drop(t); continue; }
         if (!t->ahead_seen) { t->ahead_seen = frame + 1; pending++; continue; }
         if (frame + 1 - t->ahead_seen < 2) { pending++; continue; }
         if (t->gpu_written || (!t->mem && !t->b.packaged) || t->b.samples > 1 || t->b.width <= 0 || t->b.height <= 0 || !nvn_front_fmt(t->b.format, &f) || f.kind != 4) { t->ahead_seen = -1; continue; }
+        VTex probe;
+        VkFormat vf = tex_vkfmt(t->b.format, &probe.expand, &probe.decode);
+        size_t prep = 0;
+        if (probe.decode && (vf == VK_FORMAT_BC3_UNORM_BLOCK || vf == VK_FORMAT_BC3_SRGB_BLOCK)) {      /* #45: decoded on threads of its own; made here when that is done */
+            int r = nvn_front_tex_prep(t, &prep);
+            if (!r) { pending++; continue; }
+        }
         if (taken && tk() - t0 > budget) { pending++; continue; }
         if (fr) {
             /* in and around a fight (a frame of the last 600 had fighters) only what is certainly cheap: at most 512 KB, no
@@ -1156,13 +1163,12 @@ static void tex_ahead(LONG64 frame) {
              * frame 3549, s8d 4297, s8f 3840: the result screen's textures arriving while the fight ends, in frames without
              * a dispatch): 15-22 ms after one present and a frame of 34-35 ms. The others wait for a frame far from a fight,
              * or are made at their use as before. */
-            VTex probe;
-            if (t->data_size > (512u << 10) || R.ring_pos + 2 * (uint64_t)t->data_size + (1u << 20) > R.ring_size) { pending++; continue; }
-            tex_vkfmt(t->b.format, &probe.expand, &probe.decode);
-            if (probe.decode) { pending++; continue; }
+            if (probe.decode && !prep) { pending++; continue; }
+            if ((!prep && t->data_size > (512u << 10)) || R.ring_pos + 2 * (uint64_t)(prep ? prep : t->data_size) + (1u << 20) > R.ring_size) { pending++; continue; }
         }
         LONG64 b0 = R.upload_bytes;
         vt_get(t);
+        nvn_front_tex_prep_drop(t);
         t->ahead_seen = -1; taken++;
         g_ta_n++; g_ta_bytes += R.upload_bytes - b0;
     }
@@ -2292,11 +2298,29 @@ static void cb_landing_poll(void) {                /* at the start of a batch: l
  * bounds that are exact at the start of the batch. */
 static int16_t g_kept_idx[CB_N];
 static int g_kept_n;
+/* #45: the pages of the buffers buf_ref walks, hashed: a page with no bit is in none of them. Most ranges a draw names
+ * touch no compute buffer, and the walks cost 16 ms a frame on the chapter 3 ride (20,000 ranges, 170 kept buffers). A
+ * bit that is no longer true only costs the walk. */
+#define CB_PF_BITS (1u << 18)
+static uint64_t g_cb_pf[CB_PF_BITS / 64];
+static void cb_pf_set(uint64_t addr, uint64_t size) {
+    if (!size) return;
+    for (uint64_t p = addr >> 12, e = (addr + size - 1) >> 12; p <= e; p++) { unsigned h = (unsigned)(p * 2654435761u) >> 14; g_cb_pf[h >> 6] |= 1ull << (h & 63); }
+}
+static int cb_pf_any(uint64_t addr, uint64_t size) {
+    uint64_t p = addr >> 12, e = (addr + size - 1) >> 12;
+    if (!size || e - p > 16) return 1;
+    for (; p <= e; p++) { unsigned h = (unsigned)(p * 2654435761u) >> 14; if (g_cb_pf[h >> 6] >> (h & 63) & 1) return 1; }
+    return 0;
+}
 static void cb_kept_index(void) {
     g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0;
+    memset(g_cb_pf, 0, sizeof g_cb_pf);
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) cb_pf_set(c->addr, c->size); }
     if (!g_cb_nkept) return;
     for (int i = 0; i < CB_N; i++) {
         if (g_cb[i].state < 3) continue;
+        cb_pf_set(g_cb[i].addr, g_cb[i].size);
         g_kept_idx[g_kept_n++] = (int16_t)i;
         if (g_cb[i].addr < g_kept_lo) g_kept_lo = g_cb[i].addr;
         if (g_cb[i].addr + g_cb[i].size > g_kept_hi) g_kept_hi = g_cb[i].addr + g_cb[i].size;
@@ -2394,6 +2418,7 @@ static void cb_live_add(CB *c) {
         g_live_n = n;
     }
     g_live_idx[g_live_n++] = (int)(c - g_cb);
+    cb_pf_set(c->addr, c->size);
 }
 static void cb_batch_end(void) {
     if (!g_cb_live) return;
@@ -2555,6 +2580,17 @@ typedef struct { uint64_t off, size; int zero; VkBuffer buf; } BufRef;
  * alignment the use needs (storage descriptors), 1 = none. Returns 1 when a CB is bound. */
 static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
     b->zero = 0; b->size = size;
+    static int pf = -1;                            /* SSBU_VK_CBPF: 0 off, 2 test: every range the filter passes is checked against the walks */
+    if (pf < 0) { const char *e = getenv("SSBU_VK_CBPF"); pf = e ? atoi(e) : 1; }
+    if (pf && !cb_pf_any(addr, size)) {
+        if (pf == 2) {
+            static int said;
+            for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size && !said++) printf("nvn_vk_cbpf: FAILED: range %llx +%llx is in live buffer %llx +%llx\n", (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); }
+            for (int n = 0; n < g_kept_n; n++) { CB *c = &g_cb[g_kept_idx[n]]; if (c->state >= 3 && addr < c->addr + c->size && c->addr < addr + size && !said++) printf("nvn_vk_cbpf: FAILED: range %llx +%llx is in kept buffer %llx +%llx\n", (unsigned long long)addr, (unsigned long long)size, (unsigned long long)c->addr, (unsigned long long)c->size); }
+        }
+        b->off = ring_put(addr, size); b->buf = R.ring;      /* in this order: a ring wrap submits */
+        return 0;
+    }
     if (g_cb_bound < 0) g_cb_bound = !(getenv("SSBU_VK_CBBOUND") && !atoi(getenv("SSBU_VK_CBBOUND")));      /* round 16, default 1 (=0: cb_inside / cb_overlap are asked for every range as before): a range outside the bounds of the live buffers cannot be inside or overlap one. Proof of the picture: run p16_h_bf5 (old path + this) = p16_d_bfd (this off), all pixels, three frames. NOTE for picture tests on battle_field: the picture has two forms that alternate with the PRESENTED frame number (17-19 % of the pixels, small differences): compare shots whose "saved at presented frame" numbers have the same parity. */
     if (g_cb_live && (!g_cb_bound || (addr < g_live_hi && addr + size > g_live_lo))) {
         CB *c = cb_inside(addr, size);
@@ -5284,6 +5320,7 @@ static void frstat_report(void) {
 static void vkd_shutdown(void) {
     wd_stop();
     if (!R.ring) return;
+    nvn_front_tex_prep_report();
     {   LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
         double k = 1000.0 / (double)fq.QuadPart;
         printf("nvn_vk_tex: textures made ahead of their first use: %lld (%.0f MB, %.0f ms in all, at most %.1f ms after one present); made or read at their use: %lld times, %.0f ms (of them in fight frames: %lld, %.0f ms)\n",

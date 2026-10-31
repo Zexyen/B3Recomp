@@ -5851,6 +5851,116 @@ int nvn_front_tex_changed(Tex *t, uint32_t gen) {
     g_st.tex_uploads++;
     return 1;
 }
+/* #45, #54: ASTC textures decoded to BC3 ahead of their first draw, on threads of their own. At the draw a decode stops the
+ * frame: 5.5 s of the render thread in 100 s of the chapter 3 ride, 629 textures in one frame, though 94 % of them were known
+ * 30 frames before. A job copies the texture's bytes first and keeps the copy: nvn_front_tex_read uses the result only if the
+ * memory still equals it, so what the game writes later is never missed. Whichever of worker and render thread lets go of a
+ * job second frees it (owner). SSBU_TEXPREP_THREADS=<n> (default 3, 0 = at the draw, as before); SSBU_TEXPREP_CHECK=1 (test)
+ * decodes again at the draw and compares. */
+typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok; } TexPrep;
+static TexPrep *g_tp_head, *g_tp_tail;
+static CRITICAL_SECTION g_tp_lock;
+static HANDLE g_tp_go;
+static int g_tp_n = -1;
+static volatile LONG64 g_tp_held;                  /* bytes in finished jobs: a texture made at its use later than this is decoded there */
+static LONG64 g_tp_hit, g_tp_stale, g_tp_late, g_tp_diff;
+#define TP_HELD_MAX (512ll << 20)
+static void tp_free(TexPrep *j) { if (j->ok) InterlockedAdd64(&g_tp_held, -(LONG64)(j->bytes + j->size)); free(j->snap); free(j->out); free(j); }
+static void tp_decode(TexPrep *j) {
+    Tex *t = j->t;
+    TexLayout L;
+    size_t total = 0, tmp_n = 0;
+    tex_lay(&t->b, &L);
+    int levels = nvn_front_tex_levels(t);
+    for (int l = 0; l < levels && l < L.levels; l++) {
+        size_t lin = L.lvl_linear_size[l], rgba = (size_t)L.lvl_w[l] * L.lvl_h[l] * 4;
+        total += (size_t)L.layers * ((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+        if (lin + rgba > tmp_n) tmp_n = lin + rgba;
+    }
+    uint8_t *tmp = malloc(tmp_n), *o;
+    j->snap = malloc(j->size); o = j->out = malloc(total);
+    if (!tmp || !j->snap || !o) { free(tmp); return; }
+    memcpy(j->snap, j->src, j->size);
+    for (int layer = 0; layer < L.layers; layer++)
+        for (int l = 0; l < levels && l < L.levels; l++) {
+            const uint8_t *p = tex_level_ptr(&L, j->snap, l, layer);
+            if (p + L.lvl_size[l] > j->snap + j->size) { free(tmp); return; }
+            tex_deswizzle_level(&L, l, p, tmp);
+            tex_decode_rgba8(t->b.format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + L.lvl_linear_size[l]);
+            tex_encode_bc3(tmp + L.lvl_linear_size[l], L.lvl_w[l], L.lvl_h[l], o);
+            o += (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16;
+        }
+    free(tmp);
+    j->bytes = total; j->ok = 1;
+    InterlockedAdd64(&g_tp_held, (LONG64)(total + j->size));
+}
+static DWORD WINAPI tp_worker(LPVOID a) {
+    (void)a;
+    for (;;) {
+        WaitForSingleObject(g_tp_go, INFINITE);
+        for (;;) {
+            EnterCriticalSection(&g_tp_lock);
+            TexPrep *j = g_tp_head;
+            if (j && !(g_tp_head = j->next)) g_tp_tail = NULL;
+            LeaveCriticalSection(&g_tp_lock);
+            if (!j) break;
+            if (!j->owner) tp_decode(j);
+            if (InterlockedExchange(&j->owner, 1)) tp_free(j);
+        }
+    }
+    return 0;
+}
+int nvn_front_tex_prep(Tex *t, size_t *bytes) {
+    TexPrep *j = t->prep;
+    if (j) {
+        if (!j->owner) return 0;
+        if (!j->ok) return -1;
+        *bytes = j->bytes;
+        return 1;
+    }
+    if (g_tp_n < 0) {
+        const char *e = getenv("SSBU_TEXPREP_THREADS");
+        g_tp_n = e ? atoi(e) : 3;
+        if (getenv("SSBU_ASTC_DUMP") || getenv("SSBU_ASTC_LOG") || getenv("SSBU_TEX_RAWDUMP") || g_tp_n < 0) g_tp_n = 0;
+        if (g_tp_n) { InitializeCriticalSection(&g_tp_lock); g_tp_go = CreateEventA(NULL, FALSE, FALSE, NULL); }
+        for (int k = 0; k < g_tp_n; k++) { HANDLE h = CreateThread(NULL, 0, tp_worker, NULL, 0, NULL); SetThreadPriority(h, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(h); }
+    }
+    const uint8_t *src = t->b.packaged ? P(t->b.packaged) : t->mem;
+    if (!g_tp_n || !src || !t->data_size || (!t->b.packaged && t->limit && src + t->data_size > t->limit)) return -1;
+    if (g_tp_held > TP_HELD_MAX) return 0;
+    j = calloc(1, sizeof *j);
+    if (!j) return -1;
+    j->t = t; j->src = src; j->size = t->data_size;
+    t->prep = j;
+    EnterCriticalSection(&g_tp_lock);
+    if (g_tp_tail) g_tp_tail->next = j; else g_tp_head = j;
+    g_tp_tail = j;
+    LeaveCriticalSection(&g_tp_lock);
+    SetEvent(g_tp_go);
+    for (int k = 1; k < g_tp_n && g_tp_head; k++) SetEvent(g_tp_go);
+    return 0;
+}
+void nvn_front_tex_prep_drop(Tex *t) {
+    TexPrep *j = t->prep;
+    if (!j) return;
+    t->prep = NULL;
+    if (InterlockedExchange(&j->owner, 1)) tp_free(j);
+}
+/* The finished job of this texture, if the memory still holds what it decoded. */
+static TexPrep *tp_take(Tex *t, const uint8_t *src) {
+    TexPrep *j = t->prep;
+    if (!j) return NULL;
+    t->prep = NULL;
+    if (!InterlockedExchange(&j->owner, 1)) { g_tp_late++; return NULL; }
+    if (j->ok && j->src == src && !memcmp(j->snap, src, j->size)) { g_tp_hit++; return j; }
+    g_tp_stale++;
+    tp_free(j);
+    return NULL;
+}
+void nvn_front_tex_prep_report(void) {
+    if (g_tp_n > 0) printf("nvn_vk_tex: decoded ahead by %d threads: %lld used, %lld stale (the memory changed), %lld not finished at their use\n", g_tp_n, (long long)g_tp_hit, (long long)g_tp_stale, (long long)g_tp_late);
+    if (getenv("SSBU_TEXPREP_CHECK")) printf("nvn_vk_tex: TEST: %lld levels decoded ahead differ from a decode at the use\n", (long long)g_tp_diff);
+}
 /* tex_upload_memory with the texels handed to the caller instead of glTexSubImage. */
 int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
     static uint8_t *tmp;
@@ -5869,11 +5979,27 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
     TexLayout L;
     tex_lay(b, &L);
     int levels = nvn_front_tex_levels(t);
+    TexPrep *pj = decode == 2 ? tp_take(t, src) : NULL;
+    const uint8_t *pb = pj ? pj->out : NULL;
     for (int layer = 0; layer < L.layers; layer++) {
         for (int l = 0; l < levels && l < L.levels; l++) {
             const uint8_t *p = tex_level_ptr(&L, src, l, layer);
             size_t lin = L.lvl_linear_size[l], rgba = (size_t)L.lvl_w[l] * L.lvl_h[l] * 4, bc3 = (size_t)((L.lvl_w[l] + 3) / 4) * ((L.lvl_h[l] + 3) / 4) * 16,
                    need = lin + (decode ? rgba : 0) + (decode == 2 ? bc3 : 0);
+            if (pb) {
+                static int chk = -1;
+                if (chk < 0) chk = getenv("SSBU_TEXPREP_CHECK") != NULL;
+                if (chk) {      /* TEST ONLY */
+                    if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
+                    tex_deswizzle_level(&L, l, p, tmp);
+                    decode_par(b->format, tmp, L.lvl_w[l], L.lvl_h[l], tmp + lin, tmp + lin + rgba);
+                    if (memcmp(tmp + lin + rgba, pb, bc3)) g_tp_diff++;
+                }
+                put(t, l, layer, L.lvl_w[l], L.lvl_h[l], 1, pb, bc3, 0, 0);
+                pb += bc3;
+                g_st.tex_bytes += (LONG64)lin;
+                continue;
+            }
             if (!b->packaged && t->limit && p + L.lvl_size[l] > t->limit) return 0;
             if (need > tmp_cap) { tmp_cap = need * 2; tmp = realloc(tmp, tmp_cap); }
             {   /* TEST ONLY: SSBU_TEX_RAWDUMP=<dir> (with SSBU_ASTC_DUMP_ONLY=<format hex>): level 0 as it is in pool memory, and its layout */
@@ -5901,6 +6027,7 @@ int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put) {
             g_st.tex_bytes += (LONG64)lin;
         }
     }
+    if (pj) tp_free(pj);
     return 1;
 }
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p) {
