@@ -3,7 +3,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
-# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
+# The archive is only what a player's PC reads from this repository (PACKAGE_FILES below; the rest of the source is the
+# release's tag, GPL-3.0 section 6(d), see NOTICE.md) with:
 #   build/witch-time, libSDL3.so.0   the launcher and the SDL3 it was built with
 #   build/wtbuild                    the build tool (tools/wtbuild: no Python needed to build the game)
 #   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libssbu_glslang.so with a
@@ -46,6 +47,8 @@ env:
   LLVM_MINGW_TAG: '20260922'
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
   FREETYPE_TAG: VER-2-13-3
+  # runtime/ whole: prebuilt/manifest.json holds its hash (link.rs sources_hash). Both smoke tests run on this list.
+  PACKAGE_FILES: LICENSE NOTICE.md README.md config launcher/ui runtime lifter/LICENSE lifter/sdklift_install.txt lifter/sdklift_roots.txt
 
 jobs:
   linux:
@@ -179,18 +182,11 @@ jobs:
           readelf -d prebuilt/libwitchtime.so | grep -E 'NEEDED|RUNPATH'
           ls -la prebuilt
 
-      # the link step on stand-in modules, with this prebuilt runtime and the bundled compiler, run until the image is mapped
-      - name: Smoke test of the link step
-        run: |
-          PATH="$PWD/deps/llvm/bin:$PATH" LLVM_ROOT="$PWD/deps/llvm" \
-            python3 tools/wtbuild/smoke_link.py --prebuilt prebuilt --lib "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0"
-
       - name: Package
         run: |
           name="${{ steps.version.outputs.name }}"
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
-          git archive HEAD | tar -x -C "dist/$name"
-          rm -rf "dist/$name/.github"
+          git archive HEAD $PACKAGE_FILES | tar -x -C "dist/$name"
           cp build/witch-time "dist/$name/build/"
           cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -206,6 +202,13 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           ls -la dist
+
+      # the link step on stand-in modules, with the archive's files and the bundled compiler, run until the image is mapped
+      - name: Smoke test of the link step
+        run: |
+          p="$PWD/dist/${{ steps.version.outputs.name }}"
+          PATH="$p/deps/llvm/bin:$PATH" LLVM_ROOT="$p/deps/llvm" \
+            python3 tools/wtbuild/smoke_link.py --root "$p" --prebuilt "$p/prebuilt" --lib "$p/build/libSDL3.so.0"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -377,8 +380,7 @@ jobs:
           name="${{ steps.version.outputs.name }}"
           p="dist/$name"
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
-          git archive HEAD | tar -x -C "$p"
-          rm -rf "$p/.github"
+          git archive HEAD $PACKAGE_FILES | tar -x -C "$p"
           cp witch-time.exe "$p/"
           cp build/witch-time.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"
@@ -407,6 +409,9 @@ jobs:
     needs: windows
     runs-on: windows-2022
     steps:
+      # the smoke test's stand-in sources come from this checkout, byte for byte as on Linux
+      - run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       - name: Version
@@ -439,7 +444,7 @@ jobs:
           pip install lz4
           # make_fake.py builds the stand-in modules with the bundled clang and ld.lld too
           export PATH="$p/deps/llvm/bin:$PATH"
-          python "$p/tools/wtbuild/smoke_link.py" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll" --wtbuild "$p/build/wtbuild.exe"
+          python tools/wtbuild/smoke_link.py --root "$p" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll" --wtbuild "$p/build/wtbuild.exe"
 
       - name: Release
         if: github.ref_type == 'tag'

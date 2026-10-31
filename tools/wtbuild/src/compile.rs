@@ -406,6 +406,7 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
         inc,
     };
     fs::create_dir_all(&c.obj).map_err(|e| e.to_string())?;
+    fs::create_dir_all(format!("{}/scripts", repo)).map_err(|e| e.to_string())?; // root goes through it; a release has none
     let t0 = Instant::now();
     let mut names: Vec<String> = fs::read_dir(&c.gen)
         .map_err(|e| format!("{}: {}", c.gen, e))?

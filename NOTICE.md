@@ -62,12 +62,14 @@ No code is copied from these; they are named in comments as the source of number
 | LLVM / clang (optional MSVC build, `--toolchain msvc`) | 9.0.0 | Apache-2.0 with LLVM exception |
 | Python packages: lz4, Pillow, (self-test) unicorn, capstone | — | BSD / HPND / GPL-2.0 / BSD |
 
-The game is never distributed in any form: every player builds it locally with `scripts/setup.py`. The **builder
+The game is never distributed in any form: every player builds it locally with `scripts/setup.py`. The complete
+corresponding source of a release is the tag of that release at <https://github.com/Zexyen/Witch-Time> (GPL-3.0
+section 6(d)); a release's archive holds only the part a player's PC reads. The **builder
 package** (`scripts/make_package.py`) contains this source plus the tools above in `deps\` (llvm-mingw trimmed to x86_64,
 Python with lz4 and Pillow, SDL3, Vulkan-Headers, `ssbu_glslang.dll`, the Microsoft Visual C++ runtime files that DLL
 needs), with their licences in `licenses\` and `THIRD-PARTY-NOTICES.md`. `ssbu_glslang.dll` is the one program of ours
 in it in compiled form (`runtime/vk_glslang_shim.c` linked with glslang and SPIRV-Tools); its corresponding source is
-in the package itself (GPL-3.0 section 6), plus glslang 16.6.0's public source. A build with
+that tag, plus glslang 16.6.0's public source. A build with
 llvm-mingw links parts of the MinGW-w64 runtime into `witch-time-game.exe` and `launcher.exe`; the build copies the
 runtime's notices (`COPYING.MinGW-w64-runtime.txt`, from the toolchain's `x86_64-w64-mingw32/share/mingw32/`) beside
 them.

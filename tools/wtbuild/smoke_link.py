@@ -2,7 +2,7 @@
 """Developer and CI check of the link step on stand-in modules (testdata/fake_main: no game or sdk code): tables, lift,
 compile and link as on a player's PC, then the program is loaded and run until it has mapped the stand-in main.
 
-    python3 tools/wtbuild/smoke_link.py [--prebuilt <dir>] [--lib <file>]... [--wtbuild <path>] [--target windows]
+    python3 tools/wtbuild/smoke_link.py [--root <dir>] [--prebuilt <dir>] [--lib <file>]... [--wtbuild <path>] [--target windows]
 
 --prebuilt: the runtime made by `wtbuild runtime` (as a release ships it), so only game.so is built here; without it
 the link step builds the runtime too, against the system's libraries. --lib: a library a release keeps in build/
@@ -44,10 +44,12 @@ def main():
     args = sys.argv[1:]
     windows = sys.platform == 'win32'
     exe = os.path.join(HERE, 'target', 'release', 'wtbuild.exe' if windows else 'wtbuild')
-    prebuilt, libs, target, wine = None, [], [], []
+    root, prebuilt, libs, target, wine = ROOT, None, [], [], []
     while args:
         a = args.pop(0)
-        if a == '--prebuilt':
+        if a == '--root':          # an unpacked release instead of this checkout
+            root = os.path.abspath(args.pop(0))
+        elif a == '--prebuilt':
             prebuilt = os.path.abspath(args.pop(0))
         elif a == '--lib':
             libs.append(os.path.abspath(args.pop(0)))
@@ -64,11 +66,11 @@ def main():
     t = tempfile.mkdtemp(prefix='wtsmoke_')
     try:
         repo = os.path.join(t, 'repo')
-        shutil.copytree(os.path.join(ROOT, 'runtime'), os.path.join(repo, 'runtime'), ignore=shutil.ignore_patterns('gen'))
+        shutil.copytree(os.path.join(root, 'runtime'), os.path.join(repo, 'runtime'), ignore=shutil.ignore_patterns('gen'))
         os.makedirs(os.path.join(repo, 'runtime', 'gen'))
-        for d in ('lifter', 'targets/exefs', 'build', 'scripts'):          # scripts/: the compile step spells paths through it
+        for d in ('lifter', 'targets/exefs', 'build'):
             os.makedirs(os.path.join(repo, d))
-        shutil.copy(os.path.join(ROOT, 'lifter', 'sdklift_install.txt'), os.path.join(repo, 'lifter'))
+        shutil.copy(os.path.join(root, 'lifter', 'sdklift_install.txt'), os.path.join(repo, 'lifter'))
         shutil.copy(os.path.join(FAKE, 'roots.txt'), os.path.join(repo, 'lifter', 'sdklift_roots.txt'))
         mk = [sys.executable, os.path.join(FAKE, 'make_fake.py')]
         main_nso, sdk = os.path.join(t, 'main'), os.path.join(repo, 'targets', 'exefs', 'sdk')

@@ -1,0 +1,518 @@
+nnmisc: 27 of 110 functions installed (the rest are provided elsewhere or not imported)
+nncxxrt: main has landing-pad resume entries
+     romfs mod: adds     rom:/ui_000.pkz
+     romfs mod 0 (first wins): /home/kalvarez/git/b3recomp/build/../mods\witchtime-pc-settings\romfs, 1 files, 0 replace the game's
+sdklift: SDK image mapped at 7500000000 (10777 relative, 23347 symbolic, 16 undefined relocations)
+sdklift: 86 SDK functions lifted, 23 installed as import handlers, 8 host callees
+       1 call  __nnmusl_init_dso  x0=7100000000 x1=7101321214 x2=71024b7678 x3=71024b7688  from=7100000118
+=== phase 1: nninitStartup
+       2 call  _ZN2nn2os15QueryMemoryInfoEPNS0_10MemoryInfoE  x0=7f89918d2fb0 x1=7101321214 x2=71024b7678 x3=71024b7688  from=7100cd5530
+       3 call  _ZN2nn2os17SetMemoryHeapSizeEm  x0=c7a00000 x1=7101321214 x2=71024b7678 x3=71024b7688  from=7100cd5540
+       4 call  _ZN2nn2os19AllocateMemoryBlockEPmm  x0=7f89918d2fe8 x1=400000 x2=71024b7678 x3=71024b7688  from=7100cd554c
+       5 call  _ZN2nn3mem17StandardAllocatorC1Ev  x0=71059bb758 x1=400000 x2=71024b7678 x3=71024b7688  from=7101144f58
+       6 call  _ZN2nn3mem17StandardAllocator10InitializeEPvmb  x0=71059bb758 x1=7f8844600000 x2=400000 x3=0  from=7101144f6c
+       7 call  _ZN2nn2os32SetMemoryAllocatorForThreadLocalEPFPvmmEPFvS1_mE  x0=7100cd5900 x1=7100cd5904 x2=400000 x3=0  from=7100cd556c
+=== phase 2: static constructors
+--- constructor 0 at 7100000730
+--- constructor 1 at 7100000a60
+--- constructor 2 at 7100045840
+--- constructor 3 at 7100046120
+--- constructor 4 at 7100069d40
+--- constructor 5 at 7100069eb0
+--- constructor 6 at 710006ad40
+--- constructor 7 at 710006b0e0
+--- constructor 8 at 71002c5bb0
+--- constructor 9 at 71002c5c10
+--- constructor 10 at 71002c5d60
+--- constructor 11 at 71002c5eb0
+--- constructor 12 at 71002cab50
+--- constructor 13 at 7100360740
+--- constructor 14 at 7100360980
+--- constructor 15 at 7100361c20
+--- constructor 16 at 7100364d60
+--- constructor 17 at 7100365510
+--- constructor 18 at 7100365d00
+--- constructor 19 at 710036e400
+--- constructor 20 at 710036e550
+--- constructor 21 at 710036eae0
+--- constructor 22 at 710036fa80
+--- constructor 23 at 71003fca00
+--- constructor 24 at 71004194e0
+--- constructor 25 at 710058abc0
+--- constructor 26 at 710058b380
+--- constructor 27 at 71005dbe60
+--- constructor 28 at 7100623950
+--- constructor 29 at 71006404c0
+--- constructor 30 at 7100640710
+--- constructor 31 at 7100640b20
+--- constructor 32 at 7100643100
+--- constructor 33 at 7100667540
+--- constructor 34 at 71006718d0
+--- constructor 35 at 7100671e40
+--- constructor 36 at 7100699000
+       8 call  __cxa_guard_acquire  x0=710262ffc8 x1=71024c2760 x2=7101b4f000 x3=0  from=710069b954
+       9 call  __cxa_guard_release  x0=710262ffc8 x1=71024c2760 x2=7101b4f000 x3=0  from=710069b990
+      10 call  __cxa_guard_acquire  x0=710262ffd0 x1=71024c2910 x2=7101b4f000 x3=0  from=7100672544
+      11 call  __cxa_guard_release  x0=710262ffd0 x1=71024c2910 x2=7101b4f000 x3=0  from=7100672588
+      12 call  __cxa_guard_acquire  x0=710262ffd8 x1=71024c2938 x2=7101b4f000 x3=0  from=71006725a8
+      13 call  __cxa_guard_release  x0=710262ffd8 x1=71024c2938 x2=7101b4f000 x3=0  from=71006725f0
+      14 call  _ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi  x0=710261f3b0 x1=1 x2=0 x3=710256658c  from=7100ce60ec
+--- constructor 37 at 710070a800
+      15 call  _ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi  x0=7102635850 x1=1 x2=0 x3=710256658c  from=7100ce60ec
+--- constructor 38 at 710070fd40
+--- constructor 39 at 7100714820
+--- constructor 40 at 7100714bc0
+--- constructor 41 at 7100718470
+--- constructor 42 at 710071a950
+--- constructor 43 at 710071d290
+--- constructor 44 at 7100739760
+--- constructor 45 at 710073d6c0
+--- constructor 46 at 7100740d60
+--- constructor 47 at 71007425c0
+--- constructor 48 at 7100743030
+--- constructor 49 at 710074e260
+      16 call  _ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi  x0=7102690730 x1=1 x2=0 x3=710256658c  from=7100ce60ec
+      17 call  memset  x0=7102690b60 x1=0 x2=2004 x3=710256658c  from=710074ed48
+      18 call  strncpy  x0=7f89918d2f58 x1=71017d3a96 x2=40 x3=710256658c  from=710074ee1c
+      19 call  memcpy  x0=7102692bb4 x1=7f89918d2f00 x2=98 x3=710256658c  from=710074ef00
+      20 call  strncpy  x0=7f89918d2e10 x1=71017a8ffa x2=40 x3=710256658c  from=710074f03c
+      21 call  memcpy  x0=7102692d64 x1=7f89918d2db8 x2=98 x3=710256658c  from=710074f110
+      22 call  strncpy  x0=7f89918d2cc8 x1=7101783d3d x2=40 x3=710256658c  from=710074f278
+      23 call  memcpy  x0=7102692f14 x1=7f89918d2c70 x2=98 x3=710256658c  from=710074f348
+--- constructor 50 at 71007ed840
+      24 call  memset  x0=71026d4110 x1=ff x2=500 x3=7  from=71007edaac
+      25 call  memset  x0=71026d4610 x1=0 x2=500 x3=7  from=71007edabc
+      26 call  vsnprintf  x0=7104379cb4 x1=5 x2=71017ee3c3 x3=7f89918d2e80  from=710084aa60
+      27 call  vsnprintf  x0=7104379cb9 x1=4 x2=71017f8678 x3=7f89918d2e80  from=71007186c0
+      28 call  strlen  x0=71017fb967 x1=0 x2=71017f8678 x3=7f89918d2e80  from=7100ce57e8
+      29 call  vsnprintf  x0=7104379ef8 x1=5 x2=71017ee3c3 x3=7f89918d2e80  from=710084aa60
+      30 call  strlen  x0=71017fb967 x1=0 x2=71017f8678 x3=7f89918d2e80  from=7100ce57e8
+      31 call  strlen  x0=71017fb967 x1=0 x2=71017f8678 x3=7f89918d2e80  from=7100ce57e8
+--- constructor 51 at 71008071b0
+--- constructor 52 at 7100812380
+      32 call  _ZN2nn2os13GetSystemTickEv  x0=7104d72860 x1=7104d72158 x2=7101b4f000 x3=7f89918d2e80  from=7100812570
+--- constructor 53 at 7100821dc0
+--- constructor 54 at 710094c6d0
+--- constructor 55 at 7100953f80
+--- constructor 56 at 7100956100
+      33 call  _ZN2nn6fontll18ScalableFontEngineC1Ev  x0=7104d8d300 x1=7104d855f0 x2=7101b4f000 x3=7f89918d2e80  from=7100954bc0
+      34 call  _ZN2nn6fontll18ScalableFontEngineC1Ev  x0=7104d8d408 x1=7104d855f0 x2=7101b4f000 x3=7f89918d2e80  from=7100954be0
+      35 call  _ZN2nn6fontll18ScalableFontEngineC1Ev  x0=7104d8d510 x1=7104d855f0 x2=7101b4f000 x3=7f89918d2e80  from=7100954c04
+--- constructor 57 at 710095cdc0
+--- constructor 58 at 710095d110
+--- constructor 59 at 7100963070
+--- constructor 60 at 710096c240
+--- constructor 61 at 7100975e40
+--- constructor 62 at 71009d3150
+--- constructor 63 at 71009d8620
+--- constructor 64 at 7100a12aa0
+--- constructor 65 at 7100b1f580
+--- constructor 66 at 7100b1f6e0
+--- constructor 67 at 7100b225e0
+--- constructor 68 at 7100b25ab0
+--- constructor 69 at 7100b26190
+--- constructor 70 at 7100b31e20
+--- constructor 71 at 7100b83e20
+--- constructor 72 at 7100b86ae0
+--- constructor 73 at 7100b956c0
+--- constructor 74 at 7100b993c0
+--- constructor 75 at 7100b9c0b0
+--- constructor 76 at 7100ba2100
+--- constructor 77 at 7100ba5920
+--- constructor 78 at 7100bcce10
+--- constructor 79 at 7100bf2370
+--- constructor 80 at 7100bfbf40
+--- constructor 81 at 7100c03b10
+--- constructor 82 at 7100c23b70
+--- constructor 83 at 7100c25520
+--- constructor 84 at 7100c27ce0
+--- constructor 85 at 7100c32690
+--- constructor 86 at 7100c49f10
+--- constructor 87 at 7100c4a060
+--- constructor 88 at 7100c4c1b0
+--- constructor 89 at 7100c59740
+--- constructor 90 at 7100c63800
+--- constructor 91 at 7100caa1c0
+--- constructor 92 at 7100cb3700
+--- constructor 93 at 7100cb8a10
+--- constructor 94 at 7100cbb760
+--- constructor 95 at 7100cbc100
+--- constructor 96 at 7100cbc200
+--- constructor 97 at 7100cc30c0
+--- constructor 98 at 7100cc3a40
+      36 call  _ZN2nn3hid15VibrationWriterC1Ev  x0=7104f17948 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6bd8
+      37 call  _ZN2nn3hid14VibrationMixerC1Ev  x0=7104f17988 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6be0
+      38 call  _ZN2nn3hid15VibrationTargetC1Ev  x0=7104f179d0 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6be8
+      39 call  _ZN2nn3hid15VibrationTargetC1Ev  x0=7104f17a20 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6bf0
+      40 call  _ZN2nn3hid23VibrationNodeConnectionC1Ev  x0=7104f17a70 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6bf8
+      41 call  _ZN2nn3hid23VibrationNodeConnectionC1Ev  x0=7104f17aa8 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c00
+      42 call  _ZN2nn3hid23VibrationNodeConnectionC1Ev  x0=7104f17ae0 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c08
+      43 call  _ZN2nn3hid15VibrationPlayerC1Ev  x0=7104f17b88 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c20
+      44 call  _ZN2nn3hid15VibrationWriterC1Ev  x0=7104f17d30 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c3c
+      45 call  _ZN2nn3hid14VibrationMixerC1Ev  x0=7104f17d70 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c44
+      46 call  _ZN2nn3hid15VibrationTargetC1Ev  x0=7104f17db8 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c4c
+      47 call  _ZN2nn3hid15VibrationPlayerC1Ev  x0=7104f17f70 x1=7104f177f8 x2=7101b4f000 x3=7104df73f8  from=7100cc6c84
+--- constructor 99 at 7100cd1de0
+--- constructor 100 at 7100cd5910
+--- constructor 101 at 7100cdb110
+--- constructor 102 at 7100ce4130
+      48 call  _ZN2nn2os20InitializeLightEventEPNS0_14LightEventTypeEbNS0_14EventClearModeE  x0=7104f18b78 x1=0 x2=1 x3=7104df73f8  from=7100ce41f8
+--- constructor 103 at 7100ce54a0
+--- constructor 104 at 7100ce6060
+--- constructor 105 at 7100ce79e0
+--- constructor 106 at 7100cf0270
+--- constructor 107 at 7100d1bc50
+--- constructor 108 at 7100d1ce90
+--- constructor 109 at 7100d1cfa0
+--- constructor 110 at 7100d1d0c0
+--- constructor 111 at 7100d1d1d0
+--- constructor 112 at 7100d1d2e0
+--- constructor 113 at 7100d1d3f0
+--- constructor 114 at 7100d1d500
+--- constructor 115 at 7100d1d610
+--- constructor 116 at 7100d1d7e0
+--- constructor 117 at 7100d1d9b0
+--- constructor 118 at 7100d1db80
+--- constructor 119 at 7100d1fba0
+--- constructor 120 at 7100d20340
+--- constructor 121 at 7100d58bd0
+--- constructor 122 at 7100dc1f00
+--- constructor 123 at 7100dc4d60
+--- constructor 124 at 7100dc7f70
+--- constructor 125 at 7100dc9620
+--- constructor 126 at 7100dcfab0
+--- constructor 127 at 7100dd7810
+--- constructor 128 at 7100dd78e0
+--- constructor 129 at 7100ddbe20
+--- constructor 130 at 7100ddea90
+--- constructor 131 at 7100e8ea50
+--- constructor 132 at 7100e92d50
+--- constructor 133 at 7100e93150
+--- constructor 134 at 7100e98850
+--- constructor 135 at 7100e9c780
+--- constructor 136 at 7100e9cca0
+--- constructor 137 at 7100e9efa0
+--- constructor 138 at 7100e9f860
+--- constructor 139 at 7100ea1160
+--- constructor 140 at 7100ea1c20
+--- constructor 141 at 7100ea22c0
+--- constructor 142 at 7100ea4d60
+--- constructor 143 at 7100eac150
+--- constructor 144 at 7100ebe1d0
+--- constructor 145 at 7100ebee30
+--- constructor 146 at 7100ebfc80
+--- constructor 147 at 7100ec01f0
+--- constructor 148 at 7100eca3e0
+--- constructor 149 at 7100fdc1b0
+--- constructor 150 at 7100fe2980
+--- constructor 151 at 7100ff9b50
+--- constructor 152 at 71010076f0
+--- constructor 153 at 710100ddb0
+--- constructor 154 at 710100e850
+--- constructor 155 at 71010109b0
+--- constructor 156 at 710101aa70
+--- constructor 157 at 7101045ca0
+--- constructor 158 at 7101048a30
+--- constructor 159 at 7101061cf0
+--- constructor 160 at 710106dcc0
+--- constructor 161 at 71010778a0
+--- constructor 162 at 7101077b50
+--- constructor 163 at 7101079190
+--- constructor 164 at 710107f7c0
+--- constructor 165 at 7101090c20
+--- constructor 166 at 7101093fb0
+--- constructor 167 at 710109bdf0
+--- constructor 168 at 71010a04c0
+--- constructor 169 at 71010abdb0
+--- constructor 170 at 71010af5c0
+--- constructor 171 at 71010b47f0
+--- constructor 172 at 71010b9090
+--- constructor 173 at 71010bbff0
+--- constructor 174 at 71010c3970
+--- constructor 175 at 71010c7fc0
+--- constructor 176 at 71010c9110
+--- constructor 177 at 71010c9770
+--- constructor 178 at 71010ca4a0
+--- constructor 179 at 71010cb450
+--- constructor 180 at 71010cb690
+--- constructor 181 at 71010cd170
+--- constructor 182 at 71010cd370
+--- constructor 183 at 71010cd640
+      49 call  _ZN2nn2os21SdkRecursiveMutexType10InitializeEv  x0=71059b9ed8 x1=0 x2=710177d0a5 x3=7104df73f8  from=71010cd654
+--- constructor 184 at 71010cd6a0
+--- constructor 185 at 71010ce4a0
+--- constructor 186 at 71010d0e80
+      50 call  _ZN2nn2os19InitializeSemaphoreEPNS0_13SemaphoreTypeEii  x0=71059b9f78 x1=1 x2=1 x3=7104df73f8  from=71010d0e98
+--- constructor 187 at 71010d8e40
+--- constructor 188 at 71010e56d0
+--- constructor 189 at 710110dcb0
+--- constructor 190 at 710114a380
+--- constructor 191 at 710114a3b0
+--- constructor 192 at 710114a3e0
+--- constructor 193 at 710115a200
+--- constructor 194 at 710116a4d0
+--- constructor 195 at 710116a500
+--- constructor 196 at 7101167720
+--- constructor 197 at 71011797d0
+--- constructor 198 at 71011845e0
+--- constructor 199 at 7101189b20
+--- constructor 200 at 710118e7d0
+--- constructor 201 at 71011aa4a0
+--- constructor 202 at 71011c4880
+--- constructor 203 at 71011d3430
+--- constructor 204 at 71011db9c0
+--- constructor 205 at 71011de9d0
+--- constructor 206 at 71011dea00
+--- constructor 207 at 71011f0d60
+--- constructor 208 at 71011f9210
+--- constructor 209 at 7101201780
+--- constructor 210 at 710121f590
+--- constructor 211 at 7101220ac0
+--- constructor 212 at 710122c320
+--- constructor 213 at 710122dfb0
+--- constructor 214 at 710122eaf0
+--- constructor 215 at 71012363e0
+--- constructor 216 at 7101237ad0
+--- constructor 217 at 7101239490
+--- constructor 218 at 710123a8c0
+--- constructor 219 at 710123b200
+--- constructor 220 at 710123d260
+--- constructor 221 at 7101246ec0
+--- constructor 222 at 7101248d60
+--- constructor 223 at 710124aaf0
+--- constructor 224 at 710124c970
+--- constructor 225 at 7101253f70
+--- constructor 226 at 7101256b50
+--- constructor 227 at 7101258290
+--- constructor 228 at 710125a810
+--- constructor 229 at 710125dbe0
+--- constructor 230 at 710125e020
+--- constructor 231 at 710125ee70
+--- constructor 232 at 71012617a0
+--- constructor 233 at 7101261930
+--- constructor 234 at 7101264bc0
+--- constructor 235 at 7101264ce0
+--- constructor 236 at 71012660a0
+--- constructor 237 at 710126fed0
+--- constructor 238 at 710128ff00
+--- constructor 239 at 7101291f30
+--- constructor 240 at 71012986a0
+--- constructor 241 at 7101299d60
+--- constructor 242 at 710129e110
+--- constructor 243 at 71012a2700
+--- constructor 244 at 71012b4a80
+--- constructor 245 at 71012b8a70
+--- constructor 246 at 71012c9f10
+--- constructor 247 at 71012cd050
+--- constructor 248 at 71012cff60
+--- constructor 249 at 71012d4790
+--- constructor 250 at 71012d6470
+--- constructor 251 at 71012dbc20
+--- constructor 252 at 71012dea00
+--- constructor 253 at 71012eb5c0
+--- constructor 254 at 71012ebd50
+--- constructor 255 at 71012ed240
+--- constructor 256 at 71012ee6e0
+--- constructor 257 at 71012ef380
+--- constructor 258 at 71012f4130
+--- constructor 259 at 71012f5310
+--- constructor 260 at 71012f6370
+--- constructor 261 at 71012f7ce0
+--- constructor 262 at 71012f8b50
+--- constructor 263 at 71012fc160
+--- constructor 264 at 71012fd2e0
+=== phase 3: nnMain
+      51 call  _ZN2nn2os19AllocateMemoryBlockEPmm  x0=7104f188c0 x1=200000 x2=80000 x3=0  from=7100cd5770
+      52 call  _ZN2nn2os9LockMutexEPNS0_9MutexTypeE  x0=7104f18808 x1=7104d8e4c8 x2=19320000 x3=0  from=7100cd4618
+      53 call  _ZN2nn2os9LockMutexEPNS0_9MutexTypeE  x0=7104f18838 x1=48 x2=10 x3=0  from=7100cd263c
+      54 call  _ZN2nn2os11UnlockMutexEPNS0_9MutexTypeE  x0=7104f18838 x1=f x2=ffffffff x3=d  from=7100cd28d8
+      55 call  _ZN2nn2os9LockMutexEPNS0_9MutexTypeE  x0=7104f18838 x1=f x2=ffffffff x3=d  from=7100cd4678
+      56 call  _ZN2nn2os11UnlockMutexEPNS0_9MutexTypeE  x0=7104f18838 x1=f x2=ffffffff x3=d  from=7100cd46b4
+      57 call  _ZN2nn2os19AllocateMemoryBlockEPmm  x0=7f8844a00550 x1=19400000 x2=19320000 x3=0  from=7100cd5770
+      58 call  _ZN2nn2os11UnlockMutexEPNS0_9MutexTypeE  x0=7104f18838 x1=16 x2=ffffffff x3=d  from=7100cd28d8
+      59 call  _ZN2nn2os22GetSystemTickFrequencyEv  x0=7f89918d2f08 x1=7104d8e490 x2=0 x3=1  from=7100ce38e0
+      60 call  _ZN2nn4time10InitializeEv  x0=124f800 x1=7104d8e490 x2=0 x3=1  from=7100ce38f0
+      61 call  _ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE  x0=3 x1=1 x2=0 x3=1  from=7100ce39c4
+      62 call  _ZN2nn2oe28SetResumeNotificationEnabledEb  x0=1 x1=1 x2=0 x3=1  from=7100ce39cc
+      63 call  _ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb  x0=1 x1=1 x2=0 x3=1  from=7100ce39d4
+      64 call  _ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb  x0=1 x1=1 x2=0 x3=1  from=7100ce39dc
+      65 call  _ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi  x0=0 x1=20004 x2=0 x3=1  from=7100ce39ec
+      66 call  _ZN2nn2oe18GetDesiredLanguageEv  x0=0 x1=20004 x2=0 x3=1  from=7100ce3a00
+      67 call  _ZN2nn8settingseqERKNS0_12LanguageCodeERKNS0_8LanguageE  x0=7f89918d2eb8 x1=71018574f4 x2=0 x3=1  from=7100ce3a14
+      68 call  _ZN2nn8settingseqERKNS0_12LanguageCodeERKNS0_8LanguageE  x0=7f89918d2eb8 x1=71018574f8 x2=0 x3=1  from=7100ce3a2c
+      69 call  _ZN2nn2oe20GetCurrentFocusStateEv  x0=1 x1=7f89918d2eb8 x2=0 x3=1  from=7100ce3bb8
+      70 call  _ZN2nn2oe16GetOperationModeEv  x0=1 x1=7f89918d2eb8 x2=0 x3=1  from=7100ce3bf4
+      71 call  _ZN2nn2oe18GetPerformanceModeEv  x0=1 x1=7f89918d2eb8 x2=0 x3=1  from=7100ce3c1c
+      72 call  _ZN2nn2oe15SetCpuBoostModeENS0_12CpuBoostModeE  x0=1 x1=7 x2=ffffffff x3=15  from=71006706b4
+      73 call  memmove  x0=7f884e104330 x1=71017df505 x2=5 x3=e  from=7100b4bac0
+      74 call  _ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE  x0=7f89918d2eb8 x1=7104d8e7a0 x2=ffffffff x3=15  from=7100cdb6a4
+      75 call  _ZN2nn6socket10InitializeERKNS0_6ConfigE  x0=7101c4a000 x1=4 x2=ffffffff x3=e  from=7100cdb854
+      76 call  _ZN2nn4util3pmr18GetDefaultResourceEv  x0=71022994c8 x1=1 x2=0 x3=e  from=71010d11fc
+      77 call  _ZN2nn4util3pmr17NewDeleteResourceEv  x0=7f89bce92cf8 x1=1 x2=0 x3=e  from=71010d1204
+      78 call  _ZN2nn4util3pmr18SetDefaultResourceEPNS_14MemoryResourceE  x0=7102299460 x1=1 x2=0 x3=e  from=71010d65f4
+      79 call  pthread_once  x0=71059ba060 x1=71010d6584 x2=0 x3=e  from=7100dbf404
+      80 call  _ZNSt3__130__libcpp_thread_get_current_idEv  x0=71059b3620 x1=710225c1a8 x2=7101b4f000 x3=e  from=7100dfb254
+      81 call  _ZN2nn3mem17StandardAllocator8AllocateEm  x0=71059bb758 x1=38 x2=10 x3=71010d1434  from=7101144fb0
+      82 call  _ZNSt3__15mutex4lockEv  x0=7f8844600078 x1=38 x2=10 x3=71010d1434  from=7100ded67c
+      83 call  _ZN2nn3mem17StandardAllocator8AllocateEm  x0=71059bb758 x1=10 x2=10 x3=71010d1434  from=7101144fb0
+      84 call  _ZNSt3__15mutex6unlockEv  x0=7f8844600078 x1=0 x2=0 x3=71010d1434  from=7100dfb394
+      85 call  _ZNSt3__15mutex4lockEv  x0=710225c1a8 x1=0 x2=0 x3=71010d1434  from=7100dfb304
+      86 call  _ZNSt3__15mutex4lockEv  x0=7f8844600078 x1=71059b3518 x2=71017f43bb x3=71010d1434  from=7100ded67c
+      87 call  _ZN2nn3mem17StandardAllocator8AllocateEm  x0=71059bb758 x1=20 x2=10 x3=71010d1434  from=7101144fb0
+      88 call  _ZN2nn3mem17StandardAllocator4FreeEPv  x0=71059bb758 x1=7f8844600110 x2=71010d143c x3=71010d1434  from=7100db2b28
+      89 call  _ZNSt3__15mutex6unlockEv  x0=7f8844600078 x1=7f8844600110 x2=71010d143c x3=71010d1434  from=7100dfb490
+      90 call  _ZNSt3__15mutex6unlockEv  x0=710225c1a8 x1=7f8844600110 x2=71010d143c x3=71010d1434  from=7100e5ad2c
+      91 call  _ZN2nn3mem17StandardAllocator4FreeEPv  x0=71059bb758 x1=7f8844600190 x2=71010d143c x3=71010d1434  from=7100db2b28
+      92 call  _ZNSt3__130__libcpp_thread_get_current_idEv  x0=710225d3e0 x1=7f89918d2cd8 x2=10 x3=71010d1434  from=7100dfb254
+      93 call  _ZNSt3__130__libcpp_thread_get_current_idEv  x0=710225d5e0 x1=2df5a0 x2=710177b1d5 x3=71010d1434  from=7100dfb254
+      94 call  _ZN2nn3mem17StandardAllocator4FreeEPv  x0=71059bb758 x1=7f8844600300 x2=71010d143c x3=71010d1434  from=7100db2b28
+      95 call  memmove  x0=7f88446006b9 x1=7101867bc6 x2=f x3=7f88446006b8  from=7100dce01c
+      96 call  memmove  x0=7f8844600c71 x1=7101867bd9 x2=8 x3=7f8844600c70  from=7100dce01c
+      97 call  memcmp  x0=7f884460cc70 x1=7f8844601910 x2=1e x3=71010d1434  from=7100e90910
+      98 call  memcmp  x0=7f884460cc70 x1=7f8844601af0 x2=18 x3=179e  from=7100e90088
+      99 call  memcmp  x0=7f884460cc70 x1=7f8844601af0 x2=18 x3=179e  from=7100e90a84
+     100 call  strcmp  x0=71017df93f x1=71017c19f0 x2=71010d143c x3=71018ae810  from=7100e5e548
+     101 call  _ZNSt3__112__next_primeEm  x0=5 x1=5 x2=10 x3=71010d1434  from=7100e5e770
+     102 call  strcmp  x0=710177d0b8 x1=710180b104 x2=71010d143c x3=71018aea44  from=7100e5e640
+     103 call  strcmp  x0=71017ea3dc x1=71017d195b x2=71010d143c x3=71018aee7c  from=7100e5e640
+     104 call  _ZNSt3__112__next_primeEm  x0=b x1=b x2=10 x3=71010d1434  from=7100e5e770
+     105 call  _ZN2nn3hid14InitializeNpadEv  x0=7104f17858 x1=7104d8e490 x2=ffffffff x3=e  from=7100cc6e34
+     106 call  _ZN2nn3hid22SetSupportedNpadIdTypeEPKjm  x0=7101c48df8 x1=2 x2=ffffffff x3=e  from=7100cc6e48
+     107 call  _ZN2nn3hid29SetNpadHandheldActivationModeENS0_26NpadHandheldActivationModeE  x0=0 x1=2 x2=ffffffff x3=e  from=7100cc6e50
+     108 call  _ZN2nn3hid24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE  x0=7 x1=2 x2=ffffffff x3=e  from=7100cc6e58
+     109 call  _ZN2nn3hid20ControllerSupportArg10SetDefaultEv  x0=7f89918d29e8 x1=0 x2=ffffffff x3=e  from=7100cc6ef0
+     110 call  _ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE  x0=7f89918d29e8 x1=0 x2=42b x3=e  from=7100cc6fc0
+     111 call  _ZN2nn3hid15GetNpadStyleSetERKj  x0=7101c48df8 x1=7101c48df8 x2=42b x3=e  from=7100cc4ec0
+     112 call  _ZN2nn3hid25GetVibrationDeviceHandlesEPNS0_21VibrationDeviceHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE  x0=7f89918d2e28 x1=2 x2=7104f17880 x3=1  from=7100cc4f2c
+     113 call  _ZN2nn3hid25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE  x0=7f89918d2e28 x1=7f89918d2dec x2=2 x3=0  from=7100cc4f48
+     114 call  _ZN2nn3hid15VibrationTarget24SetVibrationDeviceHandleERKNS0_21VibrationDeviceHandleE  x0=7104f179d0 x1=7f89918d2e28 x2=2 x3=0  from=7100cc4f54
+     115 call  _ZN2nn3hid25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE  x0=7f89918d2e2c x1=7f89918d2e28 x2=2 x3=0  from=7100cc4f48
+     116 call  _ZN2nn3hid15VibrationTarget24SetVibrationDeviceHandleERKNS0_21VibrationDeviceHandleE  x0=7104f17a20 x1=7f89918d2e2c x2=2 x3=0  from=7100cc4f54
+     117 call  _ZN2nn3hid23GetSixAxisSensorHandlesEPNS0_19SixAxisSensorHandleEiRKjNS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE  x0=7f89918d2e28 x1=2 x2=7104f17880 x3=1  from=7100cc4f8c
+     118 call  _ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE  x0=7f89918d2e28 x1=7f89918d2e0c x2=2 x3=0  from=7100cc4fa4
+     119 call  _ZN2nn3hid21InitializeTouchScreenEv  x0=7f89918d2e28 x1=7f89918d2e0c x2=2 x3=0  from=7100cc4fb4
+     120 call  _ZN2nn3hid15GetNpadStyleSetERKj  x0=7101c48dfc x1=7101c48dfc x2=2 x3=0  from=7100cc4ec0
+     121 call  _ZN2nn3hid21InitializeTouchScreenEv  x0=0 x1=7101c48dfc x2=2 x3=0  from=7100cc4fb4
+     122 call  _ZN2nn3hid18SetNpadJoyHoldTypeENS0_15NpadJoyHoldTypeE  x0=1 x1=7101c48dfc x2=2 x3=0  from=7100cc4538
+     123 call  _ZN2nn3hid18InitializeKeyboardEv  x0=1 x1=7101c48dfc x2=2 x3=0  from=7100cc4628
+     124 call  _ZN2nn3hid15InitializeMouseEv  x0=1 x1=7101c48dfc x2=2 x3=0  from=7100cc464c
+     125 call  _ZN2nn2os15AllocateTlsSlotEPNS0_7TlsSlotEPFvmE  x0=7104f18c28 x1=0 x2=800000 x3=15  from=7100ce7644
+     126 call  _ZN2nn2fs22QueryMountRomCacheSizeEPm  x0=7f89918d2e68 x1=1 x2=0 x3=6  from=7100cc1e90
+     fs QueryMountRomCacheSize: 1 directories, 1 files -> 92 bytes
+     127 call  _ZN2nn2fs8MountRomEPKcPvm  x0=71017bf464 x1=7f884e2b1780 x2=5c x3=6  from=7100cc1eec
+     fs mount rom "Contents" -> ..\romfs (0)
+     128 call  _ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mii  x0=7f884eab2060 x1=7100ce75e0 x2=7f884eab2050 x3=7f884e2b2000  from=7100ce7564
+     129 call  _ZN2nn2os17SetThreadCoreMaskEPNS0_10ThreadTypeEim  x0=7f884eab2060 x1=fffffffd x2=4 x3=7f884e2b2000  from=7100ce75a4
+     130 call  _ZN2nn2os13SetThreadNameEPNS0_10ThreadTypeEPKc  x0=7f884eab2060 x1=710179f4b0 x2=4 x3=7f884e2b2000  from=7100ce75b0
+     131 call  _ZN2nn2os11StartThreadEPNS0_10ThreadTypeE  x0=7f884eab2060 x1=710179f4b0 x2=4 x3=7f884e2b2000  from=7100ce75b8
+     132 call  _ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mii  x0=7f884eab2258 x1=7100ce75e0 x2=7f884eab2248 x3=7f884e2f2000  from=7100ce7564
+     133 call  _ZN2nn2os17SetThreadCoreMaskEPNS0_10ThreadTypeEim  x0=7f884eab2258 x1=fffffffd x2=4 x3=7f884e2f2000  from=7100ce75a4
+     134 call  _ZN2nn2os13SetThreadNameEPNS0_10ThreadTypeEPKc  x0=7f884eab2258 x1=710177f86f x2=4 x3=7f884e2f2000  from=7100ce75b0
+     135 call  _ZN2nn2os11StartThreadEPNS0_10ThreadTypeE  x0=7f884eab2258 x1=710177f86f x2=4 x3=7f884e2f2000  from=7100ce75b8
+--- thread 7f884eab2060 started (entry 7100ce75e0, name FileContentsWork)
+     136 call  _ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci  x0=7f89918d29a8 x1=7f89918d2d40 x2=3 x3=0  from=7100cbda08
+     137 call  _ZN2nn2os11SleepThreadENS_8TimeSpanE  x0=f4240 x1=7100cc2010 x2=0 x3=0  from=7100cc205c
+--- thread 7f884eab2258 started (entry 7100ce75e0, name FileContentsRead)
+     138 call  _ZN2nn2os11SleepThreadENS_8TimeSpanE  x0=f4240 x1=7100cc2170 x2=0 x3=0  from=7100cc21bc
+     fs OpenDirectory "Contents:/" mode 3 -> 1 entries
+     140 call  _ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl  x0=7f89918d2cc0 x1=7f89918d29b0 x2=7f890c0f9720 x3=1  from=7100cbdae4
+     139 call  _ZN2nn2os11SleepThreadENS_8TimeSpanE  x0=f4240 x1=7100cc2170 x2=0 x3=0  from=7100cc21bc
+     141 call  strrchr  x0=7f884ee66e10 x1=2e x2=fa x3=1  from=7100cbdd7c
+     142 call  strcasecmp  x0=7f884ee66e16 x1=710178f08f x2=fa x3=1  from=7100cbdd8c
+     143 call  _ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci  x0=7f89918d2658 x1=7f89918d2d40 x2=1 x3=7f89918d2d40  from=7100cbca78
+     fs open "Contents:/ui_000.pkz" mode 1 -> ok, from the romfs mod /home/kalvarez/git/b3recomp/build/../mods\witchtime-pc-settings\romfs\ui_000.pkz
+     144 call  _ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE  x0=7f89918d2640 x1=7f890c0bf190 x2=1 x3=7f89918d2d40  from=7100cbca88
+     145 call  _ZN2nn2fs8ReadFileENS0_10FileHandleElPvm  x0=7f890c0bf190 x1=0 x2=7f89918d2640 x3=10  from=7100cbcad0
+     fs read offset 0 size 10 -> 10 bytes  from=7100cbcad0
+     146 call  _ZN2nn2fs8ReadFileENS0_10FileHandleElPvm  x0=7f890c0bf190 x1=10 x2=7f89918d2630 x3=10  from=7100cbcb28
+     fs read offset 10 size 10 -> 10 bytes  from=7100cbcb28
+     147 call  _ZN2nn2fs8ReadFileENS0_10FileHandleElPvm  x0=7f890c0bf190 x1=20 x2=7f884eed4eb0 x3=32c8  from=7100cbcb94
+     fs read offset 20 size 32c8 -> 32c8 bytes  from=7100cbcb94
+     148 call  _ZN2nn2fs9CloseFileENS0_10FileHandleE  x0=7f890c0bf190 x1=20 x2=7f884eed4eb0 x3=32c8  from=7100cbcbb4
+     149 call  strchr  x0=7f89918d2744 x1=2f x2=104 x3=32c8  from=7100cbe14c
+     150 call  strchr  x0=7f89918d2747 x1=2f x2=3f5 x3=7f89918d2630  from=7100cbe5c4
+     151 call  strchr  x0=7f89918d2744 x1=2f x2=104 x3=7f89918d2630  from=7100cbe14c
+     152 call  strncasecmp  x0=7f89918d2d4a x1=7f884ee66e1b x2=2 x3=7f89918d2630  from=7100cbe334
+     153 call  strcasecmp  x0=7f89918d2d4d x1=71017fb967 x2=2 x3=7f89918d2630  from=7100cbe388
+     154 call  strncasecmp  x0=7f89918d2d4a x1=7f884ee66e1b x2=2 x3=7f89918d2630  from=7100cbe334
+     155 call  strcasecmp  x0=7f89918d2d4d x1=71017fb967 x2=2 x3=7f89918d2630  from=7100cbe388
+     156 call  strncasecmp  x0=7f89918d2d4a x1=7f884ee66e1b x2=2 x3=7f89918d2630  from=7100cbe334
+     157 call  _ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl  x0=7f89918d2cc0 x1=7f89918d29b0 x2=7f890c0f9720 x3=1  from=7100cbdae4
+     158 call  _ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE  x0=7f890c0f9720 x1=7f89918d29b0 x2=7f890c0f9720 x3=1  from=7100cbdf40
+     159 call  _ZN2nn2os20InitializeLightEventEPNS0_14LightEventTypeEbNS0_14EventClearModeE  x0=7f884eef9f14 x1=0 x2=1 x3=14  from=7100ce6ee8
+     160 call  _ZN2nn2os20InitializeLightEventEPNS0_14LightEventTypeEbNS0_14EventClearModeE  x0=7f884eef9f20 x1=0 x2=1 x3=14  from=7100ce6efc
+     161 call  _ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mii  x0=7f884eab2450 x1=7100ce75e0 x2=7f884eab2440 x3=7f884e332000  from=7100ce7564
+     162 call  _ZN2nn2os17SetThreadCoreMaskEPNS0_10ThreadTypeEim  x0=7f884eab2450 x1=fffffffd x2=2 x3=7f884e332000  from=7100ce75a4
+     163 call  _ZN2nn2os13SetThreadNameEPNS0_10ThreadTypeEPKc  x0=7f884eab2450 x1=71017d283c x2=2 x3=7f884e332000  from=7100ce75b0
+     164 call  _ZN2nn2os11StartThreadEPNS0_10ThreadTypeE  x0=7f884eab2450 x1=71017d283c x2=2 x3=7f884e332000  from=7100ce75b8
+--- thread 7f884eab2450 started (entry 7100ce75e0, name MainJob1)
+--- thread 7f884eab2648 started (entry 7100ce75e0, name MainJob2)
+--- thread 7f884eab2840 started (entry 7100ce75e0, name MainDraw)
+--- thread 7f884eab2a38 started (entry 7100ce75e0, name MainJob1)
+     165 call  _ZN2nn2os14WaitLightEventEPNS0_14LightEventTypeE  x0=7f884eef9f4c x1=7100ce71f4 x2=0 x3=0  from=7100ce7214
+--- thread 7f884eab2c30 started (entry 7100ce75e0, name MainJob2)
+     166 call  _ZN2nn2os14WaitLightEventEPNS0_14LightEventTypeE  x0=7f884eefa23c x1=7100ce71f4 x2=0 x3=0  from=7100ce7214
+     167 call  _ZN2nn2os14WaitLightEventEPNS0_14LightEventTypeE  x0=7f884eef9f84 x1=7100ce71f4 x2=0 x3=0  from=7100ce7214
+--- thread 7f884eab3020 started (entry 7100ce75e0, name MainJob2)
+--- thread 7f884eab2e28 started (entry 7100ce75e0, name MainJob1)
+     168 call  _ZN2nn3mem17StandardAllocatorC1Ev  x0=7f8844c06c00 x1=0 x2=400 x3=16  from=7100d16ad4
+     169 call  _ZN2nn3mem17StandardAllocatorC1Ev  x0=7f8844c06c50 x1=0 x2=400 x3=16  from=7100d16ae0
+     170 call  _ZN2nn3mem17StandardAllocator10InitializeEPvmb  x0=7f8844c06c00 x1=7f8844c06d00 x2=1000000 x3=1  from=7100cfccc4
+     171 call  _ZN2nv20SetGraphicsAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_  x0=7100d178f0 x1=7100d17910 x2=7100d17930 x3=7f8844c06c00  from=7100cfcce4
+     172 call  _ZN2nv18InitializeGraphicsEPvm  x0=7f8845c07000 x1=1000000 x2=ffffffff x3=16  from=7100cfcd64
+     173 call  _ZN2nn2vi10InitializeEv  x0=7f8845c07000 x1=1000000 x2=ffffffff x3=16  from=7100cfcd68
+     174 call  _ZN2nn2vi18OpenDefaultDisplayEPPNS0_7DisplayE  x0=7f8844c01640 x1=1000000 x2=ffffffff x3=16  from=7100cfcd74
+     175 call  _ZN2nn2vi11CreateLayerEPPNS0_5LayerEPNS0_7DisplayE  x0=7f8844c01648 x1=7f89bcc08210 x2=ffffffff x3=16  from=7100cfcd88
+     176 call  nvnBootstrapLoader  x0=710177a8dd x1=7f89918d2da8 x2=ffffffff x3=16  from=7100d17618
+     nvnDeviceGetInteger pname=0x0 -> 55  from=7100d176a8
+     nvnDeviceGetInteger pname=0x1 -> 12  from=7100d176bc
+     nvnDeviceGetInteger pname=0x54 -> 16384  from=7100d1779c
+     nvnDeviceGetInteger pname=0x51 -> 65536  from=7100d177d4
+     nvnDeviceGetInteger pname=0x5c -> 16384  from=7100d1780c
+     nvn nvnMemoryPoolBuilderSetStorage  x0=7f89918d2b80 x1=7f889ce01000 x2=54420000 x3=15  from=7100cd4d70
+     nvn nvnMemoryPoolInitialize  x0=7f889ce00000 x1=7f89918d2b80 x2=54420000 x3=15  from=7100cd4d90
+     nvn nvnMemoryPoolMap  x0=7f889ce00000 x1=7f89918d2b80 x2=54420000 x3=15  from=7100cd4da4
+     nvn nvnMemoryPoolBuilderSetStorage  x0=7f89918d2b80 x1=7f8868c01000 x2=34120000 x3=15  from=7100cd4d70
+     nvn nvnMemoryPoolInitialize  x0=7f8868c00000 x1=7f89918d2b80 x2=34120000 x3=15  from=7100cd4d90
+     nvn nvnMemoryPoolMap  x0=7f8868c00000 x1=7f89918d2b80 x2=34120000 x3=15  from=7100cd4da4
+     nvn nvnMemoryPoolBuilderSetStorage  x0=7f89918d2b80 x1=7f8866201000 x2=2920000 x3=15  from=7100cd4d70
+     nvn nvnMemoryPoolInitialize  x0=7f8866200000 x1=7f89918d2b80 x2=2920000 x3=15  from=7100cd4d90
+     nvn nvnMemoryPoolMap  x0=7f8866200000 x1=7f89918d2b80 x2=2920000 x3=15  from=7100cd4da4
+     nvnDeviceGetInteger pname=0x3 -> 65536  from=7100d0c6c4
+     nvnDeviceGetInteger pname=0x4 -> 256  from=7100d0c6d8
+     nvnDeviceGetInteger pname=0xd -> 4  from=7100d0c6ec
+     nvnDeviceGetInteger pname=0x35 -> 4  from=7100d0c700
+     nvnDeviceGetInteger pname=0xa -> 16  from=7100d0c714
+     nvnDeviceGetInteger pname=0x5 -> 8  from=7100d0c728
+     nvnDeviceGetInteger pname=0x39 -> 128  from=7100d0c73c
+     nvnDeviceGetInteger pname=0xf -> 32  from=7100d0c750
+     nvnDeviceGetInteger pname=0x10 -> 32  from=7100d0c764
+     nvnDeviceGetInteger pname=0x11 -> 256  from=7100d0c778
+     nvnDeviceGetInteger pname=0x12 -> 256  from=7100d0c78c
+     nvnDeviceGetInteger pname=0x24 -> 1048576  from=7100d0c7a0
+     nvnDeviceGetInteger pname=0x25 -> 4096  from=7100d0c7b4
+     nvnDeviceGetInteger pname=0x36 -> 32  from=7100d0c7c8
+     nvnDeviceGetInteger pname=0x27 -> 4096  from=7100d0c7dc
+     nvnDeviceGetInteger pname=0x2e -> 1  from=7100d0c804
+     nvnDeviceGetInteger pname=0x2f -> 1  from=7100d0c818
+     nvnDeviceGetInteger pname=0x30 -> 16  from=7100d0c82c
+     nvnDeviceGetInteger pname=0x31 -> 5  from=7100d0c840
+     nvnDeviceGetInteger pname=0x13 -> 4  from=7100d12508
+     nvnDeviceGetInteger pname=0x14 -> 8  from=7100d12530
+     177 call  _ZN2nn2vi15GetNativeWindowEPPvPNS0_5LayerE  x0=7f89918d2ca8 x1=7f89bcc08220 x2=0 x3=0  from=7100d0c954
+     nvn nvnBufferBuilderSetStorage  x0=7f89918d26b0 x1=7f8866200000 x2=208400 x3=b0  from=7100d11354
+     nvn nvnBufferInitialize  x0=7f8845c06f30 x1=7f89918d26b0 x2=208400 x3=b0  from=7100d1136c
+     nvn nvnBufferMap  x0=7f8845c06f30 x1=7f89918d26b0 x2=208400 x3=b0  from=7100d11388
+     nvn nvnBufferGetAddress  x0=7f8845c06f30 x1=7f89918d26b0 x2=208400 x3=b0  from=7100d0d4cc
+     nvn nvnBufferBuilderSetStorage  x0=7f89918d26b0 x1=7f8866200000 x2=208500 x3=3b0  from=7100d11354
+     nvn nvnBufferInitialize  x0=7f8846c07050 x1=7f89918d26b0 x2=208500 x3=3b0  from=7100d1136c
+     nvn nvnBufferMap  x0=7f8846c07050 x1=7f89918d26b0 x2=208500 x3=3b0  from=7100d11388
+     nvn nvnBufferGetAddress  x0=7f8846c07050 x1=7f89918d26b0 x2=208500 x3=3b0  from=7100d0d4cc
+--- thread 7f884eab3218 started (entry 7100ce75e0, name Flush)
+     nvn nvnBufferBuilderSetStorage  x0=7f89918d2cb0 x1=7f885e000000 x2=150 x3=10  from=7100cf77b0
+     nvn nvnBufferInitialize  x0=7f88495a2198 x1=7f89918d2cb0 x2=150 x3=10  from=7100cf77c8
+     nvn nvnBufferMap  x0=7f88495a2198 x1=7f89918d2cb0 x2=150 x3=10  from=7100cf77e4
+     nvn nvnBufferGetAddress  x0=7f8846c07950 x1=0 x2=b0 x3=b0  from=7100d0d4cc
+     nvn nvnMemoryPoolGetBufferAddress  x0=7f88f1400000 x1=7f89918d2be8 x2=eae0000 x3=16  from=7100d0e61c
+     nvn nvnMemoryPoolGetBufferAddress  x0=7f88f1400000 x1=7f89918d2c00 x2=eae0000 x3=1  from=7100d0ecb4
+     nvn nvnMemoryPoolGetBufferAddress  x0=7f88f1400000 x1=7f89918d2c00 x2=e940000 x3=1  from=7100d0ecb4
