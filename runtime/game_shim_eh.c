@@ -79,7 +79,7 @@ void h_morton_split32(Ctx *c) {
 void f_71007e1fe4(Ctx *c);
 void h_quad_walk(Ctx *c) {
     static int on = -1, chk;
-    static _Thread_local int lifted;               /* the check's walk: every node lifted */
+    static int lifted;                             /* the check's walk: every node lifted (the game DLL has no thread-local storage; one thread walks) */
     if (on < 0) { const char *e = getenv("SSBU_QUADWALK"); chk = getenv("SSBU_QUADWALK_CHECK") != NULL; on = !(e && !atoi(e)); }
     int d = (int)(uint32_t)c->x[7];
     if (on && !lifted && d >= 2 && d < 16) {
