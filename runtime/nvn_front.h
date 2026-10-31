@@ -47,6 +47,7 @@ typedef struct Tex {
     TexObj o;
     VNode *views;
     void *vk;                              /* the Vulkan back end's record of this texture (nvn_vk_draw.c: VTex), NULL until first used */
+    void *prep;                            /* #45: its ASTC decode on tex_prep's threads (nvn_gl.c), render thread's */
     long long ahead_seen;                  /* session 8 (nvn_vk_draw.c tex_ahead): 1 + the frame the render thread first saw this record; -1 = looked at, not taken */
 } Tex;
 Tex *nvn_front_tex_first(void);            /* the newest texture record; ->all_next = the one made before it (records are never freed) */
@@ -134,6 +135,9 @@ int nvn_front_tex_changed(Tex *t, uint32_t gen);
  * rgba8 = 0). Returns 0 when the memory is not readable. */
 typedef void nvn_front_put_fn(Tex *t, int level, int layer, int w, int h, int d, const void *data, size_t size, int rgba8, int64_t row_stride);
 int nvn_front_tex_read(Tex *t, int decode, nvn_front_put_fn *put);
+int nvn_front_tex_prep(Tex *t, size_t *bytes);                               /* #45: starts the decode of an ASTC texture; 1 = done (*bytes of BC3), 0 = not yet, -1 = not this way */
+void nvn_front_tex_prep_drop(Tex *t);
+void nvn_front_tex_prep_report(void);
 /* Texture pool / sampler pool lookup of an NVN texture handle: returns bit 0 = live texture (*t, *v), bit 1 = sampler (*p). */
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p);
 /* Present bookkeeping shared by the back ends: counts the frame, prints the frame-rate line, feeds the scripted input,

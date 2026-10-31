@@ -97,8 +97,11 @@ void h_fps_mode_set(Ctx *c) {
         last = want;
     }
     /* above 60 fps the 30 fps scenes run at frame_rate too (real time). Only fixed-step ones: the chapter 3 spider ride is
-     * gameplay the game asks 30 for (#45: flags 0x00810000, cutscenes 0x50000008); at 60 its frame counters ran twice as fast */
-    g_fps_forced = (sixty || uncap_on()) && want == 1 && g_fixed_step;
+     * gameplay the game asks 30 for (#45: flags 0x00810000, cutscenes 0x50000008); at 60 its frame counters ran twice as fast.
+     * Its scripted parts have the fixed step too (0x50810008): flag 16 keeps them at 30, or the ride jumps between 30 and 60
+     * and its prompts last half as long */
+    uint32_t flags = 0; { uint64_t fp; memcpy(&fp, (void *)(uintptr_t)0x710249c388ull, 8); memcpy(&flags, (void *)(uintptr_t)fp, 4); }
+    g_fps_forced = (sixty || uncap_on()) && want == 1 && g_fixed_step && !(flags & 0x10000);
     if (g_fps_forced) c->x[0] = 0;
     f_7100d02de0(c);
 }

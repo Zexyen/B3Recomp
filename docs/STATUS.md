@@ -410,6 +410,23 @@ erasure is the game's: it is also there with `SSBU_VK_VRC=0`).
 - Tools added on the way: `SSBU_FRAMETIMES`, `SSBU_HITCH` with a 19 ms threshold for late frames, `SSBU_LPROF` with 4M
   samples and the presented frame of each sample (`@<frame>`; `scripts/lprof_report.py` reads both forms).
 
+## Chapter 3 spider ride: render thread (2026-10-30, #45)
+
+Same stretch of the ride, about 2,300 draws: replay 30.5 -> 16.3 ms a frame.
+- **Page filter in `buf_ref`** (`cb_pf_*`): 20,000 ranges a frame each walked the live and about 170 kept compute buffers, 16
+  ms a frame. A hashed bit per page of those buffers answers 98.6 % of the ranges without a walk. `SSBU_VK_CBPF=0` off,
+  `=2` test: the walks run as well and a miss prints `nvn_vk_cbpf: FAILED`; none in 17 M ranges on the ride and 63.7 M in Shibuya.
+- **ASTC decoded ahead of the first draw** (`nvn_front_tex_prep`, `SSBU_TEXPREP_THREADS`, default 3): at the draw, decodes
+  took 5.5 s of the render thread in 100 s of the ride, while 94 % of those textures had been known for 30 frames or more.
+  Now 0.73 s; `tex_ahead` makes the image when the decode is done, in fights too. A job keeps a copy of the bytes it
+  decoded and its result is used only if the memory still equals them. `SSBU_TEXPREP_CHECK=1` (test): 3,110 textures,
+  no level differs from a decode at the use. Shibuya 170 s from frame 1500: frames over 34 ms 11 -> 0, worst 59 -> 22 ms.
+- **ASTC stays**: no build-time conversion to BC (about 41 GB more, #54), and BC3 stays what GPUs without ASTC store.
+
+**Left**: the steady 46 / 90 ms frames of the ride are the main thread in the tree walk `f_71007e1fe4` (up to about 85 ms
+a frame), which also stops the ride holding 60. About 74 textures at the ride's start are first seen in the frame that
+draws them (one frame of about 0.6 s). `SSBU_LPROF` frames are 2 ahead of `SSBU_FRAMETIMES` frames.
+
 ## 60 fps menus and cutscenes (2026-10-25)
 
 `cutscene_fps = 60` (graphics.ini; `SSBU_CUTSCENE_FPS=60` wins; default 30, as on the console) runs the title, menus and
@@ -438,6 +455,9 @@ cutscenes in the game's 60 fps mode.
   frame_rate above 60 forced it to 60 too, and its frame counters ran at twice the console's rate (the reported third
   jump prompt of under a second, not reached by a test: a blind script dies on the ride). Only fixed-step scenes are
   forced now; the ride runs at 30 as on the console.
+  The ride's scripted parts do have the fixed step (`0x50810008`), so they were still forced: the ride jumped between 30
+  and 60 and the third prompt stayed short. Flag bit 16 now keeps them at 30 too; the user passed every prompt by hand.
+  The prompt's frame counter is not identified, so the ride can't run at 60 yet.
   A ride at 60 needs its frame counters at half rate (a counter there is 30 Hz; the frames due at step / 2 while the
   ride is forced, the sites listed). Census of the first 200 s of the ride, 30 against 60: 115 frame-locked sites, 22 on
   the game's thread, mostly the engine's own frame numbers. The QTE's counter is not among them: the script never reaches
